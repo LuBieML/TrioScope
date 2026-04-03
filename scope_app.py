@@ -814,8 +814,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Disable auto-scroll when user manually interacts
         vb.sigRangeChangedManually.connect(self._on_manual_range_change)
 
-        # Reposition stats text when view range changes (pan/zoom)
+        # Reposition stats text and update dot visibility when view range changes
         vb.sigRangeChanged.connect(self._reposition_stats_texts)
+        vb.sigRangeChanged.connect(self._update_curve_detail)
 
     def _on_manual_range_change(self, _changes):
         """When user manually pans/zooms, disable auto-scroll"""
@@ -830,6 +831,34 @@ class ParameterScopeOscilloscope(QMainWindow):
                 view_range = vb.viewRange()
                 self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
                 break
+
+    def _update_curve_detail(self, vb):
+        """Show/hide sample dots and adjust downsampling based on zoom level."""
+        if self.plot_mode != 'time':
+            return
+        view_range = vb.viewRange()
+        visible_span = view_range[0][1] - view_range[0][0]
+        for trace_id, pi in self.plot_items.items():
+            if pi.getViewBox() is not vb or trace_id not in self.curves:
+                continue
+            curve = self.curves[trace_id]
+            xData = curve.xData
+            if xData is None or len(xData) < 2:
+                continue
+            sample_dt = xData[1] - xData[0]
+            if sample_dt <= 0:
+                continue
+            visible_points = visible_span / sample_dt
+            if visible_points <= 2000:
+                curve.setDownsampling(ds=1)
+                color = curve.opts['pen'].color()
+                curve.setSymbol('o')
+                curve.setSymbolSize(4)
+                curve.setSymbolBrush(color)
+                curve.setSymbolPen(None)
+            else:
+                curve.setSymbol(None)
+                curve.setDownsampling(auto=True, method='peak')
 
     def _on_xy_manual_zoom(self, _changes):
         """When user manually pans/zooms in XY mode, stop auto-fitting."""
