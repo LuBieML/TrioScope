@@ -3,7 +3,12 @@
     "allow": [
       "Bash(gh repo:*)",
       "Bash(git remote:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(python -c \"import Trio_UnifiedApi; print\\(Trio_UnifiedApi.__file__\\)\")",
+      "Bash(pip show:*)",
+      "Bash(python -c \"import Trio_UnifiedApi; import os; print\\(os.path.dirname\\(Trio_UnifiedApi.__file__\\)\\)\")",
+      "Bash(.venv/Scripts/python -m pip install pyinstaller)",
+      "Bash(.venv/Scripts/python build_exe.py)"
     ]
   }
 }

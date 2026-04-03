@@ -821,6 +821,8 @@ class ParameterScopeOscilloscope(QMainWindow):
     def _on_xy_manual_zoom(self, _changes):
         """When user manually pans/zooms in XY mode, stop auto-fitting."""
         self._xy_auto_range = False
+        if not self.is_running and self.accumulated_data is not None:
+            self._render_plots()
 
     def _setup_3d_view(self):
         """Set up 3D OpenGL view with grid and axes for XYZ path mode."""
@@ -1434,6 +1436,11 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.btn_run.setEnabled(True)
             self.btn_stop.setEnabled(False)
             self._update_timer.stop()
+            # Final render: show all captured data so panning works immediately
+            if self.auto_scroll:
+                self.auto_scroll = False
+                self._update_auto_scroll_button()
+            self._fit_all_data()
 
         # Consolidate data chunks under lock
         with self._data_lock:
@@ -1612,39 +1619,16 @@ class ParameterScopeOscilloscope(QMainWindow):
             return
 
         # ── Normal time-based mode ──
-        # Determine the visible X range and slice data to only what's on screen
+        # Auto-scroll: keep the view following the latest data
         if self.auto_scroll and self.is_running:
             max_time = time_arr[-1]
             min_time = max(0, max_time - self.window_duration)
             first_pi = next(iter(self.plot_items.values()), None)
             if first_pi:
                 first_pi.setXRange(min_time, max_time, padding=0)
-            view_x0, view_x1 = min_time, max_time
-        else:
-            # Use the current view range from the first plot
-            first_pi = next(iter(self.plot_items.values()), None)
-            if first_pi:
-                view_x0, view_x1 = first_pi.viewRange()[0]
-            else:
-                view_x0, view_x1 = time_arr[0], time_arr[-1]
 
-        # Find indices of visible data (with small margin for smooth edges)
-        margin = (view_x1 - view_x0) * 0.05
-        i0 = max(0, int(np.searchsorted(time_arr, view_x0 - margin)) - 1)
-        i1 = min(len(time_arr), int(np.searchsorted(time_arr, view_x1 + margin)) + 1)
-        visible_time = time_arr[i0:i1]
-
-        # Downsample if too many visible points (more than ~4000 per trace)
-        max_points = 4000
-        if len(visible_time) > max_points:
-            step = len(visible_time) // max_points
-        else:
-            step = 1
-
-        plot_time = visible_time[::step]
-
-        # Each trace has its own subplot — key curves by trace_id
-        # (multiple traces can share the same parameter name)
+        # Set ALL data on each curve — pyqtgraph handles clip-to-view and
+        # downsampling natively, so panning back always shows stored data.
         for trace in enabled_traces:
             trace_id = id(trace)
             if trace_id not in self.plot_items:
@@ -1662,6 +1646,9 @@ class ParameterScopeOscilloscope(QMainWindow):
             if trace_id not in self.curves:
                 pen = pg.mkPen(color, width=self.line_width)
                 curve = pi.plot(name=param_name, pen=pen)
+                # Let pyqtgraph handle downsampling and clipping for performance
+                curve.setClipToView(True)
+                curve.setDownsampling(auto=True, method='peak')
                 self.curves[trace_id] = curve
                 # Add legend
                 pi.addLegend(
@@ -1672,7 +1659,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                     labelTextSize='9pt'
                 )
 
-            self.curves[trace_id].setData(plot_time, values[i0:i1:step])
+            self.curves[trace_id].setData(time_arr, values)
 
     # ─── Controls ───────────────────────────────────────────────────
 
@@ -1699,6 +1686,17 @@ class ParameterScopeOscilloscope(QMainWindow):
         else:
             self.btn_auto_scroll.setText("\U0001f512 Auto-scroll OFF")
             self.btn_auto_scroll.setVisible(self.is_running)
+
+    def _fit_all_data(self):
+        """Set view range to show all captured data."""
+        if self.accumulated_data is None:
+            return
+        time_arr = self.accumulated_data['time']
+        if len(time_arr) == 0:
+            return
+        first_pi = next(iter(self.plot_items.values()), None)
+        if first_pi and self.plot_mode not in ('xy', 'xyz'):
+            first_pi.setXRange(float(time_arr[0]), float(time_arr[-1]), padding=0.02)
 
     def clear_data(self):
         self.accumulated_data = None

@@ -1,0 +1,12 @@
+# Build
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+*.pyd
+
+# Virtual environment
+.venv/
