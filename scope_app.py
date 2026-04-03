@@ -579,11 +579,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Plot mode selector
         config_layout.addWidget(QLabel("Plot Mode:"), 3, 0)
         self.plot_mode_combo = QComboBox()
-        self.plot_mode_combo.addItems(["Time", "XY (2D path)", "XYZ (3D path)"])
+        self.plot_mode_combo.addItems(["Time", "XY (2D path)", "XYZ (3D path)", "FFT (Spectrum)"])
         self.plot_mode_combo.setToolTip(
             "Time: standard time-based oscilloscope\n"
             "XY: Trace 1→X, Trace 2→Y (2D CNC path)\n"
-            "XYZ: Trace 1→X, Trace 2→Y, Trace 3→Z (3D path)"
+            "XYZ: Trace 1→X, Trace 2→Y, Trace 3→Z (3D path)\n"
+            "FFT: frequency spectrum of each trace"
         )
         self.plot_mode_combo.currentIndexChanged.connect(self._on_plot_mode_changed)
         config_layout.addWidget(self.plot_mode_combo, 3, 1, 1, 2)
@@ -829,6 +830,21 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._setup_3d_view()
             return
 
+        # FFT mode: one subplot per trace, frequency on X-axis
+        if self.plot_mode == 'fft':
+            self._update_path_info_label()
+            num_subplots = len(enabled_traces)
+            for row, trace in enumerate(enabled_traces):
+                pi = self._create_scope_plot()
+                is_last = (row == num_subplots - 1)
+                self._configure_fft_plot(pi, show_xlabel=is_last)
+                color = trace.get_color()
+                pi.getAxis('left').setPen(pg.mkPen(color))
+                pi.getAxis('left').setTextPen(pg.mkPen(color))
+                self.plot_items[id(trace)] = pi
+            self._update_x_links()
+            return
+
         num_subplots = len(enabled_traces)
 
         for row, trace in enumerate(enabled_traces):
@@ -871,6 +887,22 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Reposition stats text and update dot visibility when view range changes
         vb.sigRangeChanged.connect(self._reposition_stats_texts)
         vb.sigRangeChanged.connect(self._update_curve_detail)
+
+    def _configure_fft_plot(self, plot_item, show_xlabel=True):
+        """Configure a PlotItem for FFT spectrum display."""
+        vb = plot_item.getViewBox()
+        vb.setBackgroundColor(self.plot_bg_color)
+        plot_item.showGrid(x=True, y=True, alpha=self.grid_alpha)
+        if show_xlabel:
+            plot_item.setLabel('bottom', 'Frequency (Hz)', color='#d4d4d4')
+        else:
+            plot_item.setLabel('bottom', '')
+        plot_item.setLabel('left', 'Magnitude', color='#d4d4d4')
+        plot_item.enableAutoRange(axis='y', enable=True)
+        plot_item.setAutoVisible(y=True)
+        # Clamp X-axis to non-negative frequencies
+        vb.setLimits(xMin=0)
+        vb.sigRangeChanged.connect(self._reposition_stats_texts)
 
     def _on_manual_range_change(self, _changes):
         """When user manually pans/zooms, disable auto-scroll"""
@@ -1161,7 +1193,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._update_x_links()
 
     def _on_plot_mode_changed(self, index):
-        modes = ['time', 'xy', 'xyz']
+        modes = ['time', 'xy', 'xyz', 'fft']
         self.plot_mode = modes[index]
         self._update_path_info_label()
         self.curves = {}
@@ -1185,6 +1217,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         """Update path mode info label showing axis assignments."""
         if self.plot_mode == 'time':
             self.path_info_label.setText("")
+            return
+        if self.plot_mode == 'fft':
+            self.path_info_label.setText("FFT: frequency spectrum of each trace")
             return
         enabled = self.get_enabled_traces()
         if self.plot_mode == 'xy':
@@ -1911,6 +1946,81 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.gl_cursor_item.translate(x_vals[-1], y_vals[-1], z_vals[-1])
             return
 
+        # ── FFT Mode ──
+        if self.plot_mode == 'fft':
+            # Compute sample rate from time array
+            if len(time_arr) < 2:
+                return
+            sample_dt = float(time_arr[1] - time_arr[0])
+            if sample_dt <= 0:
+                return
+            n = len(time_arr)
+            freqs = np.fft.rfftfreq(n, d=sample_dt)
+
+            for trace in enabled_traces:
+                trace_id = id(trace)
+                if trace_id not in self.plot_items:
+                    continue
+                pi = self.plot_items[trace_id]
+                param_name = trace.get_display_name()
+                color = trace.get_color()
+                if param_name not in plot_data['params']:
+                    continue
+                values = plot_data['params'][param_name]
+
+                # Compute single-sided amplitude spectrum
+                # Remove DC by subtracting mean, apply Hanning window to reduce spectral leakage
+                centered = values - np.mean(values)
+                window = np.hanning(n)
+                windowed = centered * window
+                fft_vals = np.fft.rfft(windowed)
+                # Normalize: 2/n compensates single-sided, divide by window sum for amplitude
+                window_sum = np.sum(window)
+                magnitude = np.abs(fft_vals) * 2.0 / window_sum
+                # DC component should not be doubled (already near zero after centering)
+                magnitude[0] /= 2.0
+
+                if trace_id not in self.curves:
+                    if pi.legend is None:
+                        pi.addLegend(
+                            offset=(10, 5),
+                            brush=pg.mkBrush('#2B2B2BBB'),
+                            pen=pg.mkPen('#606060'),
+                            labelTextColor='#d4d4d4',
+                            labelTextSize='9pt',
+                        )
+                    pen = pg.mkPen(color, width=self.line_width)
+                    curve = pi.plot(name=param_name, pen=pen)
+                    curve.setClipToView(True)
+                    curve.setDownsampling(auto=True, method='peak')
+                    self.curves[trace_id] = curve
+
+                self.curves[trace_id].setData(freqs, magnitude)
+
+                # Peak frequency annotation
+                if len(magnitude) > 1:
+                    # Skip DC bin (index 0)
+                    peak_idx = np.argmax(magnitude[1:]) + 1
+                    peak_freq = float(freqs[peak_idx])
+                    peak_mag = float(magnitude[peak_idx])
+                    stats_html = (
+                        f'<span style="font-family: Segoe UI; font-size: 8pt;">'
+                        f'<span style="color: #FFA500;">Peak: {peak_freq:.2f} Hz</span><br>'
+                        f'<span style="color: #99FF99;">Mag: {peak_mag:.4f}</span>'
+                        f'</span>'
+                    )
+                    if trace_id not in self.stats_texts:
+                        txt = pg.TextItem(anchor=(1, 0))
+                        txt.setHtml(stats_html)
+                        pi.getViewBox().addItem(txt, ignoreBounds=True)
+                        self.stats_texts[trace_id] = txt
+                    else:
+                        self.stats_texts[trace_id].setHtml(stats_html)
+                    vb = pi.getViewBox()
+                    view_range = vb.viewRange()
+                    self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+            return
+
         # ── Normal time-based mode ──
         # Auto-scroll: keep the view following the latest data
         if self.auto_scroll and self.is_running:
@@ -2014,7 +2124,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         if len(time_arr) == 0:
             return
         first_pi = next(iter(self.plot_items.values()), None)
-        if first_pi and self.plot_mode not in ('xy', 'xyz'):
+        if first_pi and self.plot_mode not in ('xy', 'xyz', 'fft'):
             first_pi.setXRange(float(time_arr[0]), float(time_arr[-1]), padding=0.02)
 
     def clear_data(self):
@@ -2285,7 +2395,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Display / plot settings
         self.plot_mode = s.value("display/plot_mode", "time")
-        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(self.plot_mode, 0)
+        mode_index = {'time': 0, 'xy': 1, 'xyz': 2, 'fft': 3}.get(self.plot_mode, 0)
         self.plot_mode_combo.setCurrentIndex(mode_index)
         self.window_duration = float(s.value("display/window_duration", 5.0))
         self.lock_x_axis = s.value("display/lock_x_axis", "true") == "true"
