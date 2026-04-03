@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFrame,
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
     QDialog, QFileDialog, QMessageBox, QGridLayout,
-    QFormLayout, QSizePolicy
+    QFormLayout, QSizePolicy, QSplitter
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QSettings
 from PySide6.QtGui import QFont, QColor, QPen, QBrush
@@ -659,10 +659,13 @@ class ParameterScopeOscilloscope(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
 
-        # 2D Plot area
-        self.plot_widget = pg.GraphicsLayoutWidget()
-        self.plot_widget.setBackground('#0A0A0A')
-        right_layout.addWidget(self.plot_widget, 1)
+        # 2D Plot area — vertical splitter so scope heights are draggable
+        self.plot_splitter = QSplitter(Qt.Vertical)
+        self.plot_splitter.setHandleWidth(5)
+        self.plot_splitter.setStyleSheet(
+            "QSplitter::handle { background-color: #353536; }"
+        )
+        right_layout.addWidget(self.plot_splitter, 1)
 
         # 3D Plot area (hidden by default)
         self.gl_widget = gl.GLViewWidget()
@@ -709,12 +712,15 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     # ─── Plot management ────────────────────────────────────────────
 
-    def _create_scope_plot(self, row):
-        """Create a PlotItem with our custom ScopeViewBox and add it to the layout."""
+    def _create_scope_plot(self):
+        """Create a PlotItem inside its own GraphicsLayoutWidget and add to the splitter."""
         vb = ScopeViewBox()
         vb.doubleClicked.connect(self._on_plot_double_click)
         pi = pg.PlotItem(viewBox=vb)
-        self.plot_widget.addItem(pi, row=row, col=0)
+        pw = pg.GraphicsLayoutWidget()
+        pw.setBackground('#0A0A0A')
+        pw.addItem(pi, row=0, col=0)
+        self.plot_splitter.addWidget(pw)
         return pi
 
     def _on_plot_double_click(self):
@@ -728,7 +734,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         """Recreate subplots — one row per enabled trace for independent Y-scales.
         Each trace gets its own left Y-axis, color-coded. X-axes are linked.
         In XY mode, a single plot shows trace1 vs trace2."""
-        self.plot_widget.clear()
+        # Remove all plot widgets from the splitter
+        while self.plot_splitter.count():
+            w = self.plot_splitter.widget(0)
+            w.setParent(None)
+            w.deleteLater()
         self.plot_items = {}
         self.curves = {}
         self.stats_texts = {}
@@ -737,7 +747,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         enabled_traces = self.get_enabled_traces()
 
         if not enabled_traces:
-            pi = self._create_scope_plot(row=0)
+            pi = self._create_scope_plot()
             self._configure_plot(pi, show_xlabel=True)
             self.plot_items['empty'] = pi
             return
@@ -746,12 +756,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         if self.plot_mode == 'xy':
             self._update_path_info_label()
             if len(enabled_traces) < 2:
-                pi = self._create_scope_plot(row=0)
+                pi = self._create_scope_plot()
                 self._configure_plot(pi, show_xlabel=True)
                 self.plot_items['empty'] = pi
                 return
 
-            pi = self._create_scope_plot(row=0)
+            pi = self._create_scope_plot()
             vb = pi.getViewBox()
             vb.setBackgroundColor(self.plot_bg_color)
             pi.showGrid(x=True, y=True, alpha=self.grid_alpha)
@@ -782,7 +792,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         num_subplots = len(enabled_traces)
 
         for row, trace in enumerate(enabled_traces):
-            pi = self._create_scope_plot(row=row)
+            pi = self._create_scope_plot()
             is_last = (row == num_subplots - 1)
             self._configure_plot(pi, show_xlabel=is_last)
 
@@ -932,11 +942,11 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Show/hide 2D vs 3D widgets
         if self.plot_mode == 'xyz':
-            self.plot_widget.hide()
+            self.plot_splitter.hide()
             self.gl_widget.show()
         else:
             self.gl_widget.hide()
-            self.plot_widget.show()
+            self.plot_splitter.show()
 
         self._recreate_subplots()
 
