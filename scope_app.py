@@ -1383,15 +1383,18 @@ class ParameterScopeOscilloscope(QMainWindow):
             time.sleep(0.05)
             last_sample_idx = 0
             sample_offset = 0  # cumulative offset across restarts
+            reload_gap_sec = 0.0  # accumulated wall-clock time lost during reloads
+            wall_clock_start = time.perf_counter()  # wall-clock reference for gap compensation
             self._pending_status = "Capturing (continuous)..."
 
             while self.is_running and self.trio_connected:
                 batch_data, new_idx = self.scope_engine.read_new_data(last_sample_idx, max_samples=0)
                 if batch_data and batch_data['num_samples'] > 0:
-                    # Shift time values by cumulative offset so data appends
-                    if sample_offset > 0:
-                        sample_period = batch_data['sample_period']
-                        batch_data['time'] = batch_data['time'] + sample_offset * sample_period
+                    # Shift time values by cumulative offset + accumulated reload gaps
+                    sample_period = batch_data['sample_period']
+                    time_shift = sample_offset * sample_period + reload_gap_sec
+                    if time_shift > 0:
+                        batch_data['time'] = batch_data['time'] + time_shift
                     self._push_data(batch_data)
                     last_sample_idx = new_idx
 
@@ -1401,6 +1404,10 @@ class ParameterScopeOscilloscope(QMainWindow):
                     self.scope_engine.stop_capture()
                     self._push_segment_break()
                     self.scope_engine.start_capture()
+                    # Compute accumulated reload gap from wall-clock vs ideal sample time
+                    wall_elapsed = time.perf_counter() - wall_clock_start
+                    ideal_time = sample_offset * sample_period
+                    reload_gap_sec = max(0.0, wall_elapsed - ideal_time)
                     time.sleep(0.005)
                     last_sample_idx = 0
 
