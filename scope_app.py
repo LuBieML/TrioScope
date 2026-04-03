@@ -132,6 +132,11 @@ TRACE_COLORS = [
     '#AED581',  # Light Green
 ]
 
+CURSOR_COLORS = {
+    'c1': '#FFD700',  # Gold
+    'c2': '#00CED1',  # Dark Turquoise
+}
+
 # Dark theme stylesheet
 DARK_STYLESHEET = """
 QMainWindow, QWidget {
@@ -492,6 +497,13 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.curves = {}        # {display_name: PlotDataItem}
         self.stats_texts = {}   # {trace_id: pg.TextItem}
 
+        # Cursor / measurement tool
+        self._cursors_enabled = False
+        self._cursor_lines_c1 = {}   # {plot_key: InfiniteLine}
+        self._cursor_lines_c2 = {}
+        self._cursor_pos = {'c1': 0.0, 'c2': 0.0}
+        self._cursor_updating = False  # prevent recursive signal loops
+
         # Settings window
         self._settings_window = None
 
@@ -677,6 +689,26 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Create initial empty plot
         self._recreate_subplots()
 
+        # -- Cursor readout panel (hidden until cursors toggled on) --
+        self.cursor_readout = QFrame()
+        self.cursor_readout.setFixedHeight(78)
+        self.cursor_readout.setStyleSheet(
+            "QFrame { background-color: #1a1a2e; border: 1px solid #4b4a4a;"
+            " border-radius: 4px; }"
+        )
+        readout_inner = QVBoxLayout(self.cursor_readout)
+        readout_inner.setContentsMargins(10, 4, 10, 4)
+        readout_inner.setSpacing(0)
+        self.cursor_readout_label = QLabel("")
+        self.cursor_readout_label.setStyleSheet(
+            "color: #d4d4d4; font-family: Consolas; font-size: 9pt;"
+            " background: transparent; border: none;"
+        )
+        self.cursor_readout_label.setTextFormat(Qt.RichText)
+        readout_inner.addWidget(self.cursor_readout_label)
+        self.cursor_readout.hide()
+        right_layout.addWidget(self.cursor_readout)
+
         # -- Status bar --
         status_frame = QWidget()
         status_frame.setStyleSheet("background-color: #353536;")
@@ -697,6 +729,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.chk_lock_x.setChecked(True)
         self.chk_lock_x.toggled.connect(self._on_lock_x_changed)
         status_layout.addWidget(self.chk_lock_x)
+
+        self.btn_cursors = QPushButton("\u2295 Cursors")
+        self.btn_cursors.setFixedWidth(100)
+        self.btn_cursors.setCheckable(True)
+        self.btn_cursors.toggled.connect(self._toggle_cursors)
+        status_layout.addWidget(self.btn_cursors)
 
         status_layout.addStretch()
 
@@ -742,6 +780,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.plot_items = {}
         self.curves = {}
         self.stats_texts = {}
+        self._cursor_lines_c1.clear()
+        self._cursor_lines_c2.clear()
         self._xy_auto_range = True
 
         enabled_traces = self.get_enabled_traces()
@@ -805,6 +845,10 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Link X-axes for synchronized scrolling
         self._update_x_links()
+
+        # Re-add cursor lines if cursors are active
+        if self._cursors_enabled:
+            self._add_cursors_to_plots()
 
     def _configure_plot(self, plot_item, show_xlabel=True):
         """Configure a PlotItem with standard settings"""
@@ -875,6 +919,189 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._xy_auto_range = False
         if not self.is_running and self.accumulated_data is not None:
             self._render_plots()
+
+    # ─── Cursor / measurement tool ───────────────────────────────
+
+    def _toggle_cursors(self, checked):
+        """Toggle cursor measurement mode on/off."""
+        self._cursors_enabled = checked
+        if checked:
+            self._init_cursor_positions()
+            self._add_cursors_to_plots()
+            self.cursor_readout.show()
+            self._update_cursor_readout()
+            self.btn_cursors.setStyleSheet(
+                "background-color: #3a3a5c; border: 1px solid #FFD700;"
+            )
+        else:
+            self._remove_cursors_from_plots()
+            self.cursor_readout.hide()
+            self.btn_cursors.setStyleSheet("")
+
+    def _init_cursor_positions(self):
+        """Set initial cursor positions to 1/3 and 2/3 of the visible range."""
+        if self.accumulated_data is not None and len(self.accumulated_data['time']) > 0:
+            t = self.accumulated_data['time']
+            # Use visible range if available, otherwise full data range
+            first_pi = next(iter(self.plot_items.values()), None)
+            if first_pi and self.plot_mode == 'time':
+                vr = first_pi.getViewBox().viewRange()
+                t_min, t_max = vr[0]
+            else:
+                t_min, t_max = float(t[0]), float(t[-1])
+            span = t_max - t_min
+            self._cursor_pos['c1'] = t_min + span * 0.33
+            self._cursor_pos['c2'] = t_min + span * 0.67
+        else:
+            self._cursor_pos['c1'] = 0.0
+            self._cursor_pos['c2'] = 1.0
+
+    def _add_cursors_to_plots(self):
+        """Add draggable cursor lines to all current subplots."""
+        self._remove_cursors_from_plots()
+        if self.plot_mode != 'time':
+            return
+        for plot_key, pi in self.plot_items.items():
+            for cid, color, store in [
+                ('c1', CURSOR_COLORS['c1'], self._cursor_lines_c1),
+                ('c2', CURSOR_COLORS['c2'], self._cursor_lines_c2),
+            ]:
+                line = pg.InfiniteLine(
+                    pos=self._cursor_pos[cid],
+                    angle=90,
+                    movable=True,
+                    pen=pg.mkPen(color, width=1.5, style=Qt.DashLine),
+                    hoverPen=pg.mkPen(color, width=2.5),
+                    label=cid.upper(),
+                    labelOpts={
+                        'position': 0.95,
+                        'color': color,
+                        'fill': pg.mkBrush('#2B2B2BBB'),
+                        'movable': True,
+                    },
+                )
+                line.setZValue(1000)
+                # Tag line so the callback knows which cursor it is
+                line._cursor_id = cid
+                line.sigPositionChanged.connect(self._on_cursor_line_moved)
+                pi.addItem(line)
+                store[plot_key] = line
+
+    def _remove_cursors_from_plots(self):
+        """Remove all cursor lines from plots."""
+        for store in (self._cursor_lines_c1, self._cursor_lines_c2):
+            for plot_key, line in store.items():
+                if plot_key in self.plot_items:
+                    try:
+                        self.plot_items[plot_key].removeItem(line)
+                    except Exception:
+                        pass
+            store.clear()
+
+    def _on_cursor_line_moved(self, line):
+        """Called when any cursor line is dragged — sync all lines of same cursor."""
+        if self._cursor_updating:
+            return
+        cid = line._cursor_id
+        new_x = line.value()
+        self._cursor_pos[cid] = new_x
+        self._cursor_updating = True
+        try:
+            store = self._cursor_lines_c1 if cid == 'c1' else self._cursor_lines_c2
+            for pk, other_line in store.items():
+                if other_line is not line:
+                    other_line.setValue(new_x)
+        finally:
+            self._cursor_updating = False
+        self._update_cursor_readout()
+
+    def _get_value_at_time(self, param_name, t):
+        """Interpolate parameter value at time t from accumulated data."""
+        if self.accumulated_data is None:
+            return None
+        time_arr = self.accumulated_data['time']
+        if len(time_arr) == 0 or param_name not in self.accumulated_data['params']:
+            return None
+        values = self.accumulated_data['params'][param_name]
+        # Clamp to data range
+        if t <= time_arr[0]:
+            return float(values[0])
+        if t >= time_arr[-1]:
+            return float(values[-1])
+        # Find nearest sample (use searchsorted for efficiency)
+        idx = np.searchsorted(time_arr, t)
+        # Pick the closer of the two neighboring samples
+        if idx > 0 and (idx >= len(time_arr) or
+                        abs(time_arr[idx - 1] - t) <= abs(time_arr[idx] - t)):
+            idx = idx - 1
+        return float(values[idx])
+
+    def _update_cursor_readout(self):
+        """Update the cursor readout panel with current cursor values."""
+        if not self._cursors_enabled or self.plot_mode != 'time':
+            self.cursor_readout_label.setText("")
+            return
+
+        enabled_traces = self.get_enabled_traces()
+        t1 = self._cursor_pos['c1']
+        t2 = self._cursor_pos['c2']
+        dt = t2 - t1
+
+        # Build HTML table for readout
+        param_cells_c1 = []
+        param_cells_c2 = []
+        param_cells_delta = []
+
+        for trace in enabled_traces:
+            pname = trace.get_display_name()
+            color = trace.get_color()
+            v1 = self._get_value_at_time(pname, t1)
+            v2 = self._get_value_at_time(pname, t2)
+            v1_str = f"{v1:.4f}" if v1 is not None else "---"
+            v2_str = f"{v2:.4f}" if v2 is not None else "---"
+            if v1 is not None and v2 is not None:
+                dv = v2 - v1
+                dv_str = f"{dv:+.4f}"
+            else:
+                dv_str = "---"
+            param_cells_c1.append(
+                f'<td style="padding: 0 12px;">'
+                f'<span style="color:{color};">{pname}:</span> {v1_str}</td>'
+            )
+            param_cells_c2.append(
+                f'<td style="padding: 0 12px;">'
+                f'<span style="color:{color};">{pname}:</span> {v2_str}</td>'
+            )
+            param_cells_delta.append(
+                f'<td style="padding: 0 12px;">'
+                f'<span style="color:{color};">\u0394{pname}:</span> {dv_str}</td>'
+            )
+
+        # Frequency from delta-t
+        if abs(dt) > 1e-9:
+            freq = 1.0 / abs(dt)
+            freq_str = f"{freq:.2f} Hz"
+        else:
+            freq_str = "--- Hz"
+
+        c1_color = CURSOR_COLORS['c1']
+        c2_color = CURSOR_COLORS['c2']
+
+        html = (
+            '<table cellspacing="0" cellpadding="1" style="font-family: Consolas; font-size: 9pt;">'
+            f'<tr><td style="color:{c1_color}; font-weight:bold; padding-right:8px;">C1</td>'
+            f'<td style="padding: 0 12px;">t = {t1:.6f} s</td>'
+            f'{"".join(param_cells_c1)}</tr>'
+            f'<tr><td style="color:{c2_color}; font-weight:bold; padding-right:8px;">C2</td>'
+            f'<td style="padding: 0 12px;">t = {t2:.6f} s</td>'
+            f'{"".join(param_cells_c2)}</tr>'
+            f'<tr><td style="color:#FFA500; font-weight:bold; padding-right:8px;">\u0394</td>'
+            f'<td style="padding: 0 12px;">\u0394t = {dt:+.6f} s</td>'
+            f'{"".join(param_cells_delta)}'
+            f'<td style="padding: 0 12px; color:#FFA500;">f = {freq_str}</td></tr>'
+            '</table>'
+        )
+        self.cursor_readout_label.setText(html)
 
     def _setup_3d_view(self):
         """Set up 3D OpenGL view with grid and axes for XYZ path mode."""
@@ -947,6 +1174,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         else:
             self.gl_widget.hide()
             self.plot_splitter.show()
+
+        # Cursors only work in time mode — show/hide readout accordingly
+        if self._cursors_enabled:
+            self.cursor_readout.setVisible(self.plot_mode == 'time')
 
         self._recreate_subplots()
 
@@ -1745,6 +1976,10 @@ class ParameterScopeOscilloscope(QMainWindow):
             view_range = vb.viewRange()
             self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
 
+        # Update cursor readout if cursors are active
+        if self._cursors_enabled:
+            self._update_cursor_readout()
+
     # ─── Controls ───────────────────────────────────────────────────
 
     def stop_capture(self):
@@ -1796,6 +2031,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._recreate_subplots()
         self.sample_counter_label.setText("Samples: 0")
         self.status_label.setText("Data cleared")
+        if self._cursors_enabled:
+            self._update_cursor_readout()
 
     def export_to_csv(self):
         if self.accumulated_data is None:
