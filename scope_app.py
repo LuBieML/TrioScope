@@ -1644,20 +1644,21 @@ class ParameterScopeOscilloscope(QMainWindow):
             values = plot_data['params'][param_name]
 
             if trace_id not in self.curves:
+                # Ensure legend exists before adding curves so they auto-register
+                if pi.legend is None:
+                    pi.addLegend(
+                        offset=(10, 5),
+                        brush=pg.mkBrush('#2B2B2BBB'),
+                        pen=pg.mkPen('#606060'),
+                        labelTextColor='#d4d4d4',
+                        labelTextSize='9pt'
+                    )
                 pen = pg.mkPen(color, width=self.line_width)
                 curve = pi.plot(name=param_name, pen=pen)
                 # Let pyqtgraph handle downsampling and clipping for performance
                 curve.setClipToView(True)
                 curve.setDownsampling(auto=True, method='peak')
                 self.curves[trace_id] = curve
-                # Add legend
-                pi.addLegend(
-                    offset=(10, 5),
-                    brush=pg.mkBrush('#2B2B2BBB'),
-                    pen=pg.mkPen('#606060'),
-                    labelTextColor='#d4d4d4',
-                    labelTextSize='9pt'
-                )
 
             self.curves[trace_id].setData(time_arr, values)
 
