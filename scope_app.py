@@ -490,6 +490,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Plot items and curves
         self.plot_items = {}    # {key: PlotItem}
         self.curves = {}        # {display_name: PlotDataItem}
+        self.stats_texts = {}   # {trace_id: pg.TextItem}
 
         # Settings window
         self._settings_window = None
@@ -730,6 +731,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.plot_widget.clear()
         self.plot_items = {}
         self.curves = {}
+        self.stats_texts = {}
         self._xy_auto_range = True
 
         enabled_traces = self.get_enabled_traces()
@@ -812,11 +814,22 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Disable auto-scroll when user manually interacts
         vb.sigRangeChangedManually.connect(self._on_manual_range_change)
 
+        # Reposition stats text when view range changes (pan/zoom)
+        vb.sigRangeChanged.connect(self._reposition_stats_texts)
+
     def _on_manual_range_change(self, _changes):
         """When user manually pans/zooms, disable auto-scroll"""
         if self.is_running and self.auto_scroll:
             self.auto_scroll = False
             self._update_auto_scroll_button()
+
+    def _reposition_stats_texts(self, vb):
+        """Reposition stats text items to top-right of the visible area."""
+        for trace_id, pi in self.plot_items.items():
+            if trace_id in self.stats_texts and pi.getViewBox() is vb:
+                view_range = vb.viewRange()
+                self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+                break
 
     def _on_xy_manual_zoom(self, _changes):
         """When user manually pans/zooms in XY mode, stop auto-fitting."""
@@ -886,6 +899,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.plot_mode = modes[index]
         self._update_path_info_label()
         self.curves = {}
+        self.stats_texts = {}
 
         # Show/hide 2D vs 3D widgets
         if self.plot_mode == 'xyz':
@@ -938,6 +952,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Remove destroyed traces
         self.traces = [t for t in self.traces if t.parent() is not None]
         self.curves = {}
+        self.stats_texts = {}
         self._update_path_info_label()
         self._recreate_subplots()
 
@@ -1249,6 +1264,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Rebuild subplots and clear old curves
         self.curves = {}
+        self.stats_texts = {}
         self._recreate_subplots()
 
         try:
@@ -1662,6 +1678,27 @@ class ParameterScopeOscilloscope(QMainWindow):
 
             self.curves[trace_id].setData(time_arr, values)
 
+            # Update min/max stats text in top-right corner
+            v_min = float(np.min(values))
+            v_max = float(np.max(values))
+            stats_html = (
+                f'<span style="font-family: Segoe UI; font-size: 8pt;">'
+                f'<span style="color: #FF9999;">Min: {v_min:.4f}</span><br>'
+                f'<span style="color: #99FF99;">Max: {v_max:.4f}</span>'
+                f'</span>'
+            )
+            if trace_id not in self.stats_texts:
+                txt = pg.TextItem(anchor=(1, 0))
+                txt.setHtml(stats_html)
+                pi.getViewBox().addItem(txt, ignoreBounds=True)
+                self.stats_texts[trace_id] = txt
+            else:
+                self.stats_texts[trace_id].setHtml(stats_html)
+            # Position in top-right of visible area
+            vb = pi.getViewBox()
+            view_range = vb.viewRange()
+            self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+
     # ─── Controls ───────────────────────────────────────────────────
 
     def stop_capture(self):
@@ -1707,6 +1744,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._param_chunks = {}
             self._segment_breaks = []
         self.curves = {}
+        self.stats_texts = {}
         self.gl_line_item = None
         self.gl_cursor_item = None
         self._recreate_subplots()
