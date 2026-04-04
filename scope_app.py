@@ -1344,6 +1344,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._update_path_info_label()
         self._recreate_subplots()
 
+        # Re-render captured data when scope is stopped (e.g. toggling FFT)
+        if not self.is_running and self.accumulated_data is not None:
+            self._render_plots()
+
     def get_enabled_traces(self):
         return [t for t in self.traces if t.is_enabled()]
 
