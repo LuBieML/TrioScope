@@ -536,6 +536,13 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Settings window
         self._settings_window = None
 
+        # FFT performance caches
+        self._fft_cache = {}        # {trace_id: {'data_len': int, 'cursor_key': tuple, 'freqs': array, 'magnitude': array}}
+        self._fft_window_cache = (0, None)  # (n_fft, hanning_window)
+        self._fft_dirty = True      # set True when cursor moves; timer picks it up
+        self._fft_peak_cache = {}   # {trace_id: (peak_freq, peak_mag)}
+        self._fft_max_samples = 16384  # cap FFT size when cursors disabled
+
         self._create_ui()
         self._load_settings()
 
@@ -1082,9 +1089,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         finally:
             self._cursor_updating = False
         self._update_cursor_readout()
-        # Re-render FFT traces when cursor window changes
-        if any(t.is_fft() for t in self.get_enabled_traces()) and self.accumulated_data is not None:
-            self._render_plots()
+        # Mark FFT dirty so the next timer tick re-renders (avoid per-pixel recompute)
+        if any(t.is_fft() for t in self.get_enabled_traces()):
+            self._fft_dirty = True
+            # If capture is stopped (timer not running), render directly
+            if not self._update_timer.isActive() and self.accumulated_data is not None:
+                self._render_plots()
 
     def _get_value_at_time(self, param_name, t):
         """Interpolate parameter value at time t from accumulated data."""
@@ -1321,6 +1331,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.traces = [t for t in self.traces if t.parent() is not None]
         self.curves = {}
         self.stats_texts = {}
+        self._fft_cache = {}
+        self._fft_peak_cache = {}
         self._update_path_info_label()
         self._recreate_subplots()
 
@@ -2025,6 +2037,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         freqs = None
         fft_time = time_arr
         fft_params = plot_data['params']
+        fft_cursor_key = None
         if has_fft_traces and len(time_arr) >= 2:
             sample_dt = float(time_arr[1] - time_arr[0])
             if sample_dt > 0:
@@ -2046,9 +2059,20 @@ class ParameterScopeOscilloscope(QMainWindow):
                         self.path_info_label.setText(
                             "FFT: cursor window too narrow \u2014 using full data")
                 else:
-                    self.path_info_label.setText("FFT: full capture (enable cursors to window)")
+                    # Cap FFT size to last N samples for performance
+                    if len(fft_time) > self._fft_max_samples:
+                        fft_time = fft_time[-self._fft_max_samples:]
+                        fft_params = {k: v[-self._fft_max_samples:] for k, v in plot_data['params'].items()}
+                    self.path_info_label.setText(
+                        f"FFT: last {len(fft_time)} pts (enable cursors to window)")
                 n_fft = len(fft_time)
                 freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
+                # Cache Hanning window — reuse if size unchanged
+                if self._fft_window_cache[0] != n_fft:
+                    self._fft_window_cache = (n_fft, np.hanning(n_fft))
+                fft_cursor_key = (round(self._cursor_pos['c1'], 6),
+                                  round(self._cursor_pos['c2'], 6)) if self._cursors_enabled else None
+        self._fft_dirty = False
 
         for trace in enabled_traces:
             trace_id = id(trace)
@@ -2066,14 +2090,24 @@ class ParameterScopeOscilloscope(QMainWindow):
                 values = fft_params[param_name]
                 n_fft = len(fft_time)
 
-                # Compute single-sided amplitude spectrum
-                centered = values - np.mean(values)
-                window = np.hanning(n_fft)
-                windowed = centered * window
-                fft_vals = np.fft.rfft(windowed)
-                window_sum = np.sum(window)
-                magnitude = np.abs(fft_vals) * 2.0 / window_sum
-                magnitude[0] /= 2.0
+                # Check FFT cache — skip recompute if data unchanged
+                cache_key = (n_fft, len(time_arr), fft_cursor_key)
+                cached = self._fft_cache.get(trace_id)
+                if cached and cached['key'] == cache_key:
+                    magnitude = cached['magnitude']
+                else:
+                    # Compute single-sided amplitude spectrum
+                    centered = values - np.mean(values)
+                    window = self._fft_window_cache[1]
+                    windowed = centered * window
+                    fft_vals = np.fft.rfft(windowed)
+                    window_sum = np.sum(window)
+                    magnitude = np.abs(fft_vals) * 2.0 / window_sum
+                    magnitude[0] /= 2.0
+                    self._fft_cache[trace_id] = {
+                        'key': cache_key,
+                        'magnitude': magnitude,
+                    }
 
                 if trace_id not in self.curves:
                     if pi.legend is None:
@@ -2092,24 +2126,27 @@ class ParameterScopeOscilloscope(QMainWindow):
 
                 self.curves[trace_id].setData(freqs, magnitude)
 
-                # Peak frequency annotation
+                # Peak frequency annotation (throttled — only update when values change)
                 if len(magnitude) > 1:
                     peak_idx = np.argmax(magnitude[1:]) + 1
-                    peak_freq = float(freqs[peak_idx])
-                    peak_mag = float(magnitude[peak_idx])
-                    stats_html = (
-                        f'<span style="font-family: Segoe UI; font-size: 8pt;">'
-                        f'<span style="color: #FFA500;">Peak: {peak_freq:.2f} Hz</span><br>'
-                        f'<span style="color: #99FF99;">Mag: {peak_mag:.4f}</span>'
-                        f'</span>'
-                    )
-                    if trace_id not in self.stats_texts:
-                        txt = pg.TextItem(anchor=(1, 0))
-                        txt.setHtml(stats_html)
-                        pi.getViewBox().addItem(txt, ignoreBounds=True)
-                        self.stats_texts[trace_id] = txt
-                    else:
-                        self.stats_texts[trace_id].setHtml(stats_html)
+                    peak_freq = round(float(freqs[peak_idx]), 2)
+                    peak_mag = round(float(magnitude[peak_idx]), 4)
+                    prev_peak = self._fft_peak_cache.get(trace_id)
+                    if prev_peak != (peak_freq, peak_mag):
+                        self._fft_peak_cache[trace_id] = (peak_freq, peak_mag)
+                        stats_html = (
+                            f'<span style="font-family: Segoe UI; font-size: 8pt;">'
+                            f'<span style="color: #FFA500;">Peak: {peak_freq:.2f} Hz</span><br>'
+                            f'<span style="color: #99FF99;">Mag: {peak_mag:.4f}</span>'
+                            f'</span>'
+                        )
+                        if trace_id not in self.stats_texts:
+                            txt = pg.TextItem(anchor=(1, 0))
+                            txt.setHtml(stats_html)
+                            pi.getViewBox().addItem(txt, ignoreBounds=True)
+                            self.stats_texts[trace_id] = txt
+                        else:
+                            self.stats_texts[trace_id].setHtml(stats_html)
                     vb = pi.getViewBox()
                     view_range = vb.viewRange()
                     self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])

@@ -10,7 +10,9 @@
       "Bash(.venv/Scripts/python -m pip install pyinstaller)",
       "Bash(.venv/Scripts/python build_exe.py)",
       "Bash(python -c \"import py_compile; py_compile.compile\\('scope_app.py', doraise=True\\)\")",
-      "Bash(timeout 5 python scope_app.py)"
+      "Bash(timeout 5 python scope_app.py)",
+      "Bash(grep -E \"\\\\.py$|^d\")",
+      "Bash(git show:*)"
     ]
   }
 }
