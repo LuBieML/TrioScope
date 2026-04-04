@@ -537,11 +537,13 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._settings_window = None
 
         # FFT performance caches
-        self._fft_cache = {}        # {trace_id: {'data_len': int, 'cursor_key': tuple, 'freqs': array, 'magnitude': array}}
+        self._fft_cache = {}        # {trace_id: {'key': tuple, 'magnitude': array}}
         self._fft_window_cache = (0, None)  # (n_fft, hanning_window)
         self._fft_dirty = True      # set True when cursor moves; timer picks it up
         self._fft_peak_cache = {}   # {trace_id: (peak_freq, peak_mag)}
         self._fft_max_samples = 16384  # cap FFT size when cursors disabled
+        self._last_data_len = 0     # track data growth to skip redundant setData
+        self._stats_cache = {}      # {trace_id: (v_min_str, v_max_str)}
 
         self._create_ui()
         self._load_settings()
@@ -961,16 +963,21 @@ class ParameterScopeOscilloscope(QMainWindow):
             if sample_dt <= 0:
                 continue
             visible_points = visible_span / sample_dt
-            if visible_points <= 2000:
+            want_dots = visible_points <= 2000
+            # Track state to avoid redundant symbol toggling (each call triggers repaint)
+            had_dots = getattr(curve, '_has_dots', False)
+            if want_dots and not had_dots:
                 curve.setDownsampling(ds=1)
                 color = curve.opts['pen'].color()
                 curve.setSymbol('o')
                 curve.setSymbolSize(4)
                 curve.setSymbolBrush(color)
                 curve.setSymbolPen(None)
-            else:
+                curve._has_dots = True
+            elif not want_dots and had_dots:
                 curve.setSymbol(None)
                 curve.setDownsampling(auto=True, method='peak')
+                curve._has_dots = False
 
     def _on_xy_manual_zoom(self, _changes):
         """When user manually pans/zooms in XY mode, stop auto-fitting."""
@@ -1333,6 +1340,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.stats_texts = {}
         self._fft_cache = {}
         self._fft_peak_cache = {}
+        self._stats_cache = {}
         self._update_path_info_label()
         self._recreate_subplots()
 
@@ -2174,22 +2182,25 @@ class ParameterScopeOscilloscope(QMainWindow):
 
                 self.curves[trace_id].setData(time_arr, values)
 
-                # Update min/max stats text in top-right corner
-                v_min = float(np.min(values))
-                v_max = float(np.max(values))
-                stats_html = (
-                    f'<span style="font-family: Segoe UI; font-size: 8pt;">'
-                    f'<span style="color: #FF9999;">Min: {v_min:.4f}</span><br>'
-                    f'<span style="color: #99FF99;">Max: {v_max:.4f}</span>'
-                    f'</span>'
-                )
-                if trace_id not in self.stats_texts:
-                    txt = pg.TextItem(anchor=(1, 0))
-                    txt.setHtml(stats_html)
-                    pi.getViewBox().addItem(txt, ignoreBounds=True)
-                    self.stats_texts[trace_id] = txt
-                else:
-                    self.stats_texts[trace_id].setHtml(stats_html)
+                # Update min/max stats text (throttled — only when display string changes)
+                v_min_s = f"{float(np.min(values)):.4f}"
+                v_max_s = f"{float(np.max(values)):.4f}"
+                prev_stats = self._stats_cache.get(trace_id)
+                if prev_stats != (v_min_s, v_max_s):
+                    self._stats_cache[trace_id] = (v_min_s, v_max_s)
+                    stats_html = (
+                        f'<span style="font-family: Segoe UI; font-size: 8pt;">'
+                        f'<span style="color: #FF9999;">Min: {v_min_s}</span><br>'
+                        f'<span style="color: #99FF99;">Max: {v_max_s}</span>'
+                        f'</span>'
+                    )
+                    if trace_id not in self.stats_texts:
+                        txt = pg.TextItem(anchor=(1, 0))
+                        txt.setHtml(stats_html)
+                        pi.getViewBox().addItem(txt, ignoreBounds=True)
+                        self.stats_texts[trace_id] = txt
+                    else:
+                        self.stats_texts[trace_id].setHtml(stats_html)
                 vb = pi.getViewBox()
                 view_range = vb.viewRange()
                 self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
