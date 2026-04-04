@@ -46,6 +46,11 @@ except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure Trio_UnifiedApi is installed and scope_engine.py is in src/scope/")
 
+try:
+    from ai.analysis_panel import AIAnalysisPanel
+except ImportError:
+    AIAnalysisPanel = None
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -538,6 +543,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Settings window
         self._settings_window = None
 
+        # AI Analysis
+        self._ai_panel = None
+
         # FFT performance caches
         self._fft_cache = {}        # {trace_id: {'key': tuple, 'magnitude': array}}
         self._fft_window_cache = (0, None)  # (n_fft, hanning_window)
@@ -702,6 +710,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         btn_import = QPushButton("\u2912 Import CSV")
         btn_import.clicked.connect(self.import_from_csv)
         ctrl_grid.addWidget(btn_import, 2, 1)
+
+        # Row 3: AI Analysis
+        btn_ai = QPushButton("\u2728 AI Analysis")
+        btn_ai.clicked.connect(self._toggle_ai_panel)
+        ctrl_grid.addWidget(btn_ai, 3, 0, 1, 2)
 
         left_layout.addLayout(ctrl_grid)
 
@@ -2558,6 +2571,39 @@ class ParameterScopeOscilloscope(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
 
+    # ─── AI Analysis ──────────────────────────────────────────────
+
+    def _toggle_ai_panel(self):
+        """Show/hide the AI analysis dock panel."""
+        if AIAnalysisPanel is None:
+            QMessageBox.warning(self, "AI Analysis",
+                                "AI module not available. Check src/ai/ is present.")
+            return
+
+        if self._ai_panel is None:
+            self._ai_panel = AIAnalysisPanel(self)
+            self._ai_panel.set_data_provider(self._get_scope_data_for_ai)
+            # Restore saved API key and model
+            s = QSettings("TrioScope", "ParameterScope")
+            api_key = s.value("ai/api_key", "")
+            model = s.value("ai/model", "openai/gpt-4.1-mini")
+            if api_key:
+                self._ai_panel.set_api_key(api_key)
+            self._ai_panel.set_model(model)
+            self.addDockWidget(Qt.RightDockWidgetArea, self._ai_panel)
+        else:
+            self._ai_panel.setVisible(not self._ai_panel.isVisible())
+
+    def _get_scope_data_for_ai(self):
+        """Data provider callback for AI panel. Returns (time_arr, params_dict)."""
+        if self.accumulated_data is None:
+            return None, None
+        time_arr = self.accumulated_data.get('time')
+        params = self.accumulated_data.get('params')
+        if time_arr is None or len(time_arr) == 0:
+            return None, None
+        return time_arr, params
+
     def open_settings(self):
         if self._settings_window is not None:
             try:
@@ -2569,7 +2615,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.setFixedSize(300, 420)
+        dlg.setFixedSize(300, 520)
         dlg.setStyleSheet(DARK_STYLESHEET)
         dlg.setAttribute(Qt.WA_DeleteOnClose)
         dlg.destroyed.connect(lambda: setattr(self, '_settings_window', None))
@@ -2617,6 +2663,25 @@ class ParameterScopeOscilloscope(QMainWindow):
         style_layout.addRow("Plot background:", plot_bg_edit)
         main_layout.addWidget(style_group)
 
+        # AI Analysis section
+        ai_group = QGroupBox("AI Analysis (NanoGPT)")
+        ai_layout = QFormLayout(ai_group)
+
+        s_ai = QSettings("TrioScope", "ParameterScope")
+        ai_key_edit = QLineEdit(s_ai.value("ai/api_key", ""))
+        ai_key_edit.setEchoMode(QLineEdit.Password)
+        ai_key_edit.setPlaceholderText("Enter NanoGPT API key")
+        ai_layout.addRow("API Key:", ai_key_edit)
+
+        ai_model_edit = QComboBox()
+        if AIAnalysisPanel is not None:
+            from ai.nanogpt_client import NanoGPTClient
+            ai_model_edit.addItems(NanoGPTClient.AVAILABLE_MODELS)
+        ai_model_edit.setCurrentText(s_ai.value("ai/model", "openai/gpt-4.1-mini"))
+        ai_model_edit.setEditable(True)
+        ai_layout.addRow("Model:", ai_model_edit)
+        main_layout.addWidget(ai_group)
+
         # Buttons
         btn_layout = QHBoxLayout()
 
@@ -2631,6 +2696,13 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.grid_alpha = max(0.0, min(1.0, float(grid_a_edit.text())))
                 self.plot_bg_color = plot_bg_edit.text()
                 self._apply_plot_settings()
+                # AI settings
+                s_save = QSettings("TrioScope", "ParameterScope")
+                s_save.setValue("ai/api_key", ai_key_edit.text().strip())
+                s_save.setValue("ai/model", ai_model_edit.currentText().strip())
+                if self._ai_panel is not None:
+                    self._ai_panel.set_api_key(ai_key_edit.text().strip())
+                    self._ai_panel.set_model(ai_model_edit.currentText().strip())
                 self.status_label.setText("Settings applied")
             except ValueError as e:
                 QMessageBox.critical(dlg, "Invalid value", str(e))
