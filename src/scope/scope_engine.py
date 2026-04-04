@@ -334,13 +334,18 @@ class ScopeEngine:
 
         return config_info
 
-    def start_capture(self):
+    def start_capture(self, auto_retrigger=False):
         """
         Start SCOPE capture to TABLE.
 
         According to Trio documentation:
         1. SCOPE(ON, ...) arms the scope
-        2. TRIGGER actually starts capturing
+        2. TRIGGER starts capturing (one-shot)
+        3. TRIGGER(1) starts capturing with auto-retrigger at end of each scan
+
+        Args:
+            auto_retrigger: If True, use TRIGGER(1) so the controller
+                           automatically restarts capture when the buffer fills.
 
         Raises:
             Exception: If SCOPE or TRIGGER fails
@@ -359,9 +364,13 @@ class ScopeEngine:
 
             logger.debug(f"Arming SCOPE: {scope_command}")
             self.connection.Execute(scope_command)
-            self.connection.Execute("TRIGGER")
-            self.is_capturing = True
-            logger.debug("SCOPE capture started")
+
+            if auto_retrigger:
+                self.connection.Execute("TRIGGER(1)")
+                logger.debug("SCOPE capture started (auto-retrigger)")
+            else:
+                self.connection.Execute("TRIGGER")
+                logger.debug("SCOPE capture started (single-shot)")
 
         except Exception as e:
             logger.error(f"Failed to start SCOPE: {e}")

@@ -1764,44 +1764,43 @@ class ParameterScopeOscilloscope(QMainWindow):
     def _scope_continuous_thread(self):
         """Continuous capture — background thread.
 
-        Restarts SCOPE capture each time the buffer fills so data keeps flowing.
+        Uses TRIGGER(1) for auto-retrigger: the controller automatically
+        restarts capture when the buffer fills, eliminating PC-side
+        stop/restart gaps and timing compensation.
         """
         try:
             samples_per_param = (
                 (self.scope_engine.table_end - self.scope_engine.table_start + 1)
                 // self.scope_engine.num_params
             )
-            self.scope_engine.start_capture()
+            sample_period = self.scope_engine.period_cycles * self.scope_engine.servo_period_sec
+
+            self.scope_engine.start_capture(auto_retrigger=True)
             time.sleep(0.05)
             last_sample_idx = 0
-            sample_offset = 0  # cumulative offset across restarts
-            reload_gap_sec = 0.0  # accumulated wall-clock time lost during reloads
-            wall_clock_start = time.perf_counter()  # wall-clock reference for gap compensation
+            sample_offset = 0  # cumulative sample offset across wraps
             self._pending_status = "Capturing (continuous)..."
 
             while self.is_running and self.trio_connected:
                 batch_data, new_idx = self.scope_engine.read_new_data(last_sample_idx, max_samples=0)
+
                 if batch_data and batch_data['num_samples'] > 0:
-                    # Shift time values by cumulative offset + accumulated reload gaps
-                    sample_period = batch_data['sample_period']
-                    time_shift = sample_offset * sample_period + reload_gap_sec
+                    # Shift time by cumulative offset from previous scans
+                    time_shift = sample_offset * sample_period
                     if time_shift > 0:
                         batch_data['time'] = batch_data['time'] + time_shift
                     self._push_data(batch_data)
                     last_sample_idx = new_idx
-
-                # Buffer full — restart capture
-                if last_sample_idx >= samples_per_param:
-                    sample_offset += last_sample_idx
-                    self.scope_engine.stop_capture()
-                    self._push_segment_break()
-                    self.scope_engine.start_capture()
-                    # Compute accumulated reload gap from wall-clock vs ideal sample time
-                    wall_elapsed = time.perf_counter() - wall_clock_start
-                    ideal_time = sample_offset * sample_period
-                    reload_gap_sec = max(0.0, wall_elapsed - ideal_time)
-                    time.sleep(0.005)
-                    last_sample_idx = 0
+                else:
+                    # Detect auto-retrigger wrap: SCOPE_POS resets to 0
+                    try:
+                        scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
+                        if scope_pos < last_sample_idx and last_sample_idx > 0:
+                            sample_offset += samples_per_param
+                            last_sample_idx = 0
+                            continue
+                    except Exception:
+                        pass
 
                 time.sleep(0.010)
 
@@ -2159,9 +2158,10 @@ class ParameterScopeOscilloscope(QMainWindow):
                             self.stats_texts[trace_id] = txt
                         else:
                             self.stats_texts[trace_id].setHtml(stats_html)
-                    vb = pi.getViewBox()
-                    view_range = vb.viewRange()
-                    self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+                    if trace_id in self.stats_texts:
+                        vb = pi.getViewBox()
+                        view_range = vb.viewRange()
+                        self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
             else:
                 # ── Time-domain rendering for this trace ──
                 if param_name not in plot_data['params']:
@@ -2205,9 +2205,10 @@ class ParameterScopeOscilloscope(QMainWindow):
                         self.stats_texts[trace_id] = txt
                     else:
                         self.stats_texts[trace_id].setHtml(stats_html)
-                vb = pi.getViewBox()
-                view_range = vb.viewRange()
-                self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+                if trace_id in self.stats_texts:
+                    vb = pi.getViewBox()
+                    view_range = vb.viewRange()
+                    self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
 
         # Update cursor readout if cursors are active (time-domain traces only)
         if self._cursors_enabled:
