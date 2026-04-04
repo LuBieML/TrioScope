@@ -510,12 +510,14 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.grid_alpha = 0.3
         self.line_width = 1.8
         self.plot_bg_color = '#0A0A0A'
-        self.plot_mode = 'time'  # 'time', 'xy', 'xyz'
+        self.plot_mode = 'time'  # 'time', 'xy', 'xyz', 'xyzw'
 
         # 3D view state
         self.gl_widget = None
         self.gl_line_item = None
         self.gl_cursor_item = None
+        self.gl_colorbar_items = []  # color bar legend items for XYZW mode
+        self._gl_line_segments = None
 
         # Trace controls
         self.traces = []
@@ -617,11 +619,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Plot mode selector
         config_layout.addWidget(QLabel("Plot Mode:"), 3, 0)
         self.plot_mode_combo = QComboBox()
-        self.plot_mode_combo.addItems(["Time", "XY (2D path)", "XYZ (3D path)"])
+        self.plot_mode_combo.addItems(["Time", "XY (2D path)", "XYZ (3D path)", "XYZW (4D path)"])
         self.plot_mode_combo.setToolTip(
             "Time: standard time-based oscilloscope\n"
             "XY: Trace 1→X, Trace 2→Y (2D CNC path)\n"
             "XYZ: Trace 1→X, Trace 2→Y, Trace 3→Z (3D path)\n"
+            "XYZW: Trace 1→X, Trace 2→Y, Trace 3→Z, Trace 4→Color (4D path)\n"
             "Use the FFT button on each trace for per-trace spectrum analysis"
         )
         self.plot_mode_combo.currentIndexChanged.connect(self._on_plot_mode_changed)
@@ -862,8 +865,8 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.plot_items['xy'] = pi
             return
 
-        # XYZ mode: 3D OpenGL view with first three traces as X, Y, Z
-        if self.plot_mode == 'xyz':
+        # XYZ/XYZW mode: 3D OpenGL view
+        if self.plot_mode in ('xyz', 'xyzw'):
             self._update_path_info_label()
             self._setup_3d_view()
             return
@@ -1196,12 +1199,14 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.cursor_readout_label.setText(html)
 
     def _setup_3d_view(self):
-        """Set up 3D OpenGL view with grid and axes for XYZ path mode."""
+        """Set up 3D OpenGL view with grid and axes for XYZ/XYZW path mode."""
         # Clear previous items
         for item in self.gl_widget.items[:]:
             self.gl_widget.removeItem(item)
         self.gl_line_item = None
         self.gl_cursor_item = None
+        self._gl_line_segments = None
+        self.gl_colorbar_items = []
 
         # Add ground grid (will be resized dynamically to fit data)
         self.gl_grid_item = gl.GLGridItem()
@@ -1234,6 +1239,60 @@ class ParameterScopeOscilloscope(QMainWindow):
                 txt = gl.GLTextItem(pos=pos, text=text, color=(212, 212, 212, 200), font=font)
                 self.gl_widget.addItem(txt)
 
+        # XYZW mode: add a color bar legend in 3D space
+        if self.plot_mode == 'xyzw' and len(enabled) >= 4:
+            self._build_3d_colorbar(axis_len, enabled[3].get_display_name())
+
+    def _build_3d_colorbar(self, axis_len, w_label):
+        """Build a vertical color bar in 3D space showing the turbo colormap."""
+        self.gl_colorbar_items = []
+        cmap = pg.colormap.get('turbo')
+        num_segments = 30
+        bar_x = axis_len + 10  # offset to the right of the scene
+        bar_height = axis_len * 0.8
+        seg_h = bar_height / num_segments
+
+        for i in range(num_segments):
+            t = i / (num_segments - 1)
+            color = cmap.map([t], mode='float')[0]
+            z_base = i * seg_h
+            pts = np.array([
+                [bar_x, 0, z_base],
+                [bar_x, 0, z_base + seg_h]
+            ], dtype=np.float32)
+            seg = gl.GLLinePlotItem(pos=pts, color=tuple(color), width=12, antialias=True)
+            self.gl_widget.addItem(seg)
+            self.gl_colorbar_items.append(seg)
+
+        # Min / Max labels (placeholders, updated with real data later)
+        font = QFont('Segoe UI', 7)
+        self._cb_min_label = gl.GLTextItem(
+            pos=[bar_x + 2, 0, -2], text="min",
+            color=(212, 212, 212, 200), font=font)
+        self.gl_widget.addItem(self._cb_min_label)
+        self.gl_colorbar_items.append(self._cb_min_label)
+
+        self._cb_max_label = gl.GLTextItem(
+            pos=[bar_x + 2, 0, bar_height + 1], text="max",
+            color=(212, 212, 212, 200), font=font)
+        self.gl_widget.addItem(self._cb_max_label)
+        self.gl_colorbar_items.append(self._cb_max_label)
+
+        # W parameter name label
+        title_font = QFont('Segoe UI', 8)
+        self._cb_title_label = gl.GLTextItem(
+            pos=[bar_x - 2, 0, bar_height + 5], text=w_label,
+            color=(255, 165, 0, 220), font=title_font)
+        self.gl_widget.addItem(self._cb_title_label)
+        self.gl_colorbar_items.append(self._cb_title_label)
+
+    def _update_colorbar_range(self, w_min, w_max):
+        """Update the color bar min/max labels with actual data values."""
+        if hasattr(self, '_cb_min_label') and self._cb_min_label is not None:
+            self._cb_min_label.setData(text=f"{w_min:.2f}")
+        if hasattr(self, '_cb_max_label') and self._cb_max_label is not None:
+            self._cb_max_label.setData(text=f"{w_max:.2f}")
+
     def _update_x_links(self):
         """Link or unlink X-axes across subplots, partitioned by time/FFT."""
         # Unlink everything first
@@ -1265,14 +1324,14 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._update_x_links()
 
     def _on_plot_mode_changed(self, index):
-        modes = ['time', 'xy', 'xyz']
+        modes = ['time', 'xy', 'xyz', 'xyzw']
         self.plot_mode = modes[index]
         self._update_path_info_label()
         self.curves = {}
         self.stats_texts = {}
 
         # Show/hide 2D vs 3D widgets
-        if self.plot_mode == 'xyz':
+        if self.plot_mode in ('xyz', 'xyzw'):
             self.plot_splitter.hide()
             self.gl_widget.show()
         else:
@@ -1317,6 +1376,15 @@ class ParameterScopeOscilloscope(QMainWindow):
                     f"X: {enabled[0].get_display_name()}  |  "
                     f"Y: {enabled[1].get_display_name()}  |  "
                     f"Z: {enabled[2].get_display_name()}")
+        elif self.plot_mode == 'xyzw':
+            if len(enabled) < 4:
+                self.path_info_label.setText("Enable at least 4 traces for XYZW")
+            else:
+                self.path_info_label.setText(
+                    f"X: {enabled[0].get_display_name()}  |  "
+                    f"Y: {enabled[1].get_display_name()}  |  "
+                    f"Z: {enabled[2].get_display_name()}  |  "
+                    f"W(color): {enabled[3].get_display_name()}")
 
     # ─── Trace management ───────────────────────────────────────────
 
@@ -2030,6 +2098,99 @@ class ParameterScopeOscilloscope(QMainWindow):
                     self.gl_widget.addItem(self.gl_cursor_item)
                 self.gl_cursor_item.resetTransform()
                 self.gl_cursor_item.translate(x_vals[-1], y_vals[-1], z_vals[-1])
+            return
+
+        # ── XYZW Mode (4D: color-mapped W) ──
+        if self.plot_mode == 'xyzw' and len(enabled_traces) >= 4:
+            x_name = enabled_traces[0].get_display_name()
+            y_name = enabled_traces[1].get_display_name()
+            z_name = enabled_traces[2].get_display_name()
+            w_name = enabled_traces[3].get_display_name()
+
+            if not all(n in plot_data['params'] for n in (x_name, y_name, z_name, w_name)):
+                return
+
+            x_vals = plot_data['params'][x_name]
+            y_vals = plot_data['params'][y_name]
+            z_vals = plot_data['params'][z_name]
+            w_vals = plot_data['params'][w_name]
+
+            # Downsample for rendering if too many points
+            max_xyz_points = 8000
+            n = len(x_vals)
+            if n > max_xyz_points:
+                step = n // max_xyz_points
+                idx = np.arange(0, n, step)
+                if idx[-1] != n - 1:
+                    idx = np.append(idx, n - 1)
+                x_ds, y_ds, z_ds, w_ds = x_vals[idx], y_vals[idx], z_vals[idx], w_vals[idx]
+            else:
+                x_ds, y_ds, z_ds, w_ds = x_vals, y_vals, z_vals, w_vals
+
+            pts = np.column_stack([x_ds, y_ds, z_ds]).astype(np.float32)
+
+            # Normalize W values to [0, 1] for color mapping
+            w_min, w_max = float(w_ds.min()), float(w_ds.max())
+            if w_max - w_min > 1e-12:
+                w_norm = (w_ds - w_min) / (w_max - w_min)
+            else:
+                w_norm = np.full_like(w_ds, 0.5)
+
+            # Map to turbo colormap (Nx4 RGBA float array)
+            cmap = pg.colormap.get('turbo')
+            colors = cmap.map(w_norm, mode='float')
+
+            # GLLinePlotItem needs per-segment approach; use scatter for per-point color
+            # and a line with averaged segment colors
+            if self.gl_line_item is None:
+                self.gl_line_item = gl.GLScatterPlotItem(
+                    pos=pts, color=colors, size=2.5, pxMode=True)
+                self.gl_widget.addItem(self.gl_line_item)
+                # Also add a thin connecting line using segment-averaged colors
+                if len(pts) > 1:
+                    seg_colors = (colors[:-1] + colors[1:]) / 2.0
+                    self._gl_line_segments = gl.GLLinePlotItem(
+                        pos=pts, color=seg_colors, width=self.line_width, antialias=True)
+                    self.gl_widget.addItem(self._gl_line_segments)
+            else:
+                self.gl_line_item.setData(pos=pts, color=colors, size=2.5)
+                if hasattr(self, '_gl_line_segments') and self._gl_line_segments is not None and len(pts) > 1:
+                    seg_colors = (colors[:-1] + colors[1:]) / 2.0
+                    self._gl_line_segments.setData(pos=pts, color=seg_colors)
+
+            # Dynamically resize grid
+            if self.gl_grid_item is not None and len(x_vals) > 0:
+                x_lo = min(x_vals.min(), 0)
+                x_hi = max(x_vals.max(), 0)
+                y_lo = min(y_vals.min(), 0)
+                y_hi = max(y_vals.max(), 0)
+                gm = max(x_hi - x_lo, y_hi - y_lo, 10) * 0.2
+                x_lo -= gm; x_hi += gm
+                y_lo -= gm; y_hi += gm
+                sx = x_hi - x_lo
+                sy = y_hi - y_lo
+                spacing = max(1, round(max(sx, sy) / 15,
+                              -int(np.floor(np.log10(max(max(sx, sy) / 15, 0.1))))))
+                cx = (x_hi + x_lo) / 2
+                cy = (y_hi + y_lo) / 2
+                self.gl_grid_item.setSize(sx, sy)
+                self.gl_grid_item.setSpacing(spacing, spacing)
+                self.gl_grid_item.resetTransform()
+                self.gl_grid_item.translate(cx, cy, 0)
+
+            # Current position sphere
+            if len(x_vals) > 0:
+                if self.gl_cursor_item is None:
+                    md = gl.MeshData.sphere(rows=10, cols=10, radius=0.5)
+                    self.gl_cursor_item = gl.GLMeshItem(
+                        meshdata=md, smooth=True,
+                        color=(1.0, 0.33, 0.33, 1.0), shader='balloon')
+                    self.gl_widget.addItem(self.gl_cursor_item)
+                self.gl_cursor_item.resetTransform()
+                self.gl_cursor_item.translate(x_vals[-1], y_vals[-1], z_vals[-1])
+
+            # Update color bar range labels
+            self._update_colorbar_range(w_min, w_max)
             return
 
         # ── Per-trace rendering (time or FFT per trace) ──
