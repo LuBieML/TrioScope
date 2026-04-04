@@ -402,7 +402,30 @@ class TraceControl(QFrame):
             f"font-family: Consolas; font-size: 9pt; font-weight: bold;"
         )
         self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        layout.addWidget(self.value_label, 1, 1, 1, 3)
+        layout.addWidget(self.value_label, 1, 1, 1, 2)
+
+        self.btn_fft = QPushButton("FFT")
+        self.btn_fft.setCheckable(True)
+        self.btn_fft.setFixedSize(36, 22)
+        self.btn_fft.setToolTip("Toggle FFT spectrum display for this trace")
+        self.btn_fft.setStyleSheet("""
+            QPushButton {
+                background-color: #4b4a4a;
+                color: #888;
+                border: 1px solid #606060;
+                border-radius: 2px;
+                font-size: 8pt;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QPushButton:checked {
+                background-color: #8B4513;
+                color: #FFA500;
+                border: 1px solid #FFA500;
+            }
+        """)
+        self.btn_fft.toggled.connect(lambda: self.changed.emit())
+        layout.addWidget(self.btn_fft, 1, 3)
 
         # Color bar
         color_bar = QFrame()
@@ -428,6 +451,12 @@ class TraceControl(QFrame):
 
     def update_value(self, value):
         self.value_label.setText(f"{value:>10.4f}")
+
+    def is_fft(self):
+        return self.btn_fft.isChecked()
+
+    def set_fft(self, enabled):
+        self.btn_fft.setChecked(enabled)
 
     def get_color(self):
         return self.color
@@ -579,12 +608,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Plot mode selector
         config_layout.addWidget(QLabel("Plot Mode:"), 3, 0)
         self.plot_mode_combo = QComboBox()
-        self.plot_mode_combo.addItems(["Time", "XY (2D path)", "XYZ (3D path)", "FFT (Spectrum)"])
+        self.plot_mode_combo.addItems(["Time", "XY (2D path)", "XYZ (3D path)"])
         self.plot_mode_combo.setToolTip(
             "Time: standard time-based oscilloscope\n"
             "XY: Trace 1→X, Trace 2→Y (2D CNC path)\n"
             "XYZ: Trace 1→X, Trace 2→Y, Trace 3→Z (3D path)\n"
-            "FFT: frequency spectrum of each trace"
+            "Use the FFT button on each trace for per-trace spectrum analysis"
         )
         self.plot_mode_combo.currentIndexChanged.connect(self._on_plot_mode_changed)
         config_layout.addWidget(self.plot_mode_combo, 3, 1, 1, 2)
@@ -830,27 +859,15 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._setup_3d_view()
             return
 
-        # FFT mode: one subplot per trace, frequency on X-axis
-        if self.plot_mode == 'fft':
-            self._update_path_info_label()
-            num_subplots = len(enabled_traces)
-            for row, trace in enumerate(enabled_traces):
-                pi = self._create_scope_plot()
-                is_last = (row == num_subplots - 1)
-                self._configure_fft_plot(pi, show_xlabel=is_last)
-                color = trace.get_color()
-                pi.getAxis('left').setPen(pg.mkPen(color))
-                pi.getAxis('left').setTextPen(pg.mkPen(color))
-                self.plot_items[id(trace)] = pi
-            self._update_x_links()
-            return
-
         num_subplots = len(enabled_traces)
 
         for row, trace in enumerate(enabled_traces):
             pi = self._create_scope_plot()
             is_last = (row == num_subplots - 1)
-            self._configure_plot(pi, show_xlabel=is_last)
+            if trace.is_fft():
+                self._configure_fft_plot(pi, show_xlabel=is_last)
+            else:
+                self._configure_plot(pi, show_xlabel=is_last)
 
             # Color-code left Y-axis to match trace
             color = trace.get_color()
@@ -859,7 +876,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
             self.plot_items[id(trace)] = pi
 
-        # Link X-axes for synchronized scrolling
+        # Link X-axes for synchronized scrolling (partitioned by time/FFT)
         self._update_x_links()
 
         # Re-add cursor lines if cursors are active
@@ -918,12 +935,16 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _update_curve_detail(self, vb):
         """Show/hide sample dots and adjust downsampling based on zoom level."""
-        if self.plot_mode != 'time':
+        if self.plot_mode in ('xy', 'xyz'):
             return
         view_range = vb.viewRange()
         visible_span = view_range[0][1] - view_range[0][0]
         for trace_id, pi in self.plot_items.items():
             if pi.getViewBox() is not vb or trace_id not in self.curves:
+                continue
+            # Skip FFT traces — dot detail only applies to time-domain
+            trace_obj = next((t for t in self.traces if id(t) == trace_id), None)
+            if trace_obj is not None and trace_obj.is_fft():
                 continue
             curve = self.curves[trace_id]
             xData = curve.xData
@@ -958,7 +979,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         if checked:
             self._init_cursor_positions()
             self._add_cursors_to_plots()
-            if self.plot_mode == 'time':
+            has_time = any(not t.is_fft() for t in self.get_enabled_traces())
+            if self.plot_mode == 'time' and has_time:
                 self.cursor_readout.show()
             self._update_cursor_readout()
             self.btn_cursors.setStyleSheet(
@@ -968,8 +990,8 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._remove_cursors_from_plots()
             self.cursor_readout.hide()
             self.btn_cursors.setStyleSheet("")
-        # Re-render FFT with/without cursor window
-        if self.plot_mode == 'fft' and self.accumulated_data is not None:
+        # Re-render FFT traces with/without cursor window
+        if any(t.is_fft() for t in self.get_enabled_traces()) and self.accumulated_data is not None:
             self.curves = {}
             self.stats_texts = {}
             self._recreate_subplots()
@@ -980,7 +1002,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         if self.accumulated_data is not None and len(self.accumulated_data['time']) > 0:
             t = self.accumulated_data['time']
             # Use visible range if available, otherwise full data range
-            first_pi = next(iter(self.plot_items.values()), None)
+            # Use first time-domain plot for visible range
+            first_pi = None
+            for tr in self.get_enabled_traces():
+                if not tr.is_fft() and id(tr) in self.plot_items:
+                    first_pi = self.plot_items[id(tr)]
+                    break
             if first_pi and self.plot_mode == 'time':
                 vr = first_pi.getViewBox().viewRange()
                 t_min, t_max = vr[0]
@@ -994,11 +1021,15 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._cursor_pos['c2'] = 1.0
 
     def _add_cursors_to_plots(self):
-        """Add draggable cursor lines to all current subplots."""
+        """Add draggable cursor lines to time-domain subplots."""
         self._remove_cursors_from_plots()
-        if self.plot_mode != 'time':
+        if self.plot_mode in ('xy', 'xyz'):
             return
+        # Only add cursors to time-domain traces (not FFT subplots)
+        fft_plot_keys = {id(t) for t in self.get_enabled_traces() if t.is_fft()}
         for plot_key, pi in self.plot_items.items():
+            if plot_key in fft_plot_keys:
+                continue
             for cid, color, store in [
                 ('c1', CURSOR_COLORS['c1'], self._cursor_lines_c1),
                 ('c2', CURSOR_COLORS['c2'], self._cursor_lines_c2),
@@ -1051,6 +1082,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         finally:
             self._cursor_updating = False
         self._update_cursor_readout()
+        # Re-render FFT traces when cursor window changes
+        if any(t.is_fft() for t in self.get_enabled_traces()) and self.accumulated_data is not None:
+            self._render_plots()
 
     def _get_value_at_time(self, param_name, t):
         """Interpolate parameter value at time t from accumulated data."""
@@ -1075,11 +1109,15 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _update_cursor_readout(self):
         """Update the cursor readout panel with current cursor values."""
-        if not self._cursors_enabled or self.plot_mode != 'time':
+        if not self._cursors_enabled or self.plot_mode in ('xy', 'xyz'):
             self.cursor_readout_label.setText("")
             return
 
-        enabled_traces = self.get_enabled_traces()
+        # Only show readout for time-domain traces
+        enabled_traces = [t for t in self.get_enabled_traces() if not t.is_fft()]
+        if not enabled_traces:
+            self.cursor_readout_label.setText("")
+            return
         t1 = self._cursor_pos['c1']
         t2 = self._cursor_pos['c2']
         dt = t2 - t1
@@ -1180,25 +1218,37 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.gl_widget.addItem(txt)
 
     def _update_x_links(self):
-        """Link or unlink X-axes across all subplots"""
-        items = list(self.plot_items.values())
-        if len(items) <= 1:
+        """Link or unlink X-axes across subplots, partitioned by time/FFT."""
+        # Unlink everything first
+        for pi in self.plot_items.values():
+            pi.setXLink(None)
+
+        if not self.lock_x_axis:
             return
 
-        if self.lock_x_axis:
-            first = items[0]
-            for pi in items[1:]:
-                pi.setXLink(first)
-        else:
-            for pi in items:
-                pi.setXLink(None)
+        # Partition into time and FFT groups
+        time_plots = []
+        fft_plots = []
+        for trace in self.get_enabled_traces():
+            tid = id(trace)
+            if tid in self.plot_items:
+                if trace.is_fft():
+                    fft_plots.append(self.plot_items[tid])
+                else:
+                    time_plots.append(self.plot_items[tid])
+
+        # Link within each group
+        for group in (time_plots, fft_plots):
+            if len(group) > 1:
+                for pi in group[1:]:
+                    pi.setXLink(group[0])
 
     def _on_lock_x_changed(self, checked):
         self.lock_x_axis = checked
         self._update_x_links()
 
     def _on_plot_mode_changed(self, index):
-        modes = ['time', 'xy', 'xyz', 'fft']
+        modes = ['time', 'xy', 'xyz']
         self.plot_mode = modes[index]
         self._update_path_info_label()
         self.curves = {}
@@ -1212,9 +1262,11 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.gl_widget.hide()
             self.plot_splitter.show()
 
-        # Cursor readout only in time mode; cursor positions persist for FFT windowing
+        # Cursor readout visible when any trace is in time mode
         if self._cursors_enabled:
-            self.cursor_readout.setVisible(self.plot_mode == 'time')
+            has_time = self.plot_mode == 'time' and any(
+                not t.is_fft() for t in self.get_enabled_traces())
+            self.cursor_readout.setVisible(has_time)
 
         self._recreate_subplots()
 
@@ -1225,10 +1277,12 @@ class ParameterScopeOscilloscope(QMainWindow):
     def _update_path_info_label(self):
         """Update path mode info label showing axis assignments."""
         if self.plot_mode == 'time':
-            self.path_info_label.setText("")
-            return
-        if self.plot_mode == 'fft':
-            self.path_info_label.setText("FFT: frequency spectrum of each trace")
+            fft_count = sum(1 for t in self.get_enabled_traces() if t.is_fft())
+            if fft_count > 0:
+                self.path_info_label.setText(
+                    f"FFT: {fft_count} trace(s) in spectrum mode")
+            else:
+                self.path_info_label.setText("")
             return
         enabled = self.get_enabled_traces()
         if self.plot_mode == 'xy':
@@ -1955,60 +2009,70 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.gl_cursor_item.translate(x_vals[-1], y_vals[-1], z_vals[-1])
             return
 
-        # ── FFT Mode ──
-        if self.plot_mode == 'fft':
-            if len(time_arr) < 2:
-                return
-            sample_dt = float(time_arr[1] - time_arr[0])
-            if sample_dt <= 0:
-                return
+        # ── Per-trace rendering (time or FFT per trace) ──
 
-            # Windowed FFT: if cursors are enabled, use C1–C2 time window
-            fft_time = time_arr
-            fft_params = plot_data['params']
-            if self._cursors_enabled:
-                t1 = min(self._cursor_pos['c1'], self._cursor_pos['c2'])
-                t2 = max(self._cursor_pos['c1'], self._cursor_pos['c2'])
-                mask = (time_arr >= t1) & (time_arr <= t2)
-                if np.sum(mask) >= 2:
-                    fft_time = time_arr[mask]
-                    fft_params = {k: v[mask] for k, v in plot_data['params'].items()}
-                    duration = float(fft_time[-1] - fft_time[0])
-                    freq_res = 1.0 / duration if duration > 0 else 0
-                    self.path_info_label.setText(
-                        f"FFT window: {t1:.3f}s \u2192 {t2:.3f}s "
-                        f"({duration:.3f}s, {len(fft_time)} pts, "
-                        f"\u0394f={freq_res:.2f} Hz)")
-                else:
-                    self.path_info_label.setText(
-                        "FFT: cursor window too narrow — using full data")
-            else:
-                self.path_info_label.setText("FFT: full capture (enable cursors to window)")
-
-            n = len(fft_time)
-            freqs = np.fft.rfftfreq(n, d=sample_dt)
-
+        # Auto-scroll: apply only to the first time-domain plot
+        if self.auto_scroll and self.is_running:
+            max_time = time_arr[-1]
+            min_time = max(0, max_time - self.window_duration)
             for trace in enabled_traces:
-                trace_id = id(trace)
-                if trace_id not in self.plot_items:
-                    continue
-                pi = self.plot_items[trace_id]
-                param_name = trace.get_display_name()
-                color = trace.get_color()
-                if param_name not in fft_params:
+                if not trace.is_fft() and id(trace) in self.plot_items:
+                    self.plot_items[id(trace)].setXRange(min_time, max_time, padding=0)
+                    break
+
+        # Precompute FFT shared data if any trace needs it
+        has_fft_traces = any(t.is_fft() for t in enabled_traces)
+        freqs = None
+        fft_time = time_arr
+        fft_params = plot_data['params']
+        if has_fft_traces and len(time_arr) >= 2:
+            sample_dt = float(time_arr[1] - time_arr[0])
+            if sample_dt > 0:
+                # Windowed FFT: if cursors are enabled, use C1\u2013C2 time window
+                if self._cursors_enabled:
+                    t1 = min(self._cursor_pos['c1'], self._cursor_pos['c2'])
+                    t2 = max(self._cursor_pos['c1'], self._cursor_pos['c2'])
+                    mask = (time_arr >= t1) & (time_arr <= t2)
+                    if np.sum(mask) >= 2:
+                        fft_time = time_arr[mask]
+                        fft_params = {k: v[mask] for k, v in plot_data['params'].items()}
+                        duration = float(fft_time[-1] - fft_time[0])
+                        freq_res = 1.0 / duration if duration > 0 else 0
+                        self.path_info_label.setText(
+                            f"FFT window: {t1:.3f}s \u2192 {t2:.3f}s "
+                            f"({duration:.3f}s, {len(fft_time)} pts, "
+                            f"\u0394f={freq_res:.2f} Hz)")
+                    else:
+                        self.path_info_label.setText(
+                            "FFT: cursor window too narrow \u2014 using full data")
+                else:
+                    self.path_info_label.setText("FFT: full capture (enable cursors to window)")
+                n_fft = len(fft_time)
+                freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
+
+        for trace in enabled_traces:
+            trace_id = id(trace)
+            if trace_id not in self.plot_items:
+                continue
+
+            pi = self.plot_items[trace_id]
+            param_name = trace.get_display_name()
+            color = trace.get_color()
+
+            if trace.is_fft():
+                # ── FFT rendering for this trace ──
+                if freqs is None or param_name not in fft_params:
                     continue
                 values = fft_params[param_name]
+                n_fft = len(fft_time)
 
                 # Compute single-sided amplitude spectrum
-                # Remove DC by subtracting mean, apply Hanning window to reduce spectral leakage
                 centered = values - np.mean(values)
-                window = np.hanning(n)
+                window = np.hanning(n_fft)
                 windowed = centered * window
                 fft_vals = np.fft.rfft(windowed)
-                # Normalize: 2/n compensates single-sided, divide by window sum for amplitude
                 window_sum = np.sum(window)
                 magnitude = np.abs(fft_vals) * 2.0 / window_sum
-                # DC component should not be doubled (already near zero after centering)
                 magnitude[0] /= 2.0
 
                 if trace_id not in self.curves:
@@ -2030,7 +2094,6 @@ class ParameterScopeOscilloscope(QMainWindow):
 
                 # Peak frequency annotation
                 if len(magnitude) > 1:
-                    # Skip DC bin (index 0)
                     peak_idx = np.argmax(magnitude[1:]) + 1
                     peak_freq = float(freqs[peak_idx])
                     peak_mag = float(magnitude[peak_idx])
@@ -2050,74 +2113,51 @@ class ParameterScopeOscilloscope(QMainWindow):
                     vb = pi.getViewBox()
                     view_range = vb.viewRange()
                     self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
-            return
-
-        # ── Normal time-based mode ──
-        # Auto-scroll: keep the view following the latest data
-        if self.auto_scroll and self.is_running:
-            max_time = time_arr[-1]
-            min_time = max(0, max_time - self.window_duration)
-            first_pi = next(iter(self.plot_items.values()), None)
-            if first_pi:
-                first_pi.setXRange(min_time, max_time, padding=0)
-
-        # Set ALL data on each curve — pyqtgraph handles clip-to-view and
-        # downsampling natively, so panning back always shows stored data.
-        for trace in enabled_traces:
-            trace_id = id(trace)
-            if trace_id not in self.plot_items:
-                continue
-
-            pi = self.plot_items[trace_id]
-            param_name = trace.get_display_name()
-            color = trace.get_color()
-
-            if param_name not in plot_data['params']:
-                continue
-
-            values = plot_data['params'][param_name]
-
-            if trace_id not in self.curves:
-                # Ensure legend exists before adding curves so they auto-register
-                if pi.legend is None:
-                    pi.addLegend(
-                        offset=(10, 5),
-                        brush=pg.mkBrush('#2B2B2BBB'),
-                        pen=pg.mkPen('#606060'),
-                        labelTextColor='#d4d4d4',
-                        labelTextSize='9pt'
-                    )
-                pen = pg.mkPen(color, width=self.line_width)
-                curve = pi.plot(name=param_name, pen=pen)
-                # Let pyqtgraph handle downsampling and clipping for performance
-                curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method='peak')
-                self.curves[trace_id] = curve
-
-            self.curves[trace_id].setData(time_arr, values)
-
-            # Update min/max stats text in top-right corner
-            v_min = float(np.min(values))
-            v_max = float(np.max(values))
-            stats_html = (
-                f'<span style="font-family: Segoe UI; font-size: 8pt;">'
-                f'<span style="color: #FF9999;">Min: {v_min:.4f}</span><br>'
-                f'<span style="color: #99FF99;">Max: {v_max:.4f}</span>'
-                f'</span>'
-            )
-            if trace_id not in self.stats_texts:
-                txt = pg.TextItem(anchor=(1, 0))
-                txt.setHtml(stats_html)
-                pi.getViewBox().addItem(txt, ignoreBounds=True)
-                self.stats_texts[trace_id] = txt
             else:
-                self.stats_texts[trace_id].setHtml(stats_html)
-            # Position in top-right of visible area
-            vb = pi.getViewBox()
-            view_range = vb.viewRange()
-            self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+                # ── Time-domain rendering for this trace ──
+                if param_name not in plot_data['params']:
+                    continue
 
-        # Update cursor readout if cursors are active
+                values = plot_data['params'][param_name]
+
+                if trace_id not in self.curves:
+                    if pi.legend is None:
+                        pi.addLegend(
+                            offset=(10, 5),
+                            brush=pg.mkBrush('#2B2B2BBB'),
+                            pen=pg.mkPen('#606060'),
+                            labelTextColor='#d4d4d4',
+                            labelTextSize='9pt'
+                        )
+                    pen = pg.mkPen(color, width=self.line_width)
+                    curve = pi.plot(name=param_name, pen=pen)
+                    curve.setClipToView(True)
+                    curve.setDownsampling(auto=True, method='peak')
+                    self.curves[trace_id] = curve
+
+                self.curves[trace_id].setData(time_arr, values)
+
+                # Update min/max stats text in top-right corner
+                v_min = float(np.min(values))
+                v_max = float(np.max(values))
+                stats_html = (
+                    f'<span style="font-family: Segoe UI; font-size: 8pt;">'
+                    f'<span style="color: #FF9999;">Min: {v_min:.4f}</span><br>'
+                    f'<span style="color: #99FF99;">Max: {v_max:.4f}</span>'
+                    f'</span>'
+                )
+                if trace_id not in self.stats_texts:
+                    txt = pg.TextItem(anchor=(1, 0))
+                    txt.setHtml(stats_html)
+                    pi.getViewBox().addItem(txt, ignoreBounds=True)
+                    self.stats_texts[trace_id] = txt
+                else:
+                    self.stats_texts[trace_id].setHtml(stats_html)
+                vb = pi.getViewBox()
+                view_range = vb.viewRange()
+                self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+
+        # Update cursor readout if cursors are active (time-domain traces only)
         if self._cursors_enabled:
             self._update_cursor_readout()
 
@@ -2154,9 +2194,14 @@ class ParameterScopeOscilloscope(QMainWindow):
         time_arr = self.accumulated_data['time']
         if len(time_arr) == 0:
             return
-        first_pi = next(iter(self.plot_items.values()), None)
-        if first_pi and self.plot_mode not in ('xy', 'xyz', 'fft'):
-            first_pi.setXRange(float(time_arr[0]), float(time_arr[-1]), padding=0.02)
+        if self.plot_mode in ('xy', 'xyz'):
+            return
+        # Fit only time-domain traces
+        for trace in self.get_enabled_traces():
+            if not trace.is_fft() and id(trace) in self.plot_items:
+                self.plot_items[id(trace)].setXRange(
+                    float(time_arr[0]), float(time_arr[-1]), padding=0.02)
+                break
 
     def clear_data(self):
         self.accumulated_data = None
@@ -2426,7 +2471,11 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Display / plot settings
         self.plot_mode = s.value("display/plot_mode", "time")
-        mode_index = {'time': 0, 'xy': 1, 'xyz': 2, 'fft': 3}.get(self.plot_mode, 0)
+        # Migration: old 'fft' global mode → 'time' with per-trace FFT
+        migrate_global_fft = (self.plot_mode == 'fft')
+        if migrate_global_fft:
+            self.plot_mode = 'time'
+        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(self.plot_mode, 0)
         self.plot_mode_combo.setCurrentIndex(mode_index)
         self.window_duration = float(s.value("display/window_duration", 5.0))
         self.lock_x_axis = s.value("display/lock_x_axis", "true") == "true"
@@ -2447,6 +2496,8 @@ class ParameterScopeOscilloscope(QMainWindow):
             t.param_combo.setCurrentText(param)
             t.axis_spin.setValue(axis)
             t.chk_enable.setChecked(enabled)
+            fft = s.value(f"traces/{i}/fft", "false") == "true" or migrate_global_fft
+            t.set_fft(fft)
 
         # If no traces were saved, add default
         if not self.traces:
@@ -2482,6 +2533,8 @@ class ParameterScopeOscilloscope(QMainWindow):
             s.setValue(f"traces/{i}/axis", t.axis_spin.value())
             s.setValue(f"traces/{i}/enabled",
                        "true" if t.chk_enable.isChecked() else "false")
+            s.setValue(f"traces/{i}/fft",
+                       "true" if t.is_fft() else "false")
 
     # ─── Cleanup ────────────────────────────────────────────────────
 
