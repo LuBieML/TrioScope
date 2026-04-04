@@ -900,8 +900,6 @@ class ParameterScopeOscilloscope(QMainWindow):
         plot_item.setLabel('left', 'Magnitude', color='#d4d4d4')
         plot_item.enableAutoRange(axis='y', enable=True)
         plot_item.setAutoVisible(y=True)
-        # Clamp X-axis to non-negative frequencies
-        vb.setLimits(xMin=0)
         vb.sigRangeChanged.connect(self._reposition_stats_texts)
 
     def _on_manual_range_change(self, _changes):
@@ -960,7 +958,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         if checked:
             self._init_cursor_positions()
             self._add_cursors_to_plots()
-            self.cursor_readout.show()
+            if self.plot_mode == 'time':
+                self.cursor_readout.show()
             self._update_cursor_readout()
             self.btn_cursors.setStyleSheet(
                 "background-color: #3a3a5c; border: 1px solid #FFD700;"
@@ -969,6 +968,12 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._remove_cursors_from_plots()
             self.cursor_readout.hide()
             self.btn_cursors.setStyleSheet("")
+        # Re-render FFT with/without cursor window
+        if self.plot_mode == 'fft' and self.accumulated_data is not None:
+            self.curves = {}
+            self.stats_texts = {}
+            self._recreate_subplots()
+            self._render_plots()
 
     def _init_cursor_positions(self):
         """Set initial cursor positions to 1/3 and 2/3 of the visible range."""
@@ -1207,11 +1212,15 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.gl_widget.hide()
             self.plot_splitter.show()
 
-        # Cursors only work in time mode — show/hide readout accordingly
+        # Cursor readout only in time mode; cursor positions persist for FFT windowing
         if self._cursors_enabled:
             self.cursor_readout.setVisible(self.plot_mode == 'time')
 
         self._recreate_subplots()
+
+        # Re-render static data in new mode (e.g. switching to FFT after capture)
+        if not self.is_running and self.accumulated_data is not None:
+            self._render_plots()
 
     def _update_path_info_label(self):
         """Update path mode info label showing axis assignments."""
@@ -1645,7 +1654,6 @@ class ParameterScopeOscilloscope(QMainWindow):
 
                 elapsed = time.time() - capture_start_time
                 pct = (elapsed / duration_sec) * 100
-                # Update progress on main thread via a simple attribute
                 self._pending_progress = f"Progress: {pct:.1f}%"
                 time.sleep(0.010)
 
@@ -1661,11 +1669,12 @@ class ParameterScopeOscilloscope(QMainWindow):
                     break
                 time.sleep(0.02)
 
-            # Final read
-            final_data = self.scope_engine.read_captured_data()
+            # Final read — only fetch samples not yet streamed
+            final_batch, last_sample_idx = self.scope_engine.read_new_data(last_sample_idx, max_samples=0)
             self.scope_engine.stop_capture()
-            self._push_data(final_data)
-            self._pending_status = f"Captured {final_data['num_samples']} samples"
+            if final_batch and final_batch['num_samples'] > 0:
+                self._push_data(final_batch)
+            self._pending_status = f"Captured {last_sample_idx} samples"
 
         except Exception as e:
             self._pending_status = f"Error: {e}"
@@ -1948,13 +1957,35 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # ── FFT Mode ──
         if self.plot_mode == 'fft':
-            # Compute sample rate from time array
             if len(time_arr) < 2:
                 return
             sample_dt = float(time_arr[1] - time_arr[0])
             if sample_dt <= 0:
                 return
-            n = len(time_arr)
+
+            # Windowed FFT: if cursors are enabled, use C1–C2 time window
+            fft_time = time_arr
+            fft_params = plot_data['params']
+            if self._cursors_enabled:
+                t1 = min(self._cursor_pos['c1'], self._cursor_pos['c2'])
+                t2 = max(self._cursor_pos['c1'], self._cursor_pos['c2'])
+                mask = (time_arr >= t1) & (time_arr <= t2)
+                if np.sum(mask) >= 2:
+                    fft_time = time_arr[mask]
+                    fft_params = {k: v[mask] for k, v in plot_data['params'].items()}
+                    duration = float(fft_time[-1] - fft_time[0])
+                    freq_res = 1.0 / duration if duration > 0 else 0
+                    self.path_info_label.setText(
+                        f"FFT window: {t1:.3f}s \u2192 {t2:.3f}s "
+                        f"({duration:.3f}s, {len(fft_time)} pts, "
+                        f"\u0394f={freq_res:.2f} Hz)")
+                else:
+                    self.path_info_label.setText(
+                        "FFT: cursor window too narrow — using full data")
+            else:
+                self.path_info_label.setText("FFT: full capture (enable cursors to window)")
+
+            n = len(fft_time)
             freqs = np.fft.rfftfreq(n, d=sample_dt)
 
             for trace in enabled_traces:
@@ -1964,9 +1995,9 @@ class ParameterScopeOscilloscope(QMainWindow):
                 pi = self.plot_items[trace_id]
                 param_name = trace.get_display_name()
                 color = trace.get_color()
-                if param_name not in plot_data['params']:
+                if param_name not in fft_params:
                     continue
-                values = plot_data['params'][param_name]
+                values = fft_params[param_name]
 
                 # Compute single-sided amplitude spectrum
                 # Remove DC by subtracting mean, apply Hanning window to reduce spectral leakage
