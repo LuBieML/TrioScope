@@ -362,15 +362,18 @@ class TraceControl(QFrame):
             }}
         """)
 
-        layout = QGridLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(2)
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(3)
 
         # Row 0: Enable checkbox + parameter dropdown + delete button
+        row0 = QHBoxLayout()
+        row0.setSpacing(4)
+
         self.chk_enable = QCheckBox(f"Trace {trace_number + 1}")
         self.chk_enable.setStyleSheet(f"color: {self.color}; font-weight: bold;")
         self.chk_enable.toggled.connect(lambda: self.changed.emit())
-        layout.addWidget(self.chk_enable, 0, 0)
+        row0.addWidget(self.chk_enable)
 
         self.param_combo = QComboBox()
         self.param_combo.addItems(SCOPE_PARAMETERS)
@@ -378,36 +381,58 @@ class TraceControl(QFrame):
         self.param_combo.setMaxVisibleItems(20)
         self.param_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.param_combo.currentTextChanged.connect(lambda: self.changed.emit())
-        layout.addWidget(self.param_combo, 0, 1, 1, 2)
+        row0.addWidget(self.param_combo, 1)
 
         self.btn_delete = QPushButton("\u2715")
         self.btn_delete.setFixedWidth(24)
         self.btn_delete.clicked.connect(self._on_delete)
-        layout.addWidget(self.btn_delete, 0, 3)
+        row0.addWidget(self.btn_delete)
 
-        # Row 1: Axis selector + value display
-        ax_widget = QWidget()
-        ax_layout = QHBoxLayout(ax_widget)
-        ax_layout.setContentsMargins(0, 0, 0, 0)
-        ax_layout.setSpacing(2)
-        axis_label = QLabel("Ax")
-        axis_label.setFixedWidth(14)
-        ax_layout.addWidget(axis_label)
+        vbox.addLayout(row0)
+
+        # Row 1: Axis selector + value display + FFT button
+        row1 = QHBoxLayout()
+        row1.setSpacing(4)
+
+        row1.addWidget(QLabel("Ax"))
         self.axis_spin = QSpinBox()
         self.axis_spin.setRange(0, 15)
-        self.axis_spin.setFixedWidth(36)
+        self.axis_spin.setFixedWidth(28)
+        self.axis_spin.setStyleSheet(
+            "QSpinBox::up-button { width: 0; } QSpinBox::down-button { width: 0; }"
+        )
         self.axis_spin.valueChanged.connect(lambda: self.changed.emit())
-        ax_layout.addWidget(self.axis_spin)
-        layout.addWidget(ax_widget, 1, 0)
+        row1.addWidget(self.axis_spin)
 
-        self.value_label = QLabel("   0.0000")
+        _arrow_style = ("QPushButton { background-color: #4b4a4a; color: #ccc; "
+                        "border: 1px solid #606060; border-radius: 2px; "
+                        "font-size: 7pt; padding: 0px; }"
+                        "QPushButton:pressed { background-color: #666; }")
+        btn_ax_down = QPushButton("\u25bc")
+        btn_ax_down.setFixedSize(18, 12)
+        btn_ax_down.setStyleSheet(_arrow_style)
+        btn_ax_down.clicked.connect(lambda: self.axis_spin.setValue(max(0, self.axis_spin.value() - 1)))
+        btn_ax_up = QPushButton("\u25b2")
+        btn_ax_up.setFixedSize(18, 12)
+        btn_ax_up.setStyleSheet(_arrow_style)
+        btn_ax_up.clicked.connect(lambda: self.axis_spin.setValue(min(15, self.axis_spin.value() + 1)))
+
+        ax_arrows = QVBoxLayout()
+        ax_arrows.setSpacing(1)
+        ax_arrows.setContentsMargins(0, 0, 0, 0)
+        ax_arrows.addWidget(btn_ax_up)
+        ax_arrows.addWidget(btn_ax_down)
+        row1.addLayout(ax_arrows)
+
+        self.value_label = QLabel("0.0000")
         self.value_label.setObjectName("value_display")
         self.value_label.setStyleSheet(
             f"color: {self.color}; background-color: #2e2e2e; "
             f"font-family: Consolas; font-size: 9pt; font-weight: bold;"
         )
         self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        layout.addWidget(self.value_label, 1, 1, 1, 2)
+        self.value_label.setFixedWidth(113)
+        row1.addWidget(self.value_label)
 
         self.btn_fft = QPushButton("FFT")
         self.btn_fft.setCheckable(True)
@@ -430,15 +455,9 @@ class TraceControl(QFrame):
             }
         """)
         self.btn_fft.toggled.connect(lambda: self.changed.emit())
-        layout.addWidget(self.btn_fft, 1, 3)
+        row1.addWidget(self.btn_fft)
 
-        # Color bar
-        color_bar = QFrame()
-        color_bar.setFixedWidth(6)
-        color_bar.setStyleSheet(f"background-color: {self.color}; border-radius: 3px;")
-        layout.addWidget(color_bar, 0, 5, 2, 1)
-
-        layout.setColumnStretch(1, 1)
+        vbox.addLayout(row1)
 
     def _on_delete(self):
         self.setParent(None)
@@ -572,7 +591,8 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # === LEFT PANEL (fixed width) ===
         left_panel = QWidget()
-        left_panel.setFixedWidth(290)
+        left_panel.setMinimumWidth(300)
+        left_panel.setMaximumWidth(360)
         left_panel.setStyleSheet("background-color: #353536;")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(5, 5, 5, 5)
