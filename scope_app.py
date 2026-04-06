@@ -394,7 +394,7 @@ class TraceControl(QFrame):
         row1 = QHBoxLayout()
         row1.setSpacing(4)
 
-        row1.addWidget(QLabel("Ax"))
+        row1.addWidget(QLabel("Axis"))
         self.axis_spin = QSpinBox()
         self.axis_spin.setRange(0, 15)
         self.axis_spin.setFixedWidth(28)
@@ -431,7 +431,7 @@ class TraceControl(QFrame):
             f"font-family: Consolas; font-size: 9pt; font-weight: bold;"
         )
         self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.value_label.setFixedWidth(113)
+        self.value_label.setFixedWidth(140)
         row1.addWidget(self.value_label)
 
         self.btn_fft = QPushButton("FFT")

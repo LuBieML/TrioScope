@@ -10,3 +10,4 @@ __pycache__/
 
 # Virtual environment
 .venv/
+src/scope/__pycache__/__init__.cpython-313.pyc
