@@ -469,6 +469,7 @@ class AIAnalysisPanel(QDockWidget):
 
         is_trio = profile.has_drive_params()
         self._param_frame.setVisible(is_trio)
+        self._read_btn.setEnabled(is_trio and self._connection is not None)
 
         if is_trio:
             for entry in PARAM_DEFS:
