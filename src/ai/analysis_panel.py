@@ -278,10 +278,23 @@ class AIAnalysisPanel(QDockWidget):
         param_layout.setLabelAlignment(Qt.AlignLeft)
 
         label_style = "color: #ccc; font-size: 8pt;"
-        widget_style = (
-            "QSpinBox, QComboBox { background: #2a2a3e; color: #d4d4d4;"
+        spin_style = (
+            "QSpinBox { background: #2a2a3e; color: #d4d4d4;"
+            " border: 1px solid #555; border-radius: 2px; padding: 1px 3px;"
+            " font-size: 8pt;"
+            " QSpinBox::up-button { width: 0; } QSpinBox::down-button { width: 0; } }"
+        )
+        combo_style = (
+            "QComboBox { background: #2a2a3e; color: #d4d4d4;"
             " border: 1px solid #555; border-radius: 2px; padding: 1px 3px;"
             " font-size: 8pt; }"
+        )
+        # Same arrow button style as TraceControl axis arrows
+        arrow_style = (
+            "QPushButton { background-color: #4b4a4a; color: #ccc;"
+            " border: 1px solid #606060; border-radius: 2px;"
+            " font-size: 7pt; padding: 0px; }"
+            "QPushButton:pressed { background-color: #666; }"
         )
 
         for entry in PARAM_DEFS:
@@ -292,26 +305,69 @@ class AIAnalysisPanel(QDockWidget):
             row_label.setToolTip(tooltip)
 
             if attr in COMBO_ATTRS:
-                # Pn100 — tuning mode combo
+                # Pn100 — tuning mode dropdown, no arrows needed
                 w = QComboBox()
-                w.setStyleSheet(widget_style)
+                w.setStyleSheet(combo_style)
                 w.addItems(TUNING_MODE_LABELS)
                 w.setToolTip(tooltip)
                 w.currentIndexChanged.connect(self._on_param_changed)
+                self._param_widgets[attr] = w
+                param_layout.addRow(row_label, w)
             else:
-                w = QSpinBox()
-                w.setStyleSheet(widget_style)
-                w.setRange(min_v, max_v)
-                w.setValue(default)
-                w.setSuffix(f"  {unit}" if unit else "")
-                w.setToolTip(tooltip)
-                w.setFixedWidth(130)
-                w.valueChanged.connect(self._on_param_changed)
+                # Numeric spinbox with custom ▲/▼ buttons — native arrows hidden
+                spin = QSpinBox()
+                spin.setRange(min_v, max_v)
+                spin.setValue(default)
+                spin.setToolTip(tooltip)
+                spin.setFixedWidth(110)
+                # Hide native up/down buttons; custom arrows replace them
+                spin.setStyleSheet(
+                    "QSpinBox { background: #2a2a3e; color: #d4d4d4;"
+                    " border: 1px solid #555; border-radius: 2px;"
+                    " padding: 1px 3px; font-size: 8pt; }"
+                    "QSpinBox::up-button { width: 0; border: none; }"
+                    "QSpinBox::down-button { width: 0; border: none; }"
+                )
+                spin.valueChanged.connect(self._on_param_changed)
 
-            self._param_widgets[attr] = w
+                btn_up = QPushButton("\u25b2")
+                btn_up.setFixedSize(18, 12)
+                btn_up.setStyleSheet(arrow_style)
+                btn_up.setToolTip(f"Increase {label}")
+                btn_up.clicked.connect(
+                    lambda _, s=spin, mx=max_v: s.setValue(min(mx, s.value() + 1))
+                )
 
-            unit_label = QLabel()  # unit is in suffix for spinbox; keep empty
-            param_layout.addRow(row_label, w)
+                btn_down = QPushButton("\u25bc")
+                btn_down.setFixedSize(18, 12)
+                btn_down.setStyleSheet(arrow_style)
+                btn_down.setToolTip(f"Decrease {label}")
+                btn_down.clicked.connect(
+                    lambda _, s=spin, mn=min_v: s.setValue(max(mn, s.value() - 1))
+                )
+
+                arrows = QVBoxLayout()
+                arrows.setSpacing(1)
+                arrows.setContentsMargins(0, 0, 0, 0)
+                arrows.addWidget(btn_up)
+                arrows.addWidget(btn_down)
+
+                unit_lbl = QLabel(unit)
+                unit_lbl.setStyleSheet("color: #888; font-size: 8pt;")
+
+                field_row = QHBoxLayout()
+                field_row.setSpacing(2)
+                field_row.setContentsMargins(0, 0, 0, 0)
+                field_row.addWidget(spin)
+                field_row.addLayout(arrows)
+                field_row.addWidget(unit_lbl)
+                field_row.addStretch()
+
+                field_container = QWidget()
+                field_container.setLayout(field_row)
+
+                self._param_widgets[attr] = spin
+                param_layout.addRow(row_label, field_container)
 
         outer.addWidget(self._param_frame)
         return group
