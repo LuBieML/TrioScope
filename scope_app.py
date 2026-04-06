@@ -1687,6 +1687,8 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.trio_connection = conn
                 self.trio_connected = True
                 self.scope_engine = engine
+                if self._ai_panel is not None:
+                    self._ai_panel.set_connection(conn)
                 self._start_watchdog()
                 self.status_dot.setStyleSheet("color: #00cc00; font-size: 16pt;")
                 self.status_label.setText(f"Connected to {ip_addr} (Servo: {servo_period*1000:.1f}ms)")
@@ -1728,6 +1730,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connected = False
         self.scope_engine = None
         self._shutting_down = False
+        if self._ai_panel is not None:
+            self._ai_panel.set_connection(None)
         self._disconnect_cooldown_end = time.monotonic() + self._disconnect_cooldown_seconds
 
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
@@ -2614,6 +2618,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         if self._ai_panel is None:
             self._ai_panel = AIAnalysisPanel(self)
             self._ai_panel.set_data_provider(self._get_scope_data_for_ai)
+            self._ai_panel.set_connection(self.trio_connection)
             # Restore saved API key, model, and per-axis drive profiles
             s = QSettings("TrioScope", "ParameterScope")
             api_key = s.value("ai/api_key", "")

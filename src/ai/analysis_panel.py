@@ -23,6 +23,7 @@ from .drive_profile import (
     DriveProfile, DRIVE_TYPES, PARAM_DEFS, COMBO_ATTRS,
     TUNING_MODE_LABELS, TUNING_MODE_VALUES,
 )
+from .coe_io import read_drive_profile
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,7 @@ class AIAnalysisPanel(QDockWidget):
         self._streaming = False
         self._current_response = ""
         self._data_provider = None  # callable → (time_arr, params_dict)
+        self._connection = None     # TUA.TrioConnection, set via set_connection()
 
         # Per-axis drive profiles: {axis_int: DriveProfile}
         self._profiles: dict[int, DriveProfile] = {}
@@ -310,14 +312,15 @@ class AIAnalysisPanel(QDockWidget):
 
         selector_row.addStretch()
 
-        # Read from Drive button — placeholder for future EtherCAT auto-read
+        # Read from Drive button — reads Pn params via EtherCAT CoE SDO
         self._read_btn = QPushButton("Read from Drive")
         self._read_btn.setFixedHeight(22)
         self._read_btn.setEnabled(False)
         self._read_btn.setToolTip(
-            "Future feature: read Pn parameters directly from the drive "
-            "via EtherCAT CoE SDO (object IDs 0x31C8–0x31D4)."
+            "Read Pn parameters directly from the drive via EtherCAT CoE SDO.\n"
+            "Requires an active controller connection and a DX3/DX4 drive type selected."
         )
+        self._read_btn.clicked.connect(self._on_read_from_drive)
         selector_row.addWidget(self._read_btn)
 
         outer.addLayout(selector_row)
@@ -441,6 +444,7 @@ class AIAnalysisPanel(QDockWidget):
         """Show/hide parameter fields; populate defaults if switching to a Trio drive."""
         is_trio_drive = drive_type in ("DX3", "DX4")
         self._param_frame.setVisible(is_trio_drive)
+        self._read_btn.setEnabled(is_trio_drive and self._connection is not None)
 
         axis = self._current_axis()
         existing = self._profiles.get(axis)
@@ -525,6 +529,16 @@ class AIAnalysisPanel(QDockWidget):
         self._client.set_model(model)
         self.model_combo.setCurrentText(model)
 
+    def set_connection(self, connection):
+        """
+        Provide the active TUA.TrioConnection so the panel can read drive
+        parameters via CoE SDO.  Pass None to disable the Read button.
+        """
+        self._connection = connection
+        drive_type = self._drive_combo.currentText() if self._drive_combo else "None"
+        is_trio_drive = drive_type in ("DX3", "DX4")
+        self._read_btn.setEnabled(is_trio_drive and connection is not None)
+
     def set_data_provider(self, provider):
         """
         Set a callable that returns (time_arr: np.ndarray, params: dict[str, np.ndarray])
@@ -544,6 +558,31 @@ class AIAnalysisPanel(QDockWidget):
         }
         # Refresh UI for currently selected axis
         self._on_axis_changed()
+
+    def _on_read_from_drive(self):
+        """Read Pn parameters from the drive via CoE SDO and populate the UI."""
+        if self._connection is None:
+            return
+        axis = self._current_axis()
+        drive_type = self._drive_combo.currentText()
+
+        self._read_btn.setEnabled(False)
+        self._read_btn.setText("Reading…")
+        try:
+            profile = read_drive_profile(self._connection, axis=axis, drive_type=drive_type)
+            self._profiles[axis] = profile
+            self._load_profile_to_ui(profile)
+            logger.info("Axis %d: read drive profile OK — %s", axis, profile.to_dict())
+        except Exception as exc:
+            logger.error("Axis %d: read drive profile failed — %s", axis, exc)
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "CoE Read Error",
+                f"Failed to read drive parameters from axis {axis}:\n{exc}",
+            )
+        finally:
+            self._read_btn.setText("Read from Drive")
+            self._read_btn.setEnabled(True)
 
     # -----------------------------------------------------------------------
     # Scope data + drive context
