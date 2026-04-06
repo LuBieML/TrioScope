@@ -54,6 +54,17 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _int_or_none(value) -> int | None:
+    """Convert a QSettings value to int, returning None for empty/missing values."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
 SCOPE_PARAMETERS = [
     "ACCEL", "ACCEL_FACTOR", "ADDAX_AXIS", "AFF_GAIN", "ATYPE",
     "AXIS_A_OUTPUT", "AXIS_ACCEL", "AXIS_B_OUTPUT", "AXIS_BLENDING",
@@ -2603,13 +2614,35 @@ class ParameterScopeOscilloscope(QMainWindow):
         if self._ai_panel is None:
             self._ai_panel = AIAnalysisPanel(self)
             self._ai_panel.set_data_provider(self._get_scope_data_for_ai)
-            # Restore saved API key and model
+            # Restore saved API key, model, and per-axis drive profiles
             s = QSettings("TrioScope", "ParameterScope")
             api_key = s.value("ai/api_key", "")
             model = s.value("ai/model", "openai/gpt-4.1-mini")
             if api_key:
                 self._ai_panel.set_api_key(api_key)
             self._ai_panel.set_model(model)
+            # Restore drive profiles saved per axis
+            num_profiles = int(s.value("ai/drive_profiles/count", 0))
+            saved_profiles = {}
+            for i in range(num_profiles):
+                axis = s.value(f"ai/drive_profiles/{i}/axis", None)
+                if axis is None:
+                    continue
+                axis = int(axis)
+                profile_dict = {
+                    "drive_type": s.value(f"ai/drive_profiles/{i}/drive_type", "None"),
+                    "pn100": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn100")),
+                    "pn101": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn101")),
+                    "pn102": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn102")),
+                    "pn103": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn103")),
+                    "pn104": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn104")),
+                    "pn105": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn105")),
+                    "pn106": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn106")),
+                    "pn112": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn112")),
+                }
+                saved_profiles[axis] = profile_dict
+            if saved_profiles:
+                self._ai_panel.set_all_profiles(saved_profiles)
             self.addDockWidget(Qt.RightDockWidgetArea, self._ai_panel)
         else:
             self._ai_panel.setVisible(not self._ai_panel.isVisible())
@@ -2841,6 +2874,16 @@ class ParameterScopeOscilloscope(QMainWindow):
                        "true" if t.chk_enable.isChecked() else "false")
             s.setValue(f"traces/{i}/fft",
                        "true" if t.is_fft() else "false")
+
+        # Per-axis drive profiles (from AI panel if open)
+        if self._ai_panel is not None:
+            profiles = self._ai_panel.get_all_profiles()
+            s.setValue("ai/drive_profiles/count", len(profiles))
+            for i, (axis, profile_dict) in enumerate(profiles.items()):
+                s.setValue(f"ai/drive_profiles/{i}/axis", axis)
+                for key, val in profile_dict.items():
+                    s.setValue(f"ai/drive_profiles/{i}/{key}",
+                               "" if val is None else val)
 
     # ─── Cleanup ────────────────────────────────────────────────────
 

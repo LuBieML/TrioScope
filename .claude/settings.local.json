@@ -18,7 +18,11 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/ai/nanogpt_client.py'\\).read\\(\\)\\); print\\('nanogpt_client.py: OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/ai/signal_metrics.py'\\).read\\(\\)\\); print\\('signal_metrics.py: OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/ai/analysis_panel.py'\\).read\\(\\)\\); print\\('analysis_panel.py: OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('src/ai/analysis_panel.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/ai/analysis_panel.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(pip install:*)",
+      "Bash(python3)",
+      "Bash(python3 -c \"import fitz; print\\('fitz available'\\)\")"
     ]
   }
 }
