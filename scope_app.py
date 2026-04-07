@@ -19,9 +19,9 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFrame,
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
     QDialog, QFileDialog, QMessageBox, QGridLayout,
-    QFormLayout, QSizePolicy, QSplitter
+    QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QSettings
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QSettings, Slot
 from PySide6.QtGui import QFont, QColor, QPen, QBrush
 
 import pyqtgraph as pg
@@ -46,8 +46,116 @@ except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure Trio_UnifiedApi is installed and scope_engine.py is in src/scope/")
 
+try:
+    from ai.analysis_panel import AIAnalysisPanel
+except ImportError:
+    AIAnalysisPanel = None
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class _LogWindow(QDialog):
+    """Scrollable log viewer — opened when the user clicks the log bar."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Log")
+        self.resize(860, 380)
+        self.setStyleSheet(
+            "QDialog { background-color: #1a1a1a; color: #d4d4d4; }"
+            "QPlainTextEdit { background-color: #1a1a1a; color: #d4d4d4;"
+            " font-family: Consolas, monospace; font-size: 8pt;"
+            " border: none; }"
+            "QPushButton { background-color: #4b4a4a; color: #d4d4d4;"
+            " border: 1px solid #606060; border-radius: 3px; padding: 3px 10px; }"
+            "QPushButton:hover { background-color: #5a5a5a; }"
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self._view = QPlainTextEdit()
+        self._view.setReadOnly(True)
+        self._view.setMaximumBlockCount(2000)
+        layout.addWidget(self._view, 1)
+
+        btn_clear = QPushButton("Clear")
+        btn_clear.setFixedWidth(70)
+        btn_clear.clicked.connect(self._view.clear)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(btn_clear)
+        layout.addLayout(btn_row)
+
+    @Slot(str)
+    def append(self, html: str):
+        """Append a pre-formatted HTML line (called from main thread via invokeMethod)."""
+        self._view.appendHtml(html)
+        sb = self._view.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+
+class _LogBarHandler(logging.Handler):
+    """Logging handler that updates the status bar label and feeds the log window."""
+
+    _COLOURS = {
+        logging.DEBUG:    "#888888",
+        logging.INFO:     "#aaaaaa",
+        logging.WARNING:  "#FFB74D",
+        logging.ERROR:    "#f14c4c",
+        logging.CRITICAL: "#ff0000",
+    }
+
+    def __init__(self, label, log_window: _LogWindow):
+        super().__init__()
+        self._label = label
+        self._window = log_window
+        self.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-8s  %(message)s",
+                                            datefmt="%H:%M:%S"))
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            colour = self._COLOURS.get(record.levelno, "#aaaaaa")
+            bar_style = (
+                f"background-color: #1a1a1a; color: {colour}; font-size: 8pt;"
+                " border-top: 1px solid #444;"
+            )
+            # Short version for the bar (no timestamp)
+            bar_msg = f"{record.levelname}  {record.getMessage()}"
+            html_line = f'<span style="color:{colour};">{msg}</span>'
+
+            from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+            QMetaObject.invokeMethod(
+                self._label, "setText",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, bar_msg),
+            )
+            QMetaObject.invokeMethod(
+                self._label, "setStyleSheet",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, bar_style),
+            )
+            QMetaObject.invokeMethod(
+                self._window, "append",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, html_line),
+            )
+        except Exception:
+            pass
+
+
+def _int_or_none(value) -> int | None:
+    """Convert a QSettings value to int, returning None for empty/missing values."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
 
 SCOPE_PARAMETERS = [
     "ACCEL", "ACCEL_FACTOR", "ADDAX_AXIS", "AFF_GAIN", "ATYPE",
@@ -357,15 +465,18 @@ class TraceControl(QFrame):
             }}
         """)
 
-        layout = QGridLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(2)
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(3)
 
         # Row 0: Enable checkbox + parameter dropdown + delete button
+        row0 = QHBoxLayout()
+        row0.setSpacing(4)
+
         self.chk_enable = QCheckBox(f"Trace {trace_number + 1}")
         self.chk_enable.setStyleSheet(f"color: {self.color}; font-weight: bold;")
         self.chk_enable.toggled.connect(lambda: self.changed.emit())
-        layout.addWidget(self.chk_enable, 0, 0)
+        row0.addWidget(self.chk_enable)
 
         self.param_combo = QComboBox()
         self.param_combo.addItems(SCOPE_PARAMETERS)
@@ -373,36 +484,58 @@ class TraceControl(QFrame):
         self.param_combo.setMaxVisibleItems(20)
         self.param_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.param_combo.currentTextChanged.connect(lambda: self.changed.emit())
-        layout.addWidget(self.param_combo, 0, 1, 1, 2)
+        row0.addWidget(self.param_combo, 1)
 
         self.btn_delete = QPushButton("\u2715")
         self.btn_delete.setFixedWidth(24)
         self.btn_delete.clicked.connect(self._on_delete)
-        layout.addWidget(self.btn_delete, 0, 3)
+        row0.addWidget(self.btn_delete)
 
-        # Row 1: Axis selector + value display
-        ax_widget = QWidget()
-        ax_layout = QHBoxLayout(ax_widget)
-        ax_layout.setContentsMargins(0, 0, 0, 0)
-        ax_layout.setSpacing(2)
-        axis_label = QLabel("Ax")
-        axis_label.setFixedWidth(14)
-        ax_layout.addWidget(axis_label)
+        vbox.addLayout(row0)
+
+        # Row 1: Axis selector + value display + FFT button
+        row1 = QHBoxLayout()
+        row1.setSpacing(4)
+
+        row1.addWidget(QLabel("Axis"))
         self.axis_spin = QSpinBox()
         self.axis_spin.setRange(0, 15)
-        self.axis_spin.setFixedWidth(36)
+        self.axis_spin.setFixedWidth(28)
+        self.axis_spin.setStyleSheet(
+            "QSpinBox::up-button { width: 0; } QSpinBox::down-button { width: 0; }"
+        )
         self.axis_spin.valueChanged.connect(lambda: self.changed.emit())
-        ax_layout.addWidget(self.axis_spin)
-        layout.addWidget(ax_widget, 1, 0)
+        row1.addWidget(self.axis_spin)
 
-        self.value_label = QLabel("   0.0000")
+        _arrow_style = ("QPushButton { background-color: #4b4a4a; color: #ccc; "
+                        "border: 1px solid #606060; border-radius: 2px; "
+                        "font-size: 7pt; padding: 0px; }"
+                        "QPushButton:pressed { background-color: #666; }")
+        btn_ax_down = QPushButton("\u25bc")
+        btn_ax_down.setFixedSize(18, 12)
+        btn_ax_down.setStyleSheet(_arrow_style)
+        btn_ax_down.clicked.connect(lambda: self.axis_spin.setValue(max(0, self.axis_spin.value() - 1)))
+        btn_ax_up = QPushButton("\u25b2")
+        btn_ax_up.setFixedSize(18, 12)
+        btn_ax_up.setStyleSheet(_arrow_style)
+        btn_ax_up.clicked.connect(lambda: self.axis_spin.setValue(min(15, self.axis_spin.value() + 1)))
+
+        ax_arrows = QVBoxLayout()
+        ax_arrows.setSpacing(1)
+        ax_arrows.setContentsMargins(0, 0, 0, 0)
+        ax_arrows.addWidget(btn_ax_up)
+        ax_arrows.addWidget(btn_ax_down)
+        row1.addLayout(ax_arrows)
+
+        self.value_label = QLabel("0.0000")
         self.value_label.setObjectName("value_display")
         self.value_label.setStyleSheet(
             f"color: {self.color}; background-color: #2e2e2e; "
             f"font-family: Consolas; font-size: 9pt; font-weight: bold;"
         )
         self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        layout.addWidget(self.value_label, 1, 1, 1, 2)
+        self.value_label.setFixedWidth(140)
+        row1.addWidget(self.value_label)
 
         self.btn_fft = QPushButton("FFT")
         self.btn_fft.setCheckable(True)
@@ -425,15 +558,9 @@ class TraceControl(QFrame):
             }
         """)
         self.btn_fft.toggled.connect(lambda: self.changed.emit())
-        layout.addWidget(self.btn_fft, 1, 3)
+        row1.addWidget(self.btn_fft)
 
-        # Color bar
-        color_bar = QFrame()
-        color_bar.setFixedWidth(6)
-        color_bar.setStyleSheet(f"background-color: {self.color}; border-radius: 3px;")
-        layout.addWidget(color_bar, 0, 5, 2, 1)
-
-        layout.setColumnStretch(1, 1)
+        vbox.addLayout(row1)
 
     def _on_delete(self):
         self.setParent(None)
@@ -538,6 +665,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Settings window
         self._settings_window = None
 
+        # AI Analysis
+        self._ai_panel = None
+
         # FFT performance caches
         self._fft_cache = {}        # {trace_id: {'key': tuple, 'magnitude': array}}
         self._fft_window_cache = (0, None)  # (n_fft, hanning_window)
@@ -559,12 +689,19 @@ class ParameterScopeOscilloscope(QMainWindow):
         """Create main UI"""
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central)
+        outer_layout = QVBoxLayout(central)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        content = QWidget()
+        main_layout = QHBoxLayout(content)
         main_layout.setContentsMargins(5, 5, 5, 5)
+        outer_layout.addWidget(content, 1)
 
         # === LEFT PANEL (fixed width) ===
         left_panel = QWidget()
-        left_panel.setFixedWidth(290)
+        left_panel.setMinimumWidth(300)
+        left_panel.setMaximumWidth(360)
         left_panel.setStyleSheet("background-color: #353536;")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(5, 5, 5, 5)
@@ -703,6 +840,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         btn_import.clicked.connect(self.import_from_csv)
         ctrl_grid.addWidget(btn_import, 2, 1)
 
+        # Row 3: AI Analysis
+        btn_ai = QPushButton("\u2728 AI Analysis")
+        btn_ai.clicked.connect(self._toggle_ai_panel)
+        ctrl_grid.addWidget(btn_ai, 3, 0, 1, 2)
+
         left_layout.addLayout(ctrl_grid)
 
         main_layout.addWidget(left_panel)
@@ -789,6 +931,25 @@ class ParameterScopeOscilloscope(QMainWindow):
         right_layout.addWidget(status_frame)
 
         main_layout.addWidget(right_panel, 1)  # stretch factor 1 → plot expands
+
+        # === LOG BAR (single line, full width, bottom) ===
+        self._log_window = _LogWindow(self)
+
+        self._log_bar = QLabel("Log")
+        self._log_bar.setFixedHeight(20)
+        self._log_bar.setContentsMargins(6, 0, 6, 0)
+        self._log_bar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._log_bar.setStyleSheet(
+            "background-color: #1a1a1a; color: #aaaaaa; font-size: 8pt;"
+            " border-top: 1px solid #444;"
+        )
+
+        self._log_bar.mousePressEvent = lambda _: self._log_window.show()
+        outer_layout.addWidget(self._log_bar)
+
+        # Wire Python logging into the bar and window
+        self._log_handler = _LogBarHandler(self._log_bar, self._log_window)
+        logging.getLogger().addHandler(self._log_handler)
 
     # ─── Plot management ────────────────────────────────────────────
 
@@ -1643,6 +1804,8 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.trio_connection = conn
                 self.trio_connected = True
                 self.scope_engine = engine
+                if self._ai_panel is not None:
+                    self._ai_panel.set_connection(conn)
                 self._start_watchdog()
                 self.status_dot.setStyleSheet("color: #00cc00; font-size: 16pt;")
                 self.status_label.setText(f"Connected to {ip_addr} (Servo: {servo_period*1000:.1f}ms)")
@@ -1684,6 +1847,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connected = False
         self.scope_engine = None
         self._shutting_down = False
+        if self._ai_panel is not None:
+            self._ai_panel.set_connection(None)
         self._disconnect_cooldown_end = time.monotonic() + self._disconnect_cooldown_seconds
 
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
@@ -2558,6 +2723,62 @@ class ParameterScopeOscilloscope(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
 
+    # ─── AI Analysis ──────────────────────────────────────────────
+
+    def _toggle_ai_panel(self):
+        """Show/hide the AI analysis dock panel."""
+        if AIAnalysisPanel is None:
+            QMessageBox.warning(self, "AI Analysis",
+                                "AI module not available. Check src/ai/ is present.")
+            return
+
+        if self._ai_panel is None:
+            self._ai_panel = AIAnalysisPanel(self)
+            self._ai_panel.set_data_provider(self._get_scope_data_for_ai)
+            self._ai_panel.set_connection(self.trio_connection)
+            # Restore saved API key, model, and per-axis drive profiles
+            s = QSettings("TrioScope", "ParameterScope")
+            api_key = s.value("ai/api_key", "")
+            model = s.value("ai/model", "openai/gpt-4.1-mini")
+            if api_key:
+                self._ai_panel.set_api_key(api_key)
+            self._ai_panel.set_model(model)
+            # Restore drive profiles saved per axis
+            num_profiles = int(s.value("ai/drive_profiles/count", 0))
+            saved_profiles = {}
+            for i in range(num_profiles):
+                axis = s.value(f"ai/drive_profiles/{i}/axis", None)
+                if axis is None:
+                    continue
+                axis = int(axis)
+                profile_dict = {
+                    "drive_type": s.value(f"ai/drive_profiles/{i}/drive_type", "None"),
+                    "pn100": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn100")),
+                    "pn101": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn101")),
+                    "pn102": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn102")),
+                    "pn103": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn103")),
+                    "pn104": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn104")),
+                    "pn105": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn105")),
+                    "pn106": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn106")),
+                    "pn112": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn112")),
+                }
+                saved_profiles[axis] = profile_dict
+            if saved_profiles:
+                self._ai_panel.set_all_profiles(saved_profiles)
+            self.addDockWidget(Qt.RightDockWidgetArea, self._ai_panel)
+        else:
+            self._ai_panel.setVisible(not self._ai_panel.isVisible())
+
+    def _get_scope_data_for_ai(self):
+        """Data provider callback for AI panel. Returns (time_arr, params_dict)."""
+        if self.accumulated_data is None:
+            return None, None
+        time_arr = self.accumulated_data.get('time')
+        params = self.accumulated_data.get('params')
+        if time_arr is None or len(time_arr) == 0:
+            return None, None
+        return time_arr, params
+
     def open_settings(self):
         if self._settings_window is not None:
             try:
@@ -2569,7 +2790,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.setFixedSize(300, 420)
+        dlg.setFixedSize(300, 520)
         dlg.setStyleSheet(DARK_STYLESHEET)
         dlg.setAttribute(Qt.WA_DeleteOnClose)
         dlg.destroyed.connect(lambda: setattr(self, '_settings_window', None))
@@ -2617,6 +2838,25 @@ class ParameterScopeOscilloscope(QMainWindow):
         style_layout.addRow("Plot background:", plot_bg_edit)
         main_layout.addWidget(style_group)
 
+        # AI Analysis section
+        ai_group = QGroupBox("AI Analysis (NanoGPT)")
+        ai_layout = QFormLayout(ai_group)
+
+        s_ai = QSettings("TrioScope", "ParameterScope")
+        ai_key_edit = QLineEdit(s_ai.value("ai/api_key", ""))
+        ai_key_edit.setEchoMode(QLineEdit.Password)
+        ai_key_edit.setPlaceholderText("Enter NanoGPT API key")
+        ai_layout.addRow("API Key:", ai_key_edit)
+
+        ai_model_edit = QComboBox()
+        if AIAnalysisPanel is not None:
+            from ai.nanogpt_client import NanoGPTClient
+            ai_model_edit.addItems(NanoGPTClient.AVAILABLE_MODELS)
+        ai_model_edit.setCurrentText(s_ai.value("ai/model", "openai/gpt-4.1-mini"))
+        ai_model_edit.setEditable(True)
+        ai_layout.addRow("Model:", ai_model_edit)
+        main_layout.addWidget(ai_group)
+
         # Buttons
         btn_layout = QHBoxLayout()
 
@@ -2631,6 +2871,13 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.grid_alpha = max(0.0, min(1.0, float(grid_a_edit.text())))
                 self.plot_bg_color = plot_bg_edit.text()
                 self._apply_plot_settings()
+                # AI settings
+                s_save = QSettings("TrioScope", "ParameterScope")
+                s_save.setValue("ai/api_key", ai_key_edit.text().strip())
+                s_save.setValue("ai/model", ai_model_edit.currentText().strip())
+                if self._ai_panel is not None:
+                    self._ai_panel.set_api_key(ai_key_edit.text().strip())
+                    self._ai_panel.set_model(ai_model_edit.currentText().strip())
                 self.status_label.setText("Settings applied")
             except ValueError as e:
                 QMessageBox.critical(dlg, "Invalid value", str(e))
@@ -2749,6 +2996,16 @@ class ParameterScopeOscilloscope(QMainWindow):
                        "true" if t.chk_enable.isChecked() else "false")
             s.setValue(f"traces/{i}/fft",
                        "true" if t.is_fft() else "false")
+
+        # Per-axis drive profiles (from AI panel if open)
+        if self._ai_panel is not None:
+            profiles = self._ai_panel.get_all_profiles()
+            s.setValue("ai/drive_profiles/count", len(profiles))
+            for i, (axis, profile_dict) in enumerate(profiles.items()):
+                s.setValue(f"ai/drive_profiles/{i}/axis", axis)
+                for key, val in profile_dict.items():
+                    s.setValue(f"ai/drive_profiles/{i}/{key}",
+                               "" if val is None else val)
 
     # ─── Cleanup ────────────────────────────────────────────────────
 

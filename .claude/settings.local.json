@@ -12,7 +12,17 @@
       "Bash(python -c \"import py_compile; py_compile.compile\\('scope_app.py', doraise=True\\)\")",
       "Bash(timeout 5 python scope_app.py)",
       "Bash(grep -E \"\\\\.py$|^d\")",
-      "Bash(git show:*)"
+      "Bash(git show:*)",
+      "WebFetch(domain:docs.nano-gpt.com)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('scope_app.py'\\).read\\(\\)\\); print\\('scope_app.py: OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/ai/nanogpt_client.py'\\).read\\(\\)\\); print\\('nanogpt_client.py: OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/ai/signal_metrics.py'\\).read\\(\\)\\); print\\('signal_metrics.py: OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/ai/analysis_panel.py'\\).read\\(\\)\\); print\\('analysis_panel.py: OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/ai/analysis_panel.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(pip install:*)",
+      "Bash(python3)",
+      "Bash(python3 -c \"import fitz; print\\('fitz available'\\)\")"
     ]
   }
 }
