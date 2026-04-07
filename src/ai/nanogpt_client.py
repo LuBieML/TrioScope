@@ -18,12 +18,27 @@ NANO_GPT_BASE_URL = "https://nano-gpt.com/api/v1"
 class NanoGPTClient:
     """Lightweight NanoGPT API client using only stdlib (no requests dependency)."""
 
-    # Models known to work well for technical analysis
-    AVAILABLE_MODELS = [
+    # Default models shipped with the application
+    DEFAULT_MODELS = [
         "anthropic/claude-opus-4.6",
-       
-       
     ]
+
+    @staticmethod
+    def load_model_list() -> list[str]:
+        """Load the user's model list from QSettings, falling back to defaults."""
+        from PySide6.QtCore import QSettings
+        s = QSettings("TrioScope", "ParameterScope")
+        saved = s.value("ai/model_list", None)
+        if saved is not None and isinstance(saved, list) and len(saved) > 0:
+            return list(saved)
+        return list(NanoGPTClient.DEFAULT_MODELS)
+
+    @staticmethod
+    def save_model_list(models: list[str]):
+        """Persist the user's model list to QSettings."""
+        from PySide6.QtCore import QSettings
+        s = QSettings("TrioScope", "ParameterScope")
+        s.setValue("ai/model_list", models)
 
     def __init__(self, api_key: str = "", model: str = "openai/gpt-4.1-mini"):
         self.api_key = api_key

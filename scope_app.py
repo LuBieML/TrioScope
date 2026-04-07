@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFrame,
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
     QDialog, QFileDialog, QMessageBox, QGridLayout,
-    QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit
+    QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit, QListWidget
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QSettings, Slot
 from PySide6.QtGui import QFont, QColor, QPen, QBrush
@@ -2829,7 +2829,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.setFixedSize(300, 520)
+        dlg.setMinimumSize(340, 700)
         dlg.setStyleSheet(DARK_STYLESHEET)
         dlg.setAttribute(Qt.WA_DeleteOnClose)
         dlg.destroyed.connect(lambda: setattr(self, '_settings_window', None))
@@ -2879,21 +2879,64 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # AI Analysis section
         ai_group = QGroupBox("AI Analysis (NanoGPT)")
-        ai_layout = QFormLayout(ai_group)
+        ai_group_layout = QVBoxLayout(ai_group)
+        ai_group_layout.setSpacing(6)
 
         s_ai = QSettings("TrioScope", "ParameterScope")
+
+        # API key + active model in a compact form
+        ai_form = QFormLayout()
         ai_key_edit = QLineEdit(s_ai.value("ai/api_key", ""))
         ai_key_edit.setEchoMode(QLineEdit.Password)
         ai_key_edit.setPlaceholderText("Enter NanoGPT API key")
-        ai_layout.addRow("API Key:", ai_key_edit)
+        ai_form.addRow("API Key:", ai_key_edit)
 
         ai_model_edit = QComboBox()
         if AIAnalysisPanel is not None:
             from ai.nanogpt_client import NanoGPTClient
-            ai_model_edit.addItems(NanoGPTClient.AVAILABLE_MODELS)
+            ai_model_edit.addItems(NanoGPTClient.load_model_list())
         ai_model_edit.setCurrentText(str(s_ai.value("ai/model", "openai/gpt-4.1-mini")))
         ai_model_edit.setEditable(True)
-        ai_layout.addRow("Model:", ai_model_edit)
+        ai_form.addRow("Model:", ai_model_edit)
+        ai_group_layout.addLayout(ai_form)
+
+        # Model list management — full-width
+        ai_group_layout.addWidget(QLabel("Available models:"))
+
+        model_list_widget = QListWidget()
+        if AIAnalysisPanel is not None:
+            model_list_widget.addItems(NanoGPTClient.load_model_list())
+        model_list_widget.setMinimumHeight(80)
+        model_list_widget.setMaximumHeight(140)
+        ai_group_layout.addWidget(model_list_widget)
+
+        model_add_row = QHBoxLayout()
+        model_add_edit = QLineEdit()
+        model_add_edit.setPlaceholderText("e.g. openai/gpt-4.1-mini")
+        model_add_row.addWidget(model_add_edit)
+
+        btn_add_model = QPushButton("Add")
+        def _add_model():
+            name = model_add_edit.text().strip()
+            if not name:
+                return
+            existing = [model_list_widget.item(i).text() for i in range(model_list_widget.count())]
+            if name in existing:
+                return
+            model_list_widget.addItem(name)
+            model_add_edit.clear()
+        btn_add_model.clicked.connect(_add_model)
+        model_add_row.addWidget(btn_add_model)
+
+        btn_remove_model = QPushButton("Remove")
+        def _remove_model():
+            sel = model_list_widget.currentRow()
+            if sel >= 0:
+                model_list_widget.takeItem(sel)
+        btn_remove_model.clicked.connect(_remove_model)
+        model_add_row.addWidget(btn_remove_model)
+
+        ai_group_layout.addLayout(model_add_row)
         main_layout.addWidget(ai_group)
 
         # Buttons
@@ -2914,9 +2957,20 @@ class ParameterScopeOscilloscope(QMainWindow):
                 s_save = QSettings("TrioScope", "ParameterScope")
                 s_save.setValue("ai/api_key", ai_key_edit.text().strip())
                 s_save.setValue("ai/model", ai_model_edit.currentText().strip())
+                # Save model list and refresh dropdowns
+                model_names = [model_list_widget.item(i).text()
+                               for i in range(model_list_widget.count())]
+                if model_names:
+                    NanoGPTClient.save_model_list(model_names)
+                    # Refresh the model selector in this dialog
+                    current_model = ai_model_edit.currentText()
+                    ai_model_edit.clear()
+                    ai_model_edit.addItems(model_names)
+                    ai_model_edit.setCurrentText(current_model)
                 if self._ai_panel is not None:
                     self._ai_panel.set_api_key(ai_key_edit.text().strip())
                     self._ai_panel.set_model(ai_model_edit.currentText().strip())
+                    self._ai_panel.refresh_model_list()
                 self.status_label.setText("Settings applied")
             except ValueError as e:
                 QMessageBox.critical(dlg, "Invalid value", str(e))
