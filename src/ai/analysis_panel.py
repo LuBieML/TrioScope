@@ -23,8 +23,10 @@ from .signal_metrics import SignalMetrics
 from .drive_profile import (
     DriveProfile, DRIVE_TYPES, PARAM_DEFS, COMBO_ATTRS,
     TUNING_MODE_LABELS, TUNING_MODE_VALUES,
+    VIBRATION_SUPPRESSION_LABELS, VIBRATION_SUPPRESSION_VALUES,
+    DAMPING_LABELS, DAMPING_VALUES,
 )
-from .coe_io import read_drive_profile
+from .coe_io import read_drive_profile, write_drive_profile
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +157,7 @@ class _Signals(QObject):
     stream_done = Signal()
     error_occurred = Signal(str)
     coe_read_done = Signal(int, object, str)  # axis, DriveProfile, error_msg
+    coe_write_done = Signal(int, object, str)  # axis, results_dict, error_msg
 
 
 # ---------------------------------------------------------------------------
@@ -174,11 +177,13 @@ class AIAnalysisPanel(QDockWidget):
         self._signals.stream_done.connect(self._on_stream_done)
         self._signals.error_occurred.connect(self._on_error)
         self._signals.coe_read_done.connect(self._on_coe_read_done)
+        self._signals.coe_write_done.connect(self._on_coe_write_done)
 
         self._streaming = False
         self._current_response = ""
         self._data_provider = None  # callable → (time_arr, params_dict)
         self._connection = None     # TUA.TrioConnection, set via set_connection()
+        self._conn_lock = None      # threading.Lock shared with main app
 
         # Per-axis drive profiles: {axis_int: DriveProfile}
         self._profiles: dict[int, DriveProfile] = {}
@@ -189,6 +194,7 @@ class AIAnalysisPanel(QDockWidget):
         self._axis_combo: QComboBox | None = None
         self._drive_combo: QComboBox | None = None
         self._read_btn: QPushButton | None = None
+        self._write_btn: QPushButton | None = None
 
         self._build_ui()
 
@@ -326,6 +332,17 @@ class AIAnalysisPanel(QDockWidget):
         self._read_btn.clicked.connect(self._on_read_from_drive)
         selector_row.addWidget(self._read_btn)
 
+        # Write to Drive button — writes Pn params via EtherCAT CoE SDO
+        self._write_btn = QPushButton("Write to Drive")
+        self._write_btn.setFixedHeight(22)
+        self._write_btn.setEnabled(False)
+        self._write_btn.setToolTip(
+            "Write Pn parameters to the drive via EtherCAT CoE SDO.\n"
+            "Requires an active controller connection and a DX3/DX4 drive type selected."
+        )
+        self._write_btn.clicked.connect(self._on_write_to_drive)
+        selector_row.addWidget(self._write_btn)
+
         outer.addLayout(selector_row)
 
         # ── Parameter fields (shown only for DX3 / DX4) ────────────────────
@@ -364,10 +381,15 @@ class AIAnalysisPanel(QDockWidget):
             row_label.setToolTip(tooltip)
 
             if attr in COMBO_ATTRS:
-                # Pn100 — tuning mode dropdown, no arrows needed
+                # Combo dropdown for Pn100 sub-fields
+                combo_options = {
+                    "pn100_tuning_mode": TUNING_MODE_LABELS,
+                    "pn100_vibration": VIBRATION_SUPPRESSION_LABELS,
+                    "pn100_damping": DAMPING_LABELS,
+                }
                 w = QComboBox()
                 w.setStyleSheet(combo_style)
-                w.addItems(TUNING_MODE_LABELS)
+                w.addItems(combo_options.get(attr, []))
                 w.setToolTip(tooltip)
                 w.currentIndexChanged.connect(self._on_param_changed)
                 self._param_widgets[attr] = w
@@ -447,7 +469,9 @@ class AIAnalysisPanel(QDockWidget):
         """Show/hide parameter fields; populate defaults if switching to a Trio drive."""
         is_trio_drive = drive_type in ("DX3", "DX4")
         self._param_frame.setVisible(is_trio_drive)
-        self._read_btn.setEnabled(is_trio_drive and self._connection is not None)
+        btn_enabled = is_trio_drive and self._connection is not None
+        self._read_btn.setEnabled(btn_enabled)
+        self._write_btn.setEnabled(btn_enabled)
 
         axis = self._current_axis()
         existing = self._profiles.get(axis)
@@ -472,7 +496,9 @@ class AIAnalysisPanel(QDockWidget):
 
         is_trio = profile.has_drive_params()
         self._param_frame.setVisible(is_trio)
-        self._read_btn.setEnabled(is_trio and self._connection is not None)
+        btn_enabled = is_trio and self._connection is not None
+        self._read_btn.setEnabled(btn_enabled)
+        self._write_btn.setEnabled(btn_enabled)
 
         if is_trio:
             for entry in PARAM_DEFS:
@@ -484,7 +510,13 @@ class AIAnalysisPanel(QDockWidget):
                     continue
                 w.blockSignals(True)
                 if attr in COMBO_ATTRS:
-                    idx = TUNING_MODE_VALUES.index(val) if val in TUNING_MODE_VALUES else 0
+                    combo_values = {
+                        "pn100_tuning_mode": TUNING_MODE_VALUES,
+                        "pn100_vibration": VIBRATION_SUPPRESSION_VALUES,
+                        "pn100_damping": DAMPING_VALUES,
+                    }
+                    values = combo_values.get(attr, [])
+                    idx = values.index(val) if val in values else 0
                     w.setCurrentIndex(idx)
                 else:
                     w.setValue(val if val is not None else default)
@@ -517,7 +549,13 @@ class AIAnalysisPanel(QDockWidget):
                 if w is None:
                     continue
                 if attr in COMBO_ATTRS:
-                    profile.__dict__[attr] = TUNING_MODE_VALUES[w.currentIndex()]
+                    combo_values = {
+                        "pn100_tuning_mode": TUNING_MODE_VALUES,
+                        "pn100_vibration": VIBRATION_SUPPRESSION_VALUES,
+                        "pn100_damping": DAMPING_VALUES,
+                    }
+                    values = combo_values.get(attr, [])
+                    profile.__dict__[attr] = values[w.currentIndex()] if values else 0
                 else:
                     profile.__dict__[attr] = w.value()
 
@@ -533,15 +571,17 @@ class AIAnalysisPanel(QDockWidget):
         self._client.set_model(model)
         self.model_combo.setCurrentText(model)
 
-    def set_connection(self, connection):
+    def set_connection(self, connection, conn_lock=None):
         """
-        Provide the active TUA.TrioConnection so the panel can read drive
-        parameters via CoE SDO.  Pass None to disable the Read button.
+        Provide the active TUA.TrioConnection so the panel can read/write drive
+        parameters via CoE SDO.  Pass None to disable the Read/Write buttons.
         """
         self._connection = connection
+        self._conn_lock = conn_lock
         drive_type = self._drive_combo.currentText() if self._drive_combo else "None"
-        is_trio_drive = drive_type in ("DX3", "DX4")
-        self._read_btn.setEnabled(is_trio_drive and connection is not None)
+        btn_enabled = drive_type in ("DX3", "DX4") and connection is not None
+        self._read_btn.setEnabled(btn_enabled)
+        self._write_btn.setEnabled(btn_enabled)
 
     def set_data_provider(self, provider):
         """
@@ -574,9 +614,11 @@ class AIAnalysisPanel(QDockWidget):
         self._read_btn.setEnabled(False)
         self._read_btn.setText("Reading…")
 
+        conn_lock = self._conn_lock
+
         def _do_read():
             try:
-                profile = read_drive_profile(connection, axis=axis, drive_type=drive_type)
+                profile = read_drive_profile(connection, axis=axis, drive_type=drive_type, conn_lock=conn_lock)
                 self._signals.coe_read_done.emit(axis, profile, "")
             except Exception as exc:
                 logger.error("Axis %d: read drive profile failed — %s", axis, exc)
@@ -599,6 +641,69 @@ class AIAnalysisPanel(QDockWidget):
             self._profiles[axis] = profile
             self._load_profile_to_ui(profile)
             logger.info("Axis %d: read drive profile OK — %s", axis, profile.to_dict())
+
+    def _on_write_to_drive(self):
+        """Write Pn parameters to the drive via CoE SDO."""
+        if self._connection is None:
+            return
+
+        from PySide6.QtWidgets import QMessageBox
+        axis = self._current_axis()
+        reply = QMessageBox.question(
+            self, "Write to Drive",
+            f"Write current Pn parameters to axis {axis} drive?\n\n"
+            "This will overwrite the drive's tuning parameters.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._save_ui_to_profile()
+        profile = self._profiles.get(axis)
+        if profile is None or not profile.has_drive_params():
+            return
+        connection = self._connection
+
+        self._write_btn.setEnabled(False)
+        self._read_btn.setEnabled(False)
+        self._write_btn.setText("Writing…")
+
+        conn_lock = self._conn_lock
+
+        def _do_write():
+            try:
+                results = write_drive_profile(connection, axis=axis, profile=profile, conn_lock=conn_lock)
+                self._signals.coe_write_done.emit(axis, results, "")
+            except Exception as exc:
+                logger.error("Axis %d: write drive profile failed — %s", axis, exc)
+                self._signals.coe_write_done.emit(axis, {}, str(exc))
+
+        threading.Thread(target=_do_write, name="CoEWrite", daemon=True).start()
+
+    def _on_coe_write_done(self, axis: int, results: dict, error: str):
+        """Handle CoE write result on the main thread."""
+        self._write_btn.setText("Write to Drive")
+        btn_enabled = self._connection is not None
+        self._write_btn.setEnabled(btn_enabled)
+        self._read_btn.setEnabled(btn_enabled)
+
+        from PySide6.QtWidgets import QMessageBox
+        if error:
+            QMessageBox.warning(
+                self, "CoE Write Error",
+                f"Failed to write drive parameters to axis {axis}:\n{error}",
+            )
+        else:
+            failures = {k: v for k, v in results.items() if v is not None}
+            if failures:
+                detail = "\n".join(f"  {k}: {v}" for k, v in failures.items())
+                QMessageBox.warning(
+                    self, "CoE Write Partial",
+                    f"Some parameters failed to write on axis {axis}:\n{detail}",
+                )
+            else:
+                n = len(results)
+                logger.info("Axis %d: wrote %d parameters OK", axis, n)
 
     # -----------------------------------------------------------------------
     # Scope data + drive context

@@ -16,13 +16,15 @@ default throughout.  The scratch VR defaults to VR 0; pass a different index
 if that VR is in use by your application.
 """
 
+import contextlib
 import logging
+import threading
 import time
 from typing import Optional
 
 import Trio_UnifiedApi as TUA
 
-from .drive_profile import DriveProfile, ETHERCAT_OBJECT_IDS, PARAM_DEFS
+from .drive_profile import DriveProfile, ETHERCAT_OBJECT_IDS, PARAM_DEFS, decode_pn100, encode_pn100
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +172,14 @@ def coe_write_axis(
 # ---------------------------------------------------------------------------
 
 # Maps DriveProfile attr name → (object_index, Co_ObjectType)
+# Excludes pn100 which is handled specially (nibble-packed sub-fields)
 _PN_OBJECTS: dict[str, tuple[int, TUA.Co_ObjectType]] = {
     attr: (ETHERCAT_OBJECT_IDS[attr], _U32)
     for attr in ETHERCAT_OBJECT_IDS
+    if attr != "pn100"
 }
+
+_PN100_INDEX = ETHERCAT_OBJECT_IDS["pn100"]
 
 
 def read_drive_profile(
@@ -181,6 +187,7 @@ def read_drive_profile(
     axis: int,
     drive_type: str = "DX4",
     vr_scratch: int = 900,
+    conn_lock: Optional[threading.Lock] = None,
 ) -> DriveProfile:
     """
     Read all known Pn parameters from the drive on *axis* and return a
@@ -195,19 +202,39 @@ def read_drive_profile(
     axis        : Trio axis number (0-based)
     drive_type  : "DX3" or "DX4" (stored in the returned profile)
     vr_scratch  : VR index used as scratch space for reads
+    conn_lock   : optional lock to serialize access to the connection
     """
+    lock = conn_lock or contextlib.nullcontext()
     profile = DriveProfile(drive_type=drive_type)
 
-    for attr, (obj_index, obj_type) in _PN_OBJECTS.items():
+    # Hold lock for entire read batch — prevents watchdog interleaving
+    with lock:
+        # Read Pn100 (nibble-packed) and decode into sub-fields
         try:
-            val = coe_read_axis(connection, axis, obj_index, vr_scratch=vr_scratch)
-            setattr(profile, attr, val)
-            logger.debug("Axis %d  %s (0x%04X) = %d", axis, attr.upper(), obj_index, val)
-        except Exception as exc:
-            logger.warning(
-                "Axis %d  %s (0x%04X): read failed — %s",
-                axis, attr.upper(), obj_index, exc,
+            raw = coe_read_axis(connection, axis, _PN100_INDEX, vr_scratch=vr_scratch)
+            fields = decode_pn100(raw)
+            profile.pn100_tuning_mode = fields["tuning_mode"]
+            profile.pn100_vibration = fields["vibration_suppression"]
+            profile.pn100_damping = fields["damping"]
+            logger.debug(
+                "Axis %d  PN100 (0x%04X) = 0x%04X → mode=%d, vib=%d, damp=%d",
+                axis, _PN100_INDEX, raw,
+                fields["tuning_mode"], fields["vibration_suppression"], fields["damping"],
             )
+        except Exception as exc:
+            logger.warning("Axis %d  PN100 (0x%04X): read failed — %s", axis, _PN100_INDEX, exc)
+
+        # Read remaining Pn parameters (simple values)
+        for attr, (obj_index, obj_type) in _PN_OBJECTS.items():
+            try:
+                val = coe_read_axis(connection, axis, obj_index, vr_scratch=vr_scratch)
+                setattr(profile, attr, val)
+                logger.debug("Axis %d  %s (0x%04X) = %d", axis, attr.upper(), obj_index, val)
+            except Exception as exc:
+                logger.warning(
+                    "Axis %d  %s (0x%04X): read failed — %s",
+                    axis, attr.upper(), obj_index, exc,
+                )
 
     return profile
 
@@ -216,6 +243,7 @@ def write_drive_profile(
     connection: TUA.TrioConnection,
     axis: int,
     profile: DriveProfile,
+    conn_lock: Optional[threading.Lock] = None,
 ) -> dict[str, Optional[Exception]]:
     """
     Write all non-None Pn parameters from *profile* to the drive on *axis*.
@@ -228,23 +256,47 @@ def write_drive_profile(
     connection : active TUA.TrioConnection
     axis       : Trio axis number (0-based)
     profile    : DriveProfile whose Pn fields will be written
+    conn_lock  : optional lock to serialize access to the connection
     """
+    lock = conn_lock or contextlib.nullcontext()
     results: dict[str, Optional[Exception]] = {}
 
-    for attr, (obj_index, obj_type) in _PN_OBJECTS.items():
-        val = getattr(profile, attr, None)
-        if val is None:
-            continue
-        try:
-            coe_write_axis(connection, axis, obj_index, val)
-            logger.debug("Axis %d  %s (0x%04X) ← %d", axis, attr.upper(), obj_index, val)
-            results[attr] = None
-        except Exception as exc:
-            logger.warning(
-                "Axis %d  %s (0x%04X): write failed — %s",
-                axis, attr.upper(), obj_index, exc,
+    # Hold lock for entire write batch — prevents watchdog interleaving
+    with lock:
+        # Write Pn100 (encode sub-fields into nibble-packed value)
+        if profile.pn100_tuning_mode is not None:
+            raw = encode_pn100(
+                tuning_mode=profile.pn100_tuning_mode,
+                vibration_suppression=profile.pn100_vibration or 0,
+                damping=profile.pn100_damping or 0,
             )
-            results[attr] = exc
+            try:
+                coe_write_axis(connection, axis, _PN100_INDEX, raw)
+                logger.debug(
+                    "Axis %d  PN100 (0x%04X) ← 0x%04X (mode=%d, vib=%d, damp=%d)",
+                    axis, _PN100_INDEX, raw,
+                    profile.pn100_tuning_mode, profile.pn100_vibration or 0, profile.pn100_damping or 0,
+                )
+                results["pn100"] = None
+            except Exception as exc:
+                logger.warning("Axis %d  PN100 (0x%04X): write failed — %s", axis, _PN100_INDEX, exc)
+                results["pn100"] = exc
+
+        # Write remaining Pn parameters (simple values)
+        for attr, (obj_index, obj_type) in _PN_OBJECTS.items():
+            val = getattr(profile, attr, None)
+            if val is None:
+                continue
+            try:
+                coe_write_axis(connection, axis, obj_index, val)
+                logger.debug("Axis %d  %s (0x%04X) ← %d", axis, attr.upper(), obj_index, val)
+                results[attr] = None
+            except Exception as exc:
+                logger.warning(
+                    "Axis %d  %s (0x%04X): write failed — %s",
+                    axis, attr.upper(), obj_index, exc,
+                )
+                results[attr] = exc
 
     return results
 

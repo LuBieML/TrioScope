@@ -614,6 +614,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._disconnect_cooldown_seconds = 1.0
         self._disconnect_cooldown_end = 0.0
         self._state_lock = threading.Lock()
+        self._conn_lock = threading.Lock()  # serialize all Trio API calls across threads
         self._watchdog_stop = threading.Event()
         self._watchdog_thread = None
 
@@ -1620,7 +1621,8 @@ class ParameterScopeOscilloscope(QMainWindow):
 
                 def _heartbeat():
                     try:
-                        self.trio_connection.SetVrValue(66, 1)
+                        with self._conn_lock:
+                            self.trio_connection.SetVrValue(66, 1)
                     except Exception as e:
                         heartbeat_error.append(e)
                     finally:
@@ -1674,7 +1676,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connection = None
         self.scope_engine = None
         if self._ai_panel is not None:
-            self._ai_panel.set_connection(None)
+            self._ai_panel.set_connection(None, None)
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
         self.status_label.setText("Connection lost")
         self.btn_connect.setText("Connect")
@@ -1820,7 +1822,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.trio_connected = True
                 self.scope_engine = engine
                 if self._ai_panel is not None:
-                    self._ai_panel.set_connection(conn)
+                    self._ai_panel.set_connection(conn, self._conn_lock)
                 self._start_watchdog()
                 self.status_dot.setStyleSheet("color: #00cc00; font-size: 16pt;")
                 sp_ms = servo_period * 1000 if servo_period else 0
@@ -1864,7 +1866,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.scope_engine = None
         self._shutting_down = False
         if self._ai_panel is not None:
-            self._ai_panel.set_connection(None)
+            self._ai_panel.set_connection(None, None)
         self._disconnect_cooldown_end = time.monotonic() + self._disconnect_cooldown_seconds
 
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
@@ -2751,7 +2753,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         if self._ai_panel is None:
             self._ai_panel = AIAnalysisPanel(self)
             self._ai_panel.set_data_provider(self._get_scope_data_for_ai)
-            self._ai_panel.set_connection(self.trio_connection)
+            self._ai_panel.set_connection(self.trio_connection, self._conn_lock)
             # Restore saved API key, model, and per-axis drive profiles
             s = QSettings("TrioScope", "ParameterScope")
             api_key = str(s.value("ai/api_key", ""))
@@ -2800,7 +2802,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             return
 
         if self._ethercat_map is None or not self._ethercat_map.isVisible():
-            self._ethercat_map = EthercatMapWindow(self.trio_connection, parent=self)
+            self._ethercat_map = EthercatMapWindow(self.trio_connection, parent=self, conn_lock=self._conn_lock)
             self._ethercat_map.show()
         else:
             self._ethercat_map.raise_()

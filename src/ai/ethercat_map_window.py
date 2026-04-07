@@ -226,9 +226,10 @@ class _ScanSignals(QObject):
 class EthercatMapWindow(QDialog):
     """Scrollable window showing the discovered EtherCAT topology."""
 
-    def __init__(self, connection: TUA.TrioConnection, parent=None):
+    def __init__(self, connection: TUA.TrioConnection, parent=None, conn_lock=None):
         super().__init__(parent)
         self._connection = connection
+        self._conn_lock = conn_lock
         self._network: Optional[EthercatNetwork] = None
         self._signals = _ScanSignals()
         self._signals.finished.connect(self._on_scan_finished)
@@ -284,9 +285,11 @@ class EthercatMapWindow(QDialog):
         self._btn_scan.setEnabled(False)
         self._status_label.setText("Scanning...")
 
+        conn_lock = self._conn_lock
+
         def _worker():
             try:
-                net = scan_network(self._connection)
+                net = scan_network(self._connection, conn_lock=conn_lock)
                 self._signals.finished.emit(net)
             except Exception as exc:
                 logger.exception("EtherCAT scan failed")
