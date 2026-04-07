@@ -158,6 +158,26 @@ def _read_identity_field(
     )
 
 
+def read_slave_vendor(
+    connection: TUA.TrioConnection,
+    slave: EthercatSlave,
+    conn_lock: Optional[threading.Lock] = None,
+) -> None:
+    """Read vendor ID for a single slave via SDO (0x1018:1).
+
+    Updates *slave.vendor_id* in place.  Designed to be called after
+    the initial scan, outside the main scan lock.
+    """
+    lock = conn_lock or contextlib.nullcontext()
+    with lock:
+        try:
+            slave.vendor_id = _read_identity_field(
+                connection, slave.slot, slave.position, _SUBIDX_VENDOR_ID,
+            )
+        except Exception as exc:
+            logger.debug("Slave %d: vendor read failed — %s", slave.position, exc)
+
+
 def scan_network(
     connection: TUA.TrioConnection,
     conn_lock: Optional[threading.Lock] = None,
@@ -176,146 +196,118 @@ def scan_network(
     lock = conn_lock or contextlib.nullcontext()
     network = EthercatNetwork()
 
-    # Hold the lock for the entire scan to prevent watchdog heartbeats
-    # from interleaving — rapid command alternation crashes the connection.
-    with lock:
-        for slot_idx in range(_MAX_SLOTS):
-            slot = EthercatSlot(slot=slot_idx)
+    # Use per-call locking so the watchdog heartbeat can interleave
+    # between commands.  Each API call is individually short.
 
-            # Check slot state
-            try:
-                slot.state = connection.Ethercat_GetState(slot_idx)
-            except Exception:
-                logger.debug("Slot %d: not available", slot_idx)
-                network.slots.append(slot)
+    def _call(fn, *args, default=None):
+        """Execute one API call under the lock, return *default* on failure."""
+        try:
+            with lock:
+                return fn(*args)
+        except Exception:
+            return default
+
+    for slot_idx in range(_MAX_SLOTS):
+        slot = EthercatSlot(slot=slot_idx)
+
+        state = _call(connection.Ethercat_GetState, slot_idx)
+        if state is None:
+            logger.debug("Slot %d: not available", slot_idx)
+            network.slots.append(slot)
+            continue
+        slot.state = state
+
+        n = _call(connection.Ethercat_CheckNumberOfSlaves, slot_idx, default=0)
+        slot.num_slaves = int(n)
+
+        if slot.num_slaves == 0:
+            network.slots.append(slot)
+            continue
+
+        logger.info(
+            "Slot %d: state=%s, %d slave(s)",
+            slot_idx, slot.state_name, slot.num_slaves,
+        )
+
+        # Enumerate each slave
+        for pos in range(slot.num_slaves):
+            slave = EthercatSlave(slot=slot_idx, position=pos, address=0, axis=-1)
+
+            raw_online = _call(connection.Ethercat_CheckSlaveOnline, slot_idx, pos,
+                               default=False)
+            slave.online = bool(raw_online)
+
+            addr = _call(connection.Ethercat_GetSlaveAddress, slot_idx, pos, default=0)
+            slave.address = int(addr)
+
+            ax = _call(connection.Ethercat_GetSlaveAxis, slot_idx, pos, default=-1)
+            slave.axis = int(ax)
+
+            # Skip ghost slaves (configured but not physically present)
+            if not slave.online and slave.address == 0:
+                logger.debug("  Slave %d: skipping (not present)", pos)
+                slot.slaves.append(slave)
                 continue
 
-            # Count slaves
-            try:
-                slot.num_slaves = connection.Ethercat_CheckNumberOfSlaves(slot_idx)
-            except Exception as exc:
-                logger.debug("Slot %d: cannot count slaves — %s", slot_idx, exc)
-                network.slots.append(slot)
-                continue
-
-            if slot.num_slaves == 0:
-                network.slots.append(slot)
-                continue
+            # If we got a valid axis, read drive parameters
+            if slave.axis >= 0:
+                dt = _call(connection.GetAxisParameter_DRIVE_TYPE, slave.axis, default=0)
+                slave.drive_type = int(dt)
+                ds = _call(connection.GetAxisParameter_DRIVE_STATUS, slave.axis, default=0)
+                slave.drive_status = int(ds)
+                sn = _call(connection.GetAxisParameter_SLOT_NUMBER, slave.axis, default=0)
+                slave.slot_number = int(sn)
 
             logger.info(
-                "Slot %d: state=%s, %d slave(s)",
-                slot_idx, slot.state_name, slot.num_slaves,
+                "  Slave %d: addr=%d, axis=%d, online=%s, drive_type=%d",
+                pos, slave.address, slave.axis, slave.online, slave.drive_type,
             )
+            slot.slaves.append(slave)
 
-            # Enumerate each slave
-            for pos in range(slot.num_slaves):
-                slave = EthercatSlave(slot=slot_idx, position=pos, address=0, axis=-1)
+        network.slots.append(slot)
 
-                try:
-                    raw_online = connection.Ethercat_CheckSlaveOnline(slot_idx, pos)
-                    slave.online = bool(raw_online)
-                except Exception as exc:
-                    logger.debug("  Slave %d: CheckSlaveOnline failed — %s", pos, exc)
-                    slave.online = False
+    # ----- Axis mapping fallback ----------------------------------------
+    # If Ethercat_GetSlaveAxis didn't work (returns -1 for all), try to
+    # map axes to slaves by probing controller axes directly.
+    all_slaves = network.all_slaves
+    unmapped = [s for s in all_slaves if s.axis < 0 and s.online]
 
-                try:
-                    slave.address = int(connection.Ethercat_GetSlaveAddress(slot_idx, pos))
-                except Exception:
-                    pass
+    if unmapped:
+        logger.debug("Attempting axis mapping for %d unmapped slaves", len(unmapped))
+        addr_to_slave: dict[int, EthercatSlave] = {}
+        for s in unmapped:
+            if s.address > 0:
+                addr_to_slave[s.address] = s
 
-                try:
-                    slave.axis = int(connection.Ethercat_GetSlaveAxis(slot_idx, pos))
-                except Exception:
-                    pass
+        consecutive_fails = 0
+        for ax in range(32):
+            dt = _call(connection.GetAxisParameter_DRIVE_TYPE, ax)
+            if dt is None:
+                consecutive_fails += 1
+                if consecutive_fails >= 3:
+                    break
+                continue
 
-                # Skip ghost slaves (configured but not physically present)
-                if not slave.online and slave.address == 0:
-                    logger.debug("  Slave %d: skipping (not present)", pos)
-                    slot.slaves.append(slave)
-                    continue
+            consecutive_fails = 0
+            dt = int(dt)
+            if dt == 0:
+                continue
 
-                # Read vendor ID only (0x1018:1) — minimal SDO to avoid
-                # connection stress.  Product/revision/serial are deferred
-                # to a detailed query if the user requests them.
-                try:
-                    slave.vendor_id = _read_identity_field(
-                        connection, slot_idx, pos, _SUBIDX_VENDOR_ID,
-                    )
-                except Exception as exc:
-                    logger.debug("  Slave %d: vendor read failed — %s", pos, exc)
+            sn_raw = _call(connection.GetAxisParameter_SLOT_NUMBER, ax, default=0)
+            sn = int(sn_raw)
 
-                # If we got a valid axis, read drive parameters
-                if slave.axis >= 0:
-                    try:
-                        slave.drive_type = connection.GetAxisParameter_DRIVE_TYPE(slave.axis)
-                    except Exception:
-                        pass
-                    try:
-                        slave.drive_status = connection.GetAxisParameter_DRIVE_STATUS(slave.axis)
-                    except Exception:
-                        pass
-                    try:
-                        slave.slot_number = connection.GetAxisParameter_SLOT_NUMBER(slave.axis)
-                    except Exception:
-                        pass
-
+            if sn in addr_to_slave:
+                slave = addr_to_slave.pop(sn)
+                slave.axis = ax
+                slave.drive_type = dt
+                ds = _call(connection.GetAxisParameter_DRIVE_STATUS, ax, default=0)
+                slave.drive_status = int(ds)
+                slave.slot_number = sn
                 logger.info(
-                    "  Slave %d: addr=%d, axis=%d, online=%s, drive_type=%d, "
-                    "vendor=0x%08X (%s), product=0x%08X",
-                    pos, slave.address, slave.axis, slave.online, slave.drive_type,
-                    slave.vendor_id, slave.vendor_name, slave.product_code,
+                    "  Axis %d → slave addr %d (drive_type=%d)",
+                    ax, sn, dt,
                 )
-                slot.slaves.append(slave)
-
-            network.slots.append(slot)
-
-        # ----- Axis mapping fallback ----------------------------------------
-        # If Ethercat_GetSlaveAxis didn't work (returns -1 for all), try to
-        # map axes to slaves by probing controller axes directly.
-        all_slaves = network.all_slaves
-        unmapped = [s for s in all_slaves if s.axis < 0 and s.online]
-
-        if unmapped:
-            logger.debug("Attempting axis mapping fallback for %d unmapped slaves", len(unmapped))
-            # Build address → slave lookup
-            addr_to_slave: dict[int, EthercatSlave] = {}
-            for s in unmapped:
-                if s.address > 0:
-                    addr_to_slave[s.address] = s
-
-            _MAX_AXES = 32
-            for ax in range(_MAX_AXES):
-                try:
-                    dt = int(connection.GetAxisParameter_DRIVE_TYPE(ax))
-                except Exception:
-                    continue  # axis doesn't exist or isn't configured
-
-                if dt == 0:
-                    continue
-
-                # Try to get the station address for this axis
-                try:
-                    sn = int(connection.GetAxisParameter_SLOT_NUMBER(ax))
-                except Exception:
-                    sn = 0
-
-                # Match by slot_number (which is the EtherCAT station address)
-                if sn in addr_to_slave:
-                    slave = addr_to_slave.pop(sn)
-                    slave.axis = ax
-                    slave.drive_type = dt
-                    try:
-                        slave.drive_status = int(
-                            connection.GetAxisParameter_DRIVE_STATUS(ax)
-                        )
-                    except Exception:
-                        pass
-                    slave.slot_number = sn
-                    logger.info(
-                        "  Axis %d → slave addr %d (drive_type=%d)",
-                        ax, sn, dt,
-                    )
-                    if not addr_to_slave:
-                        break  # all mapped
+                if not addr_to_slave:
+                    break
 
     return network
