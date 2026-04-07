@@ -27,6 +27,8 @@ ETHERCAT_OBJECT_IDS: dict[str, int] = {
     "pn106": 0x31CE,  # Load inertia percentage
     "pn112": 0x31D4,  # Speed feedforward
     "pn113": 0x31D5,  # Speed feedforward filter time
+    "pn114": 0x31D6,  # Torque feedforward
+    "pn115": 0x31D7,  # Torque feedforward filter time
 }
 
 # ---------------------------------------------------------------------------
@@ -142,6 +144,20 @@ PARAM_DEFS: list[tuple] = [
         "Increase to reduce position following error during constant-velocity "
         "moves. Can introduce overshoot if too high.",
     ),
+    (
+        "pn114", "Pn114", "Torque Feedforward", "%",
+        0, 100, 0,
+        "Percentage of torque feedforward injected into the torque loop. "
+        "Reduces speed following error during acceleration/deceleration. "
+        "Used when internal torque feedforward is selected (Pn005.2=0).",
+    ),
+    (
+        "pn115", "Pn115", "Torque FF Filter", "×0.1 ms",
+        0, 640, 0,
+        "Low-pass filter on the torque feedforward signal. "
+        "Increase to filter noise from the torque feedforward differential. "
+        "Too high may increase overshoot.",
+    ),
 ]
 
 # Attrs that use QComboBox (not QSpinBox)
@@ -173,6 +189,8 @@ class DriveProfile:
     pn105: Optional[int] = None   # Torque filter (×0.01ms)
     pn106: Optional[int] = None   # Load inertia (%)
     pn112: Optional[int] = None   # Speed feedforward (%)
+    pn114: Optional[int] = None   # Torque feedforward (%)
+    pn115: Optional[int] = None   # Torque feedforward filter (×0.1ms)
 
     # -----------------------------------------------------------------------
     def has_drive_params(self) -> bool:
@@ -192,6 +210,8 @@ class DriveProfile:
             "pn105": self.pn105,
             "pn106": self.pn106,
             "pn112": self.pn112,
+            "pn114": self.pn114,
+            "pn115": self.pn115,
         }
 
     @classmethod
@@ -244,6 +264,10 @@ class DriveProfile:
              "load/motor inertia ratio — critical for gain scaling"),
             ("pn112", "Pn112 Speed Feedforward  ", "%",
              "reduces position following error during constant-velocity moves"),
+            ("pn114", "Pn114 Torque Feedforward ", "%",
+             "reduces speed following error during accel/decel"),
+            ("pn115", "Pn115 Torque FF Filter  ", "×0.1 ms",
+             "low-pass filter on torque feedforward — higher = smoother but more overshoot"),
         ]
 
         for attr, label, unit, note in param_map:

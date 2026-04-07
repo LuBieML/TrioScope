@@ -28,7 +28,8 @@
       "Bash(pyrefly --help)",
       "WebSearch",
       "WebFetch(domain:pyrefly.org)",
-      "Bash(.venv/Scripts/python.exe -c ':*)"
+      "Bash(.venv/Scripts/python.exe -c ':*)",
+      "Bash(.venv/Scripts/pip install:*)"
     ]
   }
 }
