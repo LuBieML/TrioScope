@@ -68,29 +68,30 @@ class _SlaveCard(QFrame):
     def __init__(self, slave: EthercatSlave, parent=None):
         super().__init__(parent)
         self.slave = slave
-        self.setFixedSize(160, 130)
+        self.setFixedSize(110, 80)
         self.setFrameShape(QFrame.Shape.Box)
         self.setStyleSheet(
             f"background-color: {_CLR_CARD_BG.name()};"
-            f" border: 2px solid {(_CLR_GREEN if slave.online else _CLR_RED).name()};"
-            f" border-radius: 6px;"
+            f" border: 1px solid {(_CLR_GREEN if slave.online else _CLR_RED).name()};"
+            f" border-radius: 4px;"
         )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(2)
+        layout.setContentsMargins(4, 3, 4, 3)
+        layout.setSpacing(0)
 
-        # Header — position badge
+        # Header — position + online dot
         hdr = QHBoxLayout()
+        hdr.setSpacing(0)
         pos_label = QLabel(f"#{slave.position}")
-        pos_label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        pos_label.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
         pos_label.setStyleSheet(f"color: {_CLR_ACCENT.name()}; border: none;")
         hdr.addWidget(pos_label)
         hdr.addStretch()
         dot = QLabel("\u25cf")
         dot.setStyleSheet(
             f"color: {(_CLR_GREEN if slave.online else _CLR_RED).name()};"
-            " font-size: 12pt; border: none;"
+            " font-size: 7pt; border: none;"
         )
         dot.setToolTip("Online" if slave.online else "Offline")
         hdr.addWidget(dot)
@@ -98,27 +99,45 @@ class _SlaveCard(QFrame):
 
         # Axis
         axis_lbl = QLabel(f"Axis {slave.axis}" if slave.axis >= 0 else "No axis")
-        axis_lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        axis_lbl.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         axis_lbl.setStyleSheet(f"color: {_CLR_TEXT.name()}; border: none;")
         axis_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(axis_lbl)
 
-        # Drive type
+        # Vendor + drive type on one line
+        parts = []
+        if slave.vendor_id:
+            parts.append(slave.vendor_name)
         dt = _drive_type_label(slave.drive_type)
-        dt_lbl = QLabel(dt)
-        dt_lbl.setFont(QFont("Segoe UI", 9))
-        dt_lbl.setStyleSheet(f"color: {_CLR_BLUE.name()}; border: none;")
-        dt_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(dt_lbl)
+        if dt != "Unknown":
+            parts.append(dt)
+        if parts:
+            detail = QLabel(" \u2022 ".join(parts))
+            detail.setFont(QFont("Segoe UI", 6))
+            detail.setStyleSheet(f"color: {_CLR_ACCENT.name()}; border: none;")
+            detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(detail)
 
-        # Address / status row
-        info = QLabel(f"Addr {slave.address}  |  Status 0x{slave.drive_status:04X}")
-        info.setFont(QFont("Segoe UI", 7))
-        info.setStyleSheet(f"color: {_CLR_TEXT_DIM.name()}; border: none;")
-        info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(info)
+        # Address
+        addr_lbl = QLabel(f"Addr {slave.address}")
+        addr_lbl.setFont(QFont("Segoe UI", 6))
+        addr_lbl.setStyleSheet(f"color: {_CLR_TEXT_DIM.name()}; border: none;")
+        addr_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(addr_lbl)
 
         layout.addStretch()
+
+        # Tooltip with full identity details
+        tip_lines = [f"Status: 0x{slave.drive_status:04X}"]
+        if slave.vendor_id:
+            tip_lines.append(f"Vendor: {slave.vendor_name} (0x{slave.vendor_id:08X})")
+        if slave.product_code:
+            tip_lines.append(f"Product Code: 0x{slave.product_code:08X}")
+        if slave.revision:
+            tip_lines.append(f"Revision: 0x{slave.revision:08X}")
+        if slave.serial_number:
+            tip_lines.append(f"Serial: {slave.serial_number}")
+        self.setToolTip("\n".join(tip_lines))
 
 
 # ---------------------------------------------------------------------------
@@ -131,38 +150,44 @@ class _SlotRow(QWidget):
         super().__init__(parent)
         self.ecat_slot = ecat_slot
 
+        # Filter out ghost slaves (configured but not physically present)
+        self._present_slaves = [
+            s for s in ecat_slot.slaves if s.online or s.address != 0
+        ]
+
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(0)
 
         # Slot header card
         slot_card = QFrame()
-        slot_card.setFixedSize(110, 130)
+        slot_card.setFixedSize(80, 80)
         slot_card.setStyleSheet(
             f"background-color: {_CLR_CONTROLLER.name()};"
-            f" border: 2px solid {_state_colour(ecat_slot.state).name()};"
-            " border-radius: 6px;"
+            f" border: 1px solid {_state_colour(ecat_slot.state).name()};"
+            " border-radius: 4px;"
         )
         sc_layout = QVBoxLayout(slot_card)
-        sc_layout.setContentsMargins(6, 6, 6, 6)
-        sc_layout.setSpacing(2)
+        sc_layout.setContentsMargins(4, 4, 4, 4)
+        sc_layout.setSpacing(1)
 
         title = QLabel(f"Slot {ecat_slot.slot}")
-        title.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         title.setStyleSheet("color: white; border: none;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sc_layout.addWidget(title)
 
         state_lbl = QLabel(ecat_slot.state_name)
-        state_lbl.setFont(QFont("Segoe UI", 8))
+        state_lbl.setFont(QFont("Segoe UI", 7))
         state_lbl.setStyleSheet(
             f"color: {_state_colour(ecat_slot.state).name()}; border: none;"
         )
         state_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sc_layout.addWidget(state_lbl)
 
-        count_lbl = QLabel(f"{ecat_slot.num_slaves} slave(s)")
-        count_lbl.setFont(QFont("Segoe UI", 8))
+        n_present = len(self._present_slaves)
+        count_lbl = QLabel(f"{n_present} device(s)")
+        count_lbl.setFont(QFont("Segoe UI", 7))
         count_lbl.setStyleSheet(f"color: {_CLR_TEXT_DIM.name()}; border: none;")
         count_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sc_layout.addWidget(count_lbl)
@@ -170,44 +195,42 @@ class _SlotRow(QWidget):
         sc_layout.addStretch()
         layout.addWidget(slot_card)
 
-        # Bus connector + slave cards
-        if ecat_slot.slaves:
-            for slave in ecat_slot.slaves:
-                # Connector line
-                connector = QWidget()
-                connector.setFixedSize(30, 130)
-                connector.setStyleSheet("background: transparent;")
-                layout.addWidget(connector)
+        # Bus connector + slave cards (only present devices)
+        for slave in self._present_slaves:
+            connector = QWidget()
+            connector.setFixedSize(16, 80)
+            connector.setStyleSheet("background: transparent;")
+            layout.addWidget(connector)
 
-                card = _SlaveCard(slave)
-                layout.addWidget(card)
+            card = _SlaveCard(slave)
+            layout.addWidget(card)
 
         layout.addStretch()
 
     def paintEvent(self, event):
         """Draw the bus line connecting slot port to slaves."""
         super().paintEvent(event)
-        if not self.ecat_slot.slaves:
+        n = len(self._present_slaves)
+        if n == 0:
             return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(_CLR_BUS_LINE, 3)
+        pen = QPen(_CLR_BUS_LINE, 2)
         painter.setPen(pen)
 
         # Horizontal line through the middle of all cards
-        y_mid = 65  # middle of 130px cards
+        y_mid = 42  # middle of 80px cards (with 2px margin)
         # Start from right edge of slot card
-        x_start = 110
+        x_start = 82  # 80px slot card + 2px margin
         # End at right edge of last slave card
-        n = len(self.ecat_slot.slaves)
-        x_end = 110 + n * (30 + 160)
+        x_end = 82 + n * (16 + 110)
         painter.drawLine(x_start, y_mid, x_end, y_mid)
 
         # Small vertical ticks at each slave entry
         for i in range(n):
-            x_tick = 110 + i * (30 + 160) + 30
-            painter.drawLine(x_tick, y_mid - 8, x_tick, y_mid + 8)
+            x_tick = 82 + i * (16 + 110) + 16
+            painter.drawLine(x_tick, y_mid - 5, x_tick, y_mid + 5)
 
         painter.end()
 
@@ -321,14 +344,15 @@ class EthercatMapWindow(QDialog):
         if not net:
             return
 
-        total_slaves = len(net.all_slaves)
-        online = len(net.online_slaves)
+        # Count only physically present slaves (have address or are online)
+        present = [s for s in net.all_slaves if s.online or s.address != 0]
+        online = len([s for s in present if s.online])
         active = len(net.active_slots)
         self._summary_label.setText(
-            f"{active} active slot(s)  |  {online}/{total_slaves} slave(s) online"
+            f"{active} active slot(s)  |  {len(present)} device(s)  |  {online} online"
         )
 
-        if total_slaves == 0:
+        if not present:
             empty = QLabel("No EtherCAT slaves detected.\n\n"
                            "Check that the EtherCAT network is started\n"
                            "and drives are powered on.")

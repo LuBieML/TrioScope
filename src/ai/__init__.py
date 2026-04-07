@@ -15,7 +15,7 @@ from .coe_io import (
     read_single_pn,
     write_single_pn,
 )
-from .ethercat_scan import scan_network, EthercatNetwork, EthercatSlot, EthercatSlave
+from .ethercat_scan import scan_network, EthercatNetwork, EthercatSlot, EthercatSlave, VENDOR_NAMES
 from .ethercat_map_window import EthercatMapWindow
 
 __all__ = [
@@ -23,6 +23,6 @@ __all__ = [
     'coe_read_axis', 'coe_read_slot', 'coe_write_axis',
     'read_drive_profile', 'write_drive_profile',
     'read_single_pn', 'write_single_pn',
-    'scan_network', 'EthercatNetwork', 'EthercatSlot', 'EthercatSlave',
+    'scan_network', 'EthercatNetwork', 'EthercatSlot', 'EthercatSlave', 'VENDOR_NAMES',
     'EthercatMapWindow',
 ]
