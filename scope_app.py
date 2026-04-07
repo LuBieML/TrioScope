@@ -51,6 +51,11 @@ try:
 except ImportError:
     AIAnalysisPanel = None
 
+try:
+    from ai.ethercat_map_window import EthercatMapWindow
+except ImportError:
+    EthercatMapWindow = None
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -668,6 +673,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         # AI Analysis
         self._ai_panel = None
 
+        # EtherCAT map window
+        self._ethercat_map = None
+
         # FFT performance caches
         self._fft_cache = {}        # {trace_id: {'key': tuple, 'magnitude': array}}
         self._fft_window_cache = (0, None)  # (n_fft, hanning_window)
@@ -845,6 +853,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         btn_ai.clicked.connect(self._toggle_ai_panel)
         ctrl_grid.addWidget(btn_ai, 3, 0, 1, 2)
 
+        # Row 4: EtherCAT Map
+        btn_ecat = QPushButton("\u26a1 EtherCAT Map")
+        btn_ecat.clicked.connect(self._open_ethercat_map)
+        ctrl_grid.addWidget(btn_ecat, 4, 0, 1, 2)
+
         left_layout.addLayout(ctrl_grid)
 
         main_layout.addWidget(left_panel)
@@ -960,7 +973,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         pi = pg.PlotItem(viewBox=vb)
         pw = pg.GraphicsLayoutWidget()
         pw.setBackground('#0A0A0A')
-        pw.addItem(pi, row=0, col=0)
+        pw.addItem(pi, 0, 0)
         self.plot_splitter.addWidget(pw)
         return pi
 
@@ -1584,9 +1597,9 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _on_connect_clicked(self):
         if self.trio_connected:
-            self.disconnect()
+            self.do_disconnect()
         else:
-            self.connect()
+            self.do_connect()
 
     def _event_handler(self, et, ival, sval):
         """Handle Trio API events — ignore during shutdown."""
@@ -1660,6 +1673,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connected = False
         self.trio_connection = None
         self.scope_engine = None
+        if self._ai_panel is not None:
+            self._ai_panel.set_connection(None)
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
         self.status_label.setText("Connection lost")
         self.btn_connect.setText("Connect")
@@ -1707,7 +1722,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 pass
         threading.Thread(target=_close, name="ScopeCloseCleanup", daemon=True).start()
 
-    def connect(self):
+    def do_connect(self):
         ip = self.ip_edit.text()
 
         # Check disconnect cooldown
@@ -1808,14 +1823,15 @@ class ParameterScopeOscilloscope(QMainWindow):
                     self._ai_panel.set_connection(conn)
                 self._start_watchdog()
                 self.status_dot.setStyleSheet("color: #00cc00; font-size: 16pt;")
-                self.status_label.setText(f"Connected to {ip_addr} (Servo: {servo_period*1000:.1f}ms)")
+                sp_ms = servo_period * 1000 if servo_period else 0
+                self.status_label.setText(f"Connected to {ip_addr} (Servo: {sp_ms:.1f}ms)")
                 self.table_usage_label.setText(f"TABLE size: {engine.tsize}")
                 self.btn_connect.setText("Disconnect")
                 self.btn_connect.setEnabled(True)
 
         QTimer.singleShot(100, _check_connect)
 
-    def disconnect(self):
+    def do_disconnect(self):
         """Disconnect with proper cleanup — matching gcode parser pattern."""
         self.btn_connect.setEnabled(False)
         self.status_label.setText("Disconnecting...")
@@ -2738,8 +2754,8 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._ai_panel.set_connection(self.trio_connection)
             # Restore saved API key, model, and per-axis drive profiles
             s = QSettings("TrioScope", "ParameterScope")
-            api_key = s.value("ai/api_key", "")
-            model = s.value("ai/model", "openai/gpt-4.1-mini")
+            api_key = str(s.value("ai/api_key", ""))
+            model = str(s.value("ai/model", "openai/gpt-4.1-mini"))
             if api_key:
                 self._ai_panel.set_api_key(api_key)
             self._ai_panel.set_model(model)
@@ -2768,6 +2784,27 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.addDockWidget(Qt.RightDockWidgetArea, self._ai_panel)
         else:
             self._ai_panel.setVisible(not self._ai_panel.isVisible())
+
+    # ─── EtherCAT Map ───────────────────────────────────────────────
+
+    def _open_ethercat_map(self):
+        """Open the EtherCAT network map window."""
+        if EthercatMapWindow is None:
+            QMessageBox.warning(self, "EtherCAT Map",
+                                "EtherCAT map module not available. Check src/ai/ is present.")
+            return
+
+        if not self.trio_connected or not self.trio_connection:
+            QMessageBox.warning(self, "EtherCAT Map",
+                                "Connect to a Trio controller first.")
+            return
+
+        if self._ethercat_map is None or not self._ethercat_map.isVisible():
+            self._ethercat_map = EthercatMapWindow(self.trio_connection, parent=self)
+            self._ethercat_map.show()
+        else:
+            self._ethercat_map.raise_()
+            self._ethercat_map.activateWindow()
 
     def _get_scope_data_for_ai(self):
         """Data provider callback for AI panel. Returns (time_arr, params_dict)."""
@@ -2852,7 +2889,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         if AIAnalysisPanel is not None:
             from ai.nanogpt_client import NanoGPTClient
             ai_model_edit.addItems(NanoGPTClient.AVAILABLE_MODELS)
-        ai_model_edit.setCurrentText(s_ai.value("ai/model", "openai/gpt-4.1-mini"))
+        ai_model_edit.setCurrentText(str(s_ai.value("ai/model", "openai/gpt-4.1-mini")))
         ai_model_edit.setEditable(True)
         ai_layout.addRow("Model:", ai_model_edit)
         main_layout.addWidget(ai_group)
@@ -2918,12 +2955,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         s = QSettings("TrioScope", "ParameterScope")
 
         # Connection
-        self.ip_edit.setText(s.value("connection/ip", "192.168.0.245"))
+        self.ip_edit.setText(str(s.value("connection/ip", "192.168.0.245")))
 
         # Configuration
-        self.period_edit.setText(s.value("config/sample_period", "1"))
-        self.duration_edit.setText(s.value("config/duration", "5.0"))
-        self.table_start_edit.setText(s.value("config/table_start", "0"))
+        self.period_edit.setText(str(s.value("config/sample_period", "1")))
+        self.duration_edit.setText(str(s.value("config/duration", "5.0")))
+        self.table_start_edit.setText(str(s.value("config/table_start", "0")))
         self.use_end_of_table = s.value("config/use_end_of_table", "true") == "true"
         if s.value("config/capture_mode", "continuous") == "single":
             self.radio_single.setChecked(True)
@@ -2931,12 +2968,12 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.radio_continuous.setChecked(True)
 
         # Display / plot settings
-        self.plot_mode = s.value("display/plot_mode", "time")
+        self.plot_mode = str(s.value("display/plot_mode", "time"))
         # Migration: old 'fft' global mode → 'time' with per-trace FFT
         migrate_global_fft = (self.plot_mode == 'fft')
         if migrate_global_fft:
             self.plot_mode = 'time'
-        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(self.plot_mode, 0)
+        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(str(self.plot_mode), 0)
         self.plot_mode_combo.setCurrentIndex(mode_index)
         self.window_duration = float(s.value("display/window_duration", 5.0))
         self.lock_x_axis = s.value("display/lock_x_axis", "true") == "true"
@@ -2951,7 +2988,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             if i >= len(self.traces):
                 self.add_trace()
             t = self.traces[i]
-            param = s.value(f"traces/{i}/param", "MPOS")
+            param = str(s.value(f"traces/{i}/param", "MPOS"))
             axis = int(s.value(f"traces/{i}/axis", 0))
             enabled = s.value(f"traces/{i}/enabled", "true") == "true"
             t.param_combo.setCurrentText(param)

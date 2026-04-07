@@ -22,7 +22,13 @@
       "Bash(python -c ':*)",
       "Bash(pip install:*)",
       "Bash(python3)",
-      "Bash(python3 -c \"import fitz; print\\('fitz available'\\)\")"
+      "Bash(python3 -c \"import fitz; print\\('fitz available'\\)\")",
+      "WebFetch(domain:)",
+      "Bash(python -c \"import pyrefly; print\\(pyrefly.__version__\\)\")",
+      "Bash(pyrefly --help)",
+      "WebSearch",
+      "WebFetch(domain:pyrefly.org)",
+      "Bash(.venv/Scripts/python.exe -c ':*)"
     ]
   }
 }

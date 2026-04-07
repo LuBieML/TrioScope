@@ -8,6 +8,7 @@ alongside the scope metrics.
 """
 
 import logging
+import threading
 import numpy as np
 
 from PySide6.QtWidgets import (
@@ -153,6 +154,7 @@ class _Signals(QObject):
     chunk_received = Signal(str)
     stream_done = Signal()
     error_occurred = Signal(str)
+    coe_read_done = Signal(int, object, str)  # axis, DriveProfile, error_msg
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +173,7 @@ class AIAnalysisPanel(QDockWidget):
         self._signals.chunk_received.connect(self._on_chunk)
         self._signals.stream_done.connect(self._on_stream_done)
         self._signals.error_occurred.connect(self._on_error)
+        self._signals.coe_read_done.connect(self._on_coe_read_done)
 
         self._streaming = False
         self._current_response = ""
@@ -566,24 +569,36 @@ class AIAnalysisPanel(QDockWidget):
             return
         axis = self._current_axis()
         drive_type = self._drive_combo.currentText()
+        connection = self._connection
 
         self._read_btn.setEnabled(False)
         self._read_btn.setText("Reading…")
-        try:
-            profile = read_drive_profile(self._connection, axis=axis, drive_type=drive_type)
-            self._profiles[axis] = profile
-            self._load_profile_to_ui(profile)
-            logger.info("Axis %d: read drive profile OK — %s", axis, profile.to_dict())
-        except Exception as exc:
-            logger.error("Axis %d: read drive profile failed — %s", axis, exc)
+
+        def _do_read():
+            try:
+                profile = read_drive_profile(connection, axis=axis, drive_type=drive_type)
+                self._signals.coe_read_done.emit(axis, profile, "")
+            except Exception as exc:
+                logger.error("Axis %d: read drive profile failed — %s", axis, exc)
+                self._signals.coe_read_done.emit(axis, DriveProfile(drive_type=drive_type), str(exc))
+
+        threading.Thread(target=_do_read, name="CoERead", daemon=True).start()
+
+    def _on_coe_read_done(self, axis: int, profile: DriveProfile, error: str):
+        """Handle CoE read result on the main thread."""
+        self._read_btn.setText("Read from Drive")
+        self._read_btn.setEnabled(self._connection is not None)
+
+        if error:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self, "CoE Read Error",
-                f"Failed to read drive parameters from axis {axis}:\n{exc}",
+                f"Failed to read drive parameters from axis {axis}:\n{error}",
             )
-        finally:
-            self._read_btn.setText("Read from Drive")
-            self._read_btn.setEnabled(True)
+        else:
+            self._profiles[axis] = profile
+            self._load_profile_to_ui(profile)
+            logger.info("Axis %d: read drive profile OK — %s", axis, profile.to_dict())
 
     # -----------------------------------------------------------------------
     # Scope data + drive context

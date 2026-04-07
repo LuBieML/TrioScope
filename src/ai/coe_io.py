@@ -17,6 +17,7 @@ if that VR is in use by your application.
 """
 
 import logging
+import time
 from typing import Optional
 
 import Trio_UnifiedApi as TUA
@@ -25,11 +26,21 @@ from .drive_profile import DriveProfile, ETHERCAT_OBJECT_IDS, PARAM_DEFS
 
 logger = logging.getLogger(__name__)
 
-# Convenience alias used throughout this module
-_U16 = TUA.Co_ObjectType.Unsigned16
+# Convenience alias used throughout this module — DX4 Pn objects are U32
+_U32 = TUA.Co_ObjectType.Unsigned32
 
 # Subindex for all simple (non-array) DX3/DX4 Pn objects
 _SUBINDEX = 0x00
+
+# Sentinel value written to the scratch VR before issuing a CoRead.
+# Pn parameters are UINT16 (0–65535), so -9999.0 can never be a valid result.
+_VR_SENTINEL = -9999.0
+
+# Maximum time (seconds) to wait for the SDO response to land in the VR.
+_SDO_TIMEOUT = 2.0
+
+# Polling interval (seconds) between VR checks.
+_SDO_POLL_INTERVAL = 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -41,8 +52,8 @@ def coe_read_axis(
     axis: int,
     object_index: int,
     subindex: int = _SUBINDEX,
-    obj_type: TUA.Co_ObjectType = _U16,
-    vr_scratch: int = 0,
+    obj_type: TUA.Co_ObjectType = _U32,
+    vr_scratch: int = 900,
 ) -> int:
     """
     Read one CoE object from the drive on *axis* and return its value.
@@ -60,8 +71,75 @@ def coe_read_axis(
     -------
     int  — the raw register value read from the drive
     """
+    # Write a sentinel so we can detect when the SDO response arrives.
+    connection.SetVrValue(vr_scratch, _VR_SENTINEL)
+
+    # Verify sentinel was set
+    check = connection.GetVrValue(vr_scratch)
+    if check != _VR_SENTINEL:
+        logger.warning(
+            "VR %d sentinel verify failed: wrote %s, read back %s "
+            "(VR may be in use by BASIC program)",
+            vr_scratch, _VR_SENTINEL, check,
+        )
+
     connection.Ethercat_CoReadAxis(axis, object_index, subindex, obj_type, vr_scratch)
-    return int(connection.GetVrValue(vr_scratch))
+
+    # Poll until the VR is no longer the sentinel (SDO response has landed).
+    deadline = time.monotonic() + _SDO_TIMEOUT
+    poll_count = 0
+    last_val = _VR_SENTINEL
+    while time.monotonic() < deadline:
+        val = connection.GetVrValue(vr_scratch)
+        last_val = val
+        poll_count += 1
+        if val != _VR_SENTINEL:
+            logger.debug(
+                "Axis %d obj 0x%04X: SDO response in %d polls, value=%s",
+                axis, object_index, poll_count, val,
+            )
+            return int(val)
+        time.sleep(_SDO_POLL_INTERVAL)
+
+    logger.debug(
+        "Axis %d obj 0x%04X: timed out after %d polls, last VR=%s",
+        axis, object_index, poll_count, last_val,
+    )
+    raise TimeoutError(
+        f"SDO read timed out after {_SDO_TIMEOUT}s — "
+        f"axis {axis}, object 0x{object_index:04X}"
+    )
+
+
+def coe_read_slot(
+    connection: TUA.TrioConnection,
+    slot: int,
+    slave_position: int,
+    object_index: int,
+    subindex: int = _SUBINDEX,
+    obj_type: TUA.Co_ObjectType = _U32,
+    vr_scratch: int = 900,
+) -> int:
+    """
+    Read one CoE object using slot + slave position (not axis number).
+
+    Uses Ethercat_CoRead(slot, slave_pos, index, subindex, type, vr).
+    Useful when axis mapping is unknown or unreliable.
+    """
+    connection.SetVrValue(vr_scratch, _VR_SENTINEL)
+    connection.Ethercat_CoRead(slot, slave_position, object_index, subindex, obj_type, vr_scratch)
+
+    deadline = time.monotonic() + _SDO_TIMEOUT
+    while time.monotonic() < deadline:
+        val = connection.GetVrValue(vr_scratch)
+        if val != _VR_SENTINEL:
+            return int(val)
+        time.sleep(_SDO_POLL_INTERVAL)
+
+    raise TimeoutError(
+        f"SDO read timed out after {_SDO_TIMEOUT}s — "
+        f"slot {slot}, slave {slave_position}, object 0x{object_index:04X}"
+    )
 
 
 def coe_write_axis(
@@ -70,7 +148,7 @@ def coe_write_axis(
     object_index: int,
     value: int,
     subindex: int = _SUBINDEX,
-    obj_type: TUA.Co_ObjectType = _U16,
+    obj_type: TUA.Co_ObjectType = _U32,
 ) -> None:
     """
     Write one CoE object to the drive on *axis*.
@@ -93,7 +171,7 @@ def coe_write_axis(
 
 # Maps DriveProfile attr name → (object_index, Co_ObjectType)
 _PN_OBJECTS: dict[str, tuple[int, TUA.Co_ObjectType]] = {
-    attr: (ETHERCAT_OBJECT_IDS[attr], _U16)
+    attr: (ETHERCAT_OBJECT_IDS[attr], _U32)
     for attr in ETHERCAT_OBJECT_IDS
 }
 
@@ -102,7 +180,7 @@ def read_drive_profile(
     connection: TUA.TrioConnection,
     axis: int,
     drive_type: str = "DX4",
-    vr_scratch: int = 0,
+    vr_scratch: int = 900,
 ) -> DriveProfile:
     """
     Read all known Pn parameters from the drive on *axis* and return a
@@ -175,7 +253,7 @@ def read_single_pn(
     connection: TUA.TrioConnection,
     axis: int,
     pn_attr: str,
-    vr_scratch: int = 0,
+    vr_scratch: int = 900,
 ) -> int:
     """
     Read a single Pn parameter by attribute name (e.g. ``"pn102"``).
