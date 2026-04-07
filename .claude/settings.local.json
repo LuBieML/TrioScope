@@ -29,7 +29,8 @@
       "WebSearch",
       "WebFetch(domain:pyrefly.org)",
       "Bash(.venv/Scripts/python.exe -c ':*)",
-      "Bash(.venv/Scripts/pip install:*)"
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('scope_app.py', doraise=True\\); print\\('OK'\\)\")"
     ]
   }
 }

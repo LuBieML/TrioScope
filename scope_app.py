@@ -565,6 +565,31 @@ class TraceControl(QFrame):
         self.btn_fft.toggled.connect(lambda: self.changed.emit())
         row1.addWidget(self.btn_fft)
 
+        self.btn_pin = QPushButton("PIN")
+        self.btn_pin.setCheckable(True)
+        self.btn_pin.setFixedSize(36, 22)
+        self.btn_pin.setToolTip("Pin current trace as dashed reference for comparison")
+        self.btn_pin.setStyleSheet("""
+            QPushButton {
+                background-color: #4b4a4a;
+                color: #888;
+                border: 1px solid #606060;
+                border-radius: 2px;
+                font-size: 8pt;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QPushButton:checked {
+                background-color: #1a4a1a;
+                color: #66FF66;
+                border: 1px solid #66FF66;
+            }
+        """)
+        row1.addWidget(self.btn_pin)
+
+        # Reference (pinned) data: {'time': np.array, 'values': np.array} or None
+        self.ref_data = None
+
         vbox.addLayout(row1)
 
     def _on_delete(self):
@@ -592,6 +617,12 @@ class TraceControl(QFrame):
 
     def get_color(self):
         return self.color
+
+    def is_pinned(self):
+        return self.btn_pin.isChecked()
+
+    def has_ref_data(self):
+        return self.ref_data is not None
 
 
 
@@ -659,6 +690,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Plot items and curves
         self.plot_items = {}    # {key: PlotItem}
         self.curves = {}        # {display_name: PlotDataItem}
+        self.ref_curves = {}    # {trace_id: PlotDataItem} — pinned reference traces
         self.stats_texts = {}   # {trace_id: pg.TextItem}
 
         # Cursor / measurement tool
@@ -996,6 +1028,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             w.deleteLater()
         self.plot_items = {}
         self.curves = {}
+        self.ref_curves = {}
         self.stats_texts = {}
         self._cursor_lines_c1.clear()
         self._cursor_lines_c2.clear()
@@ -1570,6 +1603,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         trace = TraceControl(len(self.traces), parent=self.traces_container)
         trace.changed.connect(self.on_trace_changed)
+        trace.btn_pin.toggled.connect(lambda checked, t=trace: self._on_pin_toggled(t, checked))
         self.traces_layout.addWidget(trace)
         self.traces.append(trace)
 
@@ -1577,8 +1611,12 @@ class ParameterScopeOscilloscope(QMainWindow):
             trace.chk_enable.setChecked(True)
 
     def on_trace_changed(self):
-        # Remove destroyed traces
-        self.traces = [t for t in self.traces if t.parent() is not None]
+        # Remove destroyed traces — clear ref data for deleted ones
+        alive_traces = [t for t in self.traces if t.parent() is not None]
+        deleted_ids = {id(t) for t in self.traces} - {id(t) for t in alive_traces}
+        for tid in deleted_ids:
+            self.ref_curves.pop(tid, None)
+        self.traces = alive_traces
         self.curves = {}
         self.stats_texts = {}
         self._fft_cache = {}
@@ -1588,6 +1626,33 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._recreate_subplots()
 
         # Re-render captured data when scope is stopped (e.g. toggling FFT)
+        if not self.is_running and self.accumulated_data is not None:
+            self._render_plots()
+
+    def _on_pin_toggled(self, trace, checked):
+        """Pin or unpin the current trace data as a dashed reference."""
+        trace_id = id(trace)
+        if checked:
+            # Snapshot current accumulated data for this trace
+            if self.accumulated_data is None:
+                trace.btn_pin.setChecked(False)
+                return
+            param_name = trace.get_display_name()
+            if param_name not in self.accumulated_data['params']:
+                trace.btn_pin.setChecked(False)
+                return
+            trace.ref_data = {
+                'time': self.accumulated_data['time'].copy(),
+                'values': self.accumulated_data['params'][param_name].copy(),
+            }
+        else:
+            trace.ref_data = None
+            # Remove the reference curve from the plot
+            if trace_id in self.ref_curves:
+                ref_curve = self.ref_curves.pop(trace_id)
+                if trace_id in self.plot_items:
+                    self.plot_items[trace_id].removeItem(ref_curve)
+        # Re-render to show/hide reference
         if not self.is_running and self.accumulated_data is not None:
             self._render_plots()
 
@@ -2530,6 +2595,26 @@ class ParameterScopeOscilloscope(QMainWindow):
 
                 self.curves[trace_id].setData(time_arr, values)
 
+                # ── Reference (pinned) trace overlay ──
+                if trace.has_ref_data():
+                    if trace_id not in self.ref_curves:
+                        # Dimmed version of trace color for reference
+                        qc = QColor(color)
+                        ref_color = QColor(
+                            (qc.red() + 128) // 2,
+                            (qc.green() + 128) // 2,
+                            (qc.blue() + 128) // 2,
+                        )
+                        ref_pen = pg.mkPen(ref_color, width=self.line_width,
+                                           style=Qt.DashLine)
+                        ref_curve = pi.plot(
+                            name=f"{param_name} (REF)", pen=ref_pen)
+                        ref_curve.setClipToView(True)
+                        ref_curve.setDownsampling(auto=True, method='peak')
+                        self.ref_curves[trace_id] = ref_curve
+                    self.ref_curves[trace_id].setData(
+                        trace.ref_data['time'], trace.ref_data['values'])
+
                 # Update min/max stats text (throttled — only when display string changes)
                 v_min_s = f"{float(np.min(values)):.4f}"
                 v_max_s = f"{float(np.max(values)):.4f}"
@@ -2608,7 +2693,12 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._param_chunks = {}
             self._segment_breaks = []
         self.curves = {}
+        self.ref_curves = {}
         self.stats_texts = {}
+        # Unpin all traces and clear their reference data
+        for trace in self.traces:
+            trace.ref_data = None
+            trace.btn_pin.setChecked(False)
         self.gl_line_item = None
         self.gl_cursor_item = None
         self._recreate_subplots()
@@ -3002,6 +3092,11 @@ class ParameterScopeOscilloscope(QMainWindow):
             if pen:
                 color = pen.color()
                 curve.setPen(pg.mkPen(color, width=self.line_width))
+        for ref_curve in self.ref_curves.values():
+            pen = ref_curve.opts.get('pen')
+            if pen:
+                ref_curve.setPen(pg.mkPen(pen.color(), width=self.line_width,
+                                          style=Qt.DashLine))
         self._update_x_links()
 
     # ─── Settings persistence ──────────────────────────────────────
