@@ -47,7 +47,8 @@ deterministically at the servo rate.
   - Trio controller parameters: P_GAIN, D_GAIN, I_GAIN, VFF_GAIN, OV_GAIN
   - DX4/DX3 drive parameters: Pn102 (speed Kp), Pn103 (speed Ti), \
 Pn104 (position Kp), Pn105 (torque filter), Pn106 (load inertia), \
-Pn112 (speed feedforward)
+Pn112 (speed feedforward), Pn114 (torque feedforward), \
+Pn115 (torque feedforward filter)
 
 **Common Trio scope parameters:**
 - MPOS / DPOS — measured vs demand position
@@ -119,7 +120,27 @@ in Motion Perfect or the BASIC program
 parameter editor or via EtherCAT SDO
 
 If a drive profile is provided, use the Pn values to explain drive-level \
-behaviour and make drive-specific tuning suggestions.\
+behaviour and make drive-specific tuning suggestions.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULE 3 — ONE CHANGE AT A TIME
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When suggesting tuning changes, ALWAYS recommend adjusting only **one \
+parameter at a time**. After each change, the user should re-capture scope \
+data and re-analyze before making the next adjustment. This is critical \
+because:
+- Changing multiple parameters simultaneously makes it impossible to \
+attribute improvements or regressions to a specific change.
+- Servo loops interact — a speed loop change affects the position loop \
+response and vice versa.
+- Incremental changes build understanding of the system.
+
+Format each suggestion as:
+1. **Change**: [parameter] — [direction] by [amount or to value]
+2. **Why**: [what symptom this addresses]
+3. **Expected effect**: [what should improve in the next capture]
+4. **What to look for**: [specific signal/metric to check after the change]
+5. **Next step**: re-capture and re-analyze before making further changes\
 """
 
 # ---------------------------------------------------------------------------
@@ -181,6 +202,7 @@ class AIAnalysisPanel(QDockWidget):
 
         self._streaming = False
         self._current_response = ""
+        self._conversation_history: list[dict] = []  # conversation messages
         self._data_provider = None  # callable → (time_arr, params_dict)
         self._connection = None     # TUA.TrioConnection, set via set_connection()
         self._conn_lock = None      # threading.Lock shared with main app
@@ -273,11 +295,12 @@ class AIAnalysisPanel(QDockWidget):
         self.btn_send.clicked.connect(self._on_send_clicked)
         input_row.addWidget(self.btn_send)
 
-        self.btn_clear = QPushButton("Clear")
-        self.btn_clear.setFixedWidth(50)
-        self.btn_clear.setFixedHeight(28)
-        self.btn_clear.clicked.connect(self._clear_chat)
-        input_row.addWidget(self.btn_clear)
+        self.btn_new_chat = QPushButton("New Chat")
+        self.btn_new_chat.setFixedWidth(65)
+        self.btn_new_chat.setFixedHeight(28)
+        self.btn_new_chat.setToolTip("Start a new conversation (clears history)")
+        self.btn_new_chat.clicked.connect(self._new_chat)
+        input_row.addWidget(self.btn_new_chat)
 
         layout.addLayout(input_row)
 
@@ -775,26 +798,41 @@ class AIAnalysisPanel(QDockWidget):
 
         self._append_user(user_text)
 
-        # Build user content — include drive context block only if available
-        drive_block = (
-            f"Drive profile for the selected axis:\n\n"
-            f"```\n{drive_context}\n```\n\n"
-            if drive_context else
-            "(No drive profile configured for the selected axis.)\n\n"
-        )
+        # First message in conversation — include full scope data context
+        if not self._conversation_history:
+            drive_block = (
+                f"Drive profile for the selected axis:\n\n"
+                f"```\n{drive_context}\n```\n\n"
+                if drive_context else
+                "(No drive profile configured for the selected axis.)\n\n"
+            )
 
-        user_content = (
-            f"{drive_block}"
-            f"Pre-computed signal metrics:\n\n"
-            f"```\n{metrics_text}\n```\n\n"
-            f"Raw sampled data (CSV):\n\n"
-            f"```csv\n{raw_text}\n```\n\n"
-            f"User question: {user_text}"
-        )
+            user_content = (
+                f"{drive_block}"
+                f"Pre-computed signal metrics:\n\n"
+                f"```\n{metrics_text}\n```\n\n"
+                f"Raw sampled data (CSV):\n\n"
+                f"```csv\n{raw_text}\n```\n\n"
+                f"User question: {user_text}"
+            )
+        else:
+            # Follow-up — include updated drive profile + fresh metrics
+            # but skip raw CSV to save tokens
+            drive_block = (
+                f"[Updated drive profile]\n```\n{drive_context}\n```\n\n"
+                if drive_context else ""
+            )
+            user_content = (
+                f"{drive_block}"
+                f"[Updated metrics]\n```\n{metrics_text}\n```\n\n"
+                f"{user_text}"
+            )
+
+        self._conversation_history.append({"role": "user", "content": user_content})
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
+            *self._conversation_history,
         ]
 
         self._streaming = True
@@ -831,14 +869,23 @@ class AIAnalysisPanel(QDockWidget):
 
     def _on_stream_done(self):
         self._streaming = False
+        # Save assistant response to conversation history
+        if self._current_response:
+            self._conversation_history.append(
+                {"role": "assistant", "content": self._current_response}
+            )
+        turns = len(self._conversation_history) // 2
         self.btn_send.setEnabled(True)
         self.btn_analyze.setEnabled(True)
         self.btn_tune.setEnabled(True)
-        self.status_label.setText("Done")
+        self.status_label.setText(f"Done — turn {turns}")
         self.chat_display.append("")
 
     def _on_error(self, error: str):
         self._streaming = False
+        # Remove the failed user message from history
+        if self._conversation_history and self._conversation_history[-1]["role"] == "user":
+            self._conversation_history.pop()
         self.btn_send.setEnabled(True)
         self.btn_analyze.setEnabled(True)
         self.btn_tune.setEnabled(True)
@@ -865,6 +912,8 @@ class AIAnalysisPanel(QDockWidget):
         )
         self.chat_display.append("")
 
-    def _clear_chat(self):
+    def _new_chat(self):
+        """Start a fresh conversation — clears display and history."""
         self.chat_display.clear()
-        self.status_label.setText("")
+        self._conversation_history.clear()
+        self.status_label.setText("New conversation started")
