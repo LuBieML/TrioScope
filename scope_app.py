@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFrame,
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
-    QDialog, QFileDialog, QMessageBox, QGridLayout,
+    QDialog, QFileDialog, QMessageBox, QGridLayout, QColorDialog,
     QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit, QListWidget
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QSettings, Slot
@@ -568,7 +568,7 @@ class TraceControl(QFrame):
         self.btn_pin = QPushButton("PIN")
         self.btn_pin.setCheckable(True)
         self.btn_pin.setFixedSize(36, 22)
-        self.btn_pin.setToolTip("Pin current trace as dashed reference for comparison")
+        self.btn_pin.setToolTip("Pin current trace as reference for comparison")
         self.btn_pin.setStyleSheet("""
             QPushButton {
                 background-color: #4b4a4a;
@@ -586,6 +586,21 @@ class TraceControl(QFrame):
             }
         """)
         row1.addWidget(self.btn_pin)
+
+        # Default reference color — dimmed version of trace color
+        qc = QColor(self.color)
+        self.ref_color = QColor(
+            (qc.red() + 128) // 2,
+            (qc.green() + 128) // 2,
+            (qc.blue() + 128) // 2,
+        ).name()
+
+        self.btn_ref_color = QPushButton()
+        self.btn_ref_color.setFixedSize(22, 22)
+        self.btn_ref_color.setToolTip("Choose reference trace color")
+        self._update_ref_color_swatch()
+        self.btn_ref_color.clicked.connect(self._pick_ref_color)
+        row1.addWidget(self.btn_ref_color)
 
         # Reference (pinned) data: {'time': np.array, 'values': np.array} or None
         self.ref_data = None
@@ -623,6 +638,21 @@ class TraceControl(QFrame):
 
     def has_ref_data(self):
         return self.ref_data is not None
+
+    def _update_ref_color_swatch(self):
+        self.btn_ref_color.setStyleSheet(
+            f"QPushButton {{ background-color: {self.ref_color};"
+            f" border: 1px solid #606060; border-radius: 2px; }}"
+            f"QPushButton:hover {{ border: 1px solid #ffffff; }}"
+        )
+
+    def _pick_ref_color(self):
+        color = QColorDialog.getColor(
+            QColor(self.ref_color), self, "Reference Trace Color")
+        if color.isValid():
+            self.ref_color = color.name()
+            self._update_ref_color_swatch()
+            self.changed.emit()
 
 
 
@@ -2598,15 +2628,8 @@ class ParameterScopeOscilloscope(QMainWindow):
                 # ── Reference (pinned) trace overlay ──
                 if trace.has_ref_data():
                     if trace_id not in self.ref_curves:
-                        # Dimmed version of trace color for reference
-                        qc = QColor(color)
-                        ref_color = QColor(
-                            (qc.red() + 128) // 2,
-                            (qc.green() + 128) // 2,
-                            (qc.blue() + 128) // 2,
-                        )
-                        ref_pen = pg.mkPen(ref_color, width=self.line_width,
-                                           style=Qt.DashLine)
+                        ref_pen = pg.mkPen(trace.ref_color,
+                                           width=self.line_width)
                         ref_curve = pi.plot(
                             name=f"{param_name} (REF)", pen=ref_pen)
                         ref_curve.setClipToView(True)
@@ -3095,8 +3118,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         for ref_curve in self.ref_curves.values():
             pen = ref_curve.opts.get('pen')
             if pen:
-                ref_curve.setPen(pg.mkPen(pen.color(), width=self.line_width,
-                                          style=Qt.DashLine))
+                ref_curve.setPen(pg.mkPen(pen.color(), width=self.line_width))
         self._update_x_links()
 
     # ─── Settings persistence ──────────────────────────────────────
