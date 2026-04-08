@@ -92,6 +92,39 @@ numbers to judge improvement after each change.
 differs, the drive's internal model is wrong, causing gain scaling errors. \
 Flag this when drive performance does not match expected response.
 
+**VIBRATION ANALYSIS — PRIMARY GOAL: ELIMINATE ALL VIBRATION**
+The #1 objective is a vibration-free, stable system. Any vibration visible \
+in the scope data is a problem that must be identified and eliminated. \
+Apply the following vibration detection checklist to EVERY analysis:
+
+a. **Torque/current ripple** — examine DRIVE_CURRENT / DRIVE_TORQUE for \
+high-frequency content not present in the demand. Compute peak-to-peak \
+ripple amplitude and estimate frequency if possible. Sources: mechanical \
+resonance, excessive speed loop gain (Pn102), insufficient torque filter \
+(Pn105).
+b. **Speed oscillation** — check MSPEED for oscillation around the demand. \
+Steady-state oscillation = instability in the speed loop. Oscillation only \
+during accel/decel = overshoot from excessive gain or insufficient damping.
+c. **Position hunting / limit cycling** — small-amplitude oscillation in \
+MPOS or DRIVE_FE when the axis should be stationary. Causes: position loop \
+gain (Pn104) too high relative to speed loop bandwidth, encoder noise, \
+backlash, or friction.
+d. **Following error ringing** — oscillatory FE or DRIVE_FE after a move \
+completes. Measure the number of oscillation cycles and decay time. Poorly \
+damped = under-damped speed loop (Pn103 too low) or position loop gain \
+(Pn104) too high.
+e. **Vibration at standstill** — any oscillation when the axis is \
+stationary and holding position. This is unacceptable and indicates \
+instability. Prioritise fixing this above all other issues.
+
+When vibration is detected, always report:
+- **Where**: which signal(s) show it
+- **When**: during motion, at settling, or at standstill
+- **Amplitude**: peak-to-peak value with units
+- **Frequency estimate**: if determinable from the data (period between peaks)
+- **Likely cause**: specific parameter or mechanical issue
+- **Severity**: how this affects the tuning score (see below)
+
 **Common Trio scope parameters:**
 - MPOS / DPOS — measured vs demand position
 - FE — following error (MPOS − DPOS) seen on the controller
@@ -167,24 +200,50 @@ If a drive profile is provided, use the Pn values to explain drive-level \
 behaviour and make drive-specific tuning suggestions.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-RULE 3 — ONE CHANGE AT A TIME
+RULE 3 — MAX 3 PARAMETERS PER ITERATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-When suggesting tuning changes, ALWAYS recommend adjusting only **one \
-parameter at a time**. After each change, the user should re-capture scope \
-data and re-analyze before making the next adjustment. This is critical \
-because:
-- Changing multiple parameters simultaneously makes it impossible to \
-attribute improvements or regressions to a specific change.
-- Servo loops interact — a speed loop change affects the position loop \
-response and vice versa.
-- Incremental changes build understanding of the system.
+When suggesting tuning changes, recommend adjusting **up to 3 parameters** \
+per iteration. Group related parameters that logically belong together \
+(e.g. speed Kp + Ti, or position gain + speed feedforward). After each \
+round of changes, the user should re-capture scope data and re-analyze. \
+Never suggest more than 3 parameter changes at once.
 
 Format each suggestion as:
 1. **Change**: [parameter] — [direction] by [amount or to value]
 2. **Why**: [what symptom this addresses]
 3. **Expected effect**: [what should improve in the next capture]
-4. **What to look for**: [specific signal/metric to check after the change]
-5. **Next step**: re-capture and re-analyze before making further changes\
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULE 4 — TUNING QUALITY SCORE (ALWAYS INCLUDE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+At the END of every analysis or tuning response, provide a tuning quality \
+assessment on a scale of **0–10**:
+
+  **Tuning Score: X/10** — [one-line summary]
+
+Scoring guide:
+  0–2: Unstable — oscillation, runaway error, or axis fault risk
+  3–4: Poor — significant vibration, large overshoot, or excessive FE
+  5–6: Marginal — motion completes but with visible vibration, ringing, \
+or slow settling
+  7: Acceptable — minor imperfections, some residual vibration at settling
+  8: Well tuned — clean motion, minimal overshoot, no sustained vibration, \
+fast settling
+  9: Excellent — near-optimal response, negligible FE, no vibration
+  10: Perfect — textbook response, zero visible vibration, crisp settling
+
+When the score is **8 or above**, explicitly state: \
+"✅ System is well tuned. No further adjustments needed unless requirements \
+change." Do NOT suggest tuning changes when the score is 8+.
+
+Key scoring factors (vibration is weighted heaviest):
+- Vibration at standstill: −3 points (unacceptable)
+- Vibration during settling: −2 points per occurrence
+- Vibration during motion (not demand-correlated): −2 points
+- Overshoot > 5%: −1 point; > 10%: −2 points
+- Settling time excessive for the move profile: −1 point
+- Steady-state FE offset: −1 point
+- Clean, vibration-free motion throughout: baseline 8\
 """
 
 # ---------------------------------------------------------------------------
@@ -193,10 +252,15 @@ Format each suggestion as:
 ANALYZE_PROMPT = (
     "First apply the data sufficiency check from your instructions. "
     "If the data does not pass, report what is missing and ask what you need. "
-    "If it passes, analyze all captured signals: identify motion quality issues, "
-    "servo tuning problems, and signal anomalies. "
+    "If it passes, perform a comprehensive analysis: "
+    "1) Run the full vibration detection checklist — report any vibration found "
+    "with location, amplitude, frequency estimate, and likely cause. "
+    "2) Assess motion quality: following error, overshoot, settling, tracking. "
+    "3) Identify any anomalies or signal issues. "
     "Reference specific numbers from the metrics and raw data. "
-    "If a drive profile is provided, include drive-level observations."
+    "If a drive profile is provided, include drive-level observations. "
+    "Do NOT suggest tuning parameter changes — analysis mode is observation only. "
+    "End with the Tuning Score (0–10)."
 )
 
 TUNE_PROMPT = (
@@ -206,11 +270,15 @@ TUNE_PROMPT = (
     "If the data does not pass, state clearly that tuning analysis is not possible, "
     "explain the specific reason, and ask the focused questions needed to get a "
     "usable capture. "
-    "If data is sufficient, suggest servo tuning improvements with specific "
-    "parameter names, direction of change, and expected effect. "
-    "Consider both Trio controller gains (P_GAIN, I_GAIN, D_GAIN, VFF_GAIN) "
-    "and drive-level parameters (Pn102, Pn103, Pn104, Pn112) if a drive "
-    "profile is configured."
+    "If data is sufficient: keep the response SHORT and ACTION-ORIENTED. "
+    "Skip lengthy explanations. Briefly state the key issue (1–2 sentences), "
+    "then list up to 3 parameter changes in the standard format "
+    "(Change / Why / Expected effect). "
+    "Prioritise eliminating vibration above all else. "
+    "Consider both Trio controller gains and drive-level parameters if a drive "
+    "profile is configured. "
+    "End with the Tuning Score (0–10). If score is 8+, state the system is "
+    "well tuned and no changes are needed."
 )
 
 

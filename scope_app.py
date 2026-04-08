@@ -1660,7 +1660,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._render_plots()
 
     def _on_pin_toggled(self, trace, checked):
-        """Pin or unpin the current trace data as a dashed reference."""
+        """Pin or unpin the current trace data as a reference."""
         trace_id = id(trace)
         if checked:
             # Snapshot current accumulated data for this trace
@@ -1675,6 +1675,18 @@ class ParameterScopeOscilloscope(QMainWindow):
                 'time': self.accumulated_data['time'].copy(),
                 'values': self.accumulated_data['params'][param_name].copy(),
             }
+            # If FFT mode, also snapshot the computed FFT spectrum
+            if trace.is_fft():
+                cached = self._fft_cache.get(trace_id)
+                if cached and 'magnitude' in cached:
+                    sample_dt = float(
+                        self.accumulated_data['time'][1]
+                        - self.accumulated_data['time'][0]
+                    ) if len(self.accumulated_data['time']) > 1 else 1.0
+                    n_fft = len(cached['magnitude']) * 2 - 2  # inverse of rfftfreq
+                    trace.ref_data['fft_freqs'] = np.fft.rfftfreq(
+                        n_fft, d=sample_dt).copy()
+                    trace.ref_data['fft_magnitude'] = cached['magnitude'].copy()
         else:
             trace.ref_data = None
             # Remove the reference curve from the plot
@@ -2575,6 +2587,22 @@ class ParameterScopeOscilloscope(QMainWindow):
                     self.curves[trace_id] = curve
 
                 self.curves[trace_id].setData(freqs, magnitude)
+
+                # ── Reference (pinned) FFT overlay ──
+                if (trace.has_ref_data()
+                        and 'fft_freqs' in trace.ref_data
+                        and 'fft_magnitude' in trace.ref_data):
+                    if trace_id not in self.ref_curves:
+                        ref_pen = pg.mkPen(trace.ref_color,
+                                           width=self.line_width)
+                        ref_curve = pi.plot(
+                            name=f"{param_name} (REF)", pen=ref_pen)
+                        ref_curve.setClipToView(True)
+                        ref_curve.setDownsampling(auto=True, method='peak')
+                        self.ref_curves[trace_id] = ref_curve
+                    self.ref_curves[trace_id].setData(
+                        trace.ref_data['fft_freqs'],
+                        trace.ref_data['fft_magnitude'])
 
                 # Peak frequency annotation (throttled — only update when values change)
                 if len(magnitude) > 1:
