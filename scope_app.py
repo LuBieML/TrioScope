@@ -42,6 +42,10 @@ sys.path.insert(0, str(src_path))
 try:
     import Trio_UnifiedApi as TUA
     from scope.scope_engine import ScopeEngine, ScopeParameterParser
+    from scope.drive_scope_engine import (
+        DriveScopeEngine, COMMON_DRIVE_VARIABLES, TRIGGER_MODES,
+        DRIVE_VARIABLES, NUM_CHANNELS as DRIVE_NUM_CHANNELS,
+    )
 except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure Trio_UnifiedApi is installed and scope_engine.py is in src/scope/")
@@ -491,6 +495,18 @@ class TraceControl(QFrame):
         self.param_combo.currentTextChanged.connect(lambda: self.changed.emit())
         row0.addWidget(self.param_combo, 1)
 
+        # Drive variable combo (hidden by default)
+        self.drive_var_combo = QComboBox()
+        for addr, label in COMMON_DRIVE_VARIABLES:
+            self.drive_var_combo.addItem(label, addr)
+        self.drive_var_combo.setMaxVisibleItems(20)
+        self.drive_var_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.drive_var_combo.currentIndexChanged.connect(lambda: self.changed.emit())
+        self.drive_var_combo.setVisible(False)
+        row0.addWidget(self.drive_var_combo, 1)
+
+        self._drive_mode = False
+
         self.btn_delete = QPushButton("\u2715")
         self.btn_delete.setFixedWidth(24)
         self.btn_delete.clicked.connect(self._on_delete)
@@ -619,6 +635,8 @@ class TraceControl(QFrame):
         return f"{self.param_combo.currentText()} AXIS({self.axis_spin.value()})"
 
     def get_display_name(self):
+        if self._drive_mode:
+            return self.get_drive_display_name()
         return f"{self.param_combo.currentText()}({self.axis_spin.value()})"
 
     def update_value(self, value):
@@ -654,6 +672,29 @@ class TraceControl(QFrame):
             self._update_ref_color_swatch()
             self.changed.emit()
 
+    def set_drive_mode(self, enabled: bool):
+        """Switch between controller parameter and drive variable selection."""
+        self._drive_mode = enabled
+        self.param_combo.setVisible(not enabled)
+        self.drive_var_combo.setVisible(enabled)
+        # Hide axis selector in drive mode (axis set globally)
+        self.axis_spin.setVisible(not enabled)
+
+    def is_drive_mode(self):
+        return self._drive_mode
+
+    def get_drive_variable_address(self) -> int:
+        """Return the selected drive variable address (0x0F10, etc.)."""
+        return self.drive_var_combo.currentData()
+
+    def get_drive_display_name(self) -> str:
+        """Return display name for the drive variable."""
+        addr = self.get_drive_variable_address()
+        if addr and addr in DRIVE_VARIABLES:
+            name = DRIVE_VARIABLES[addr][0]
+            return f"{name} (0x{addr:04X})"
+        return self.drive_var_combo.currentText()
+
 
 
 class ParameterScopeOscilloscope(QMainWindow):
@@ -668,6 +709,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connection = None
         self.trio_connected = False
         self.scope_engine = None
+        self.drive_scope_engine = None
+        self.capture_source = 'controller'  # 'controller' or 'drive'
 
         # Connection management (matching gcode parser pattern)
         self._max_connection_attempts = 3
@@ -798,19 +841,36 @@ class ParameterScopeOscilloscope(QMainWindow):
         config_group = QGroupBox("Configuration")
         config_layout = QGridLayout(config_group)
 
-        config_layout.addWidget(QLabel("Sample Period:"), 0, 0)
+        # Capture source selector
+        config_layout.addWidget(QLabel("Source:"), 0, 0)
+        self.source_combo = QComboBox()
+        self.source_combo.addItems(["Controller SCOPE", "Drive Scope (SDO)"])
+        self.source_combo.setToolTip(
+            "Controller SCOPE: captures Trio axis parameters at servo rate\n"
+            "Drive Scope (SDO): captures internal drive variables at 125μs rate"
+        )
+        self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        config_layout.addWidget(self.source_combo, 0, 1, 1, 2)
+
+        # -- Controller SCOPE config widgets --
+        self.ctrl_period_label = QLabel("Sample Period:")
+        config_layout.addWidget(self.ctrl_period_label, 1, 0)
         self.period_edit = QLineEdit("1")
         self.period_edit.setFixedWidth(60)
-        config_layout.addWidget(self.period_edit, 0, 1)
-        config_layout.addWidget(QLabel("servocycles"), 0, 2)
+        config_layout.addWidget(self.period_edit, 1, 1)
+        self.ctrl_period_unit = QLabel("servocycles")
+        config_layout.addWidget(self.ctrl_period_unit, 1, 2)
 
-        config_layout.addWidget(QLabel("Duration:"), 1, 0)
+        self.ctrl_duration_label = QLabel("Duration:")
+        config_layout.addWidget(self.ctrl_duration_label, 2, 0)
         self.duration_edit = QLineEdit("5.0")
         self.duration_edit.setFixedWidth(60)
-        config_layout.addWidget(self.duration_edit, 1, 1)
-        config_layout.addWidget(QLabel("seconds"), 1, 2)
+        config_layout.addWidget(self.duration_edit, 2, 1)
+        self.ctrl_duration_unit = QLabel("seconds")
+        config_layout.addWidget(self.ctrl_duration_unit, 2, 2)
 
-        config_layout.addWidget(QLabel("Capture Mode:"), 2, 0)
+        self.ctrl_mode_label = QLabel("Capture Mode:")
+        config_layout.addWidget(self.ctrl_mode_label, 3, 0)
         mode_widget = QWidget()
         mode_layout = QHBoxLayout(mode_widget)
         mode_layout.setContentsMargins(0, 0, 0, 0)
@@ -822,10 +882,67 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.mode_group.addButton(self.radio_continuous)
         mode_layout.addWidget(self.radio_single)
         mode_layout.addWidget(self.radio_continuous)
-        config_layout.addWidget(mode_widget, 2, 1, 1, 2)
+        self.ctrl_mode_widget = mode_widget
+        config_layout.addWidget(mode_widget, 3, 1, 1, 2)
 
-        # Plot mode selector
-        config_layout.addWidget(QLabel("Plot Mode:"), 3, 0)
+        # -- Drive Scope config widgets (hidden by default) --
+        self.drv_sample_label = QLabel("Capture Duration:")
+        self.drv_sample_label.setVisible(False)
+        config_layout.addWidget(self.drv_sample_label, 1, 0)
+        self.drv_sample_edit = QLineEdit("1.0")
+        self.drv_sample_edit.setFixedWidth(80)
+        self.drv_sample_edit.setToolTip(
+            "Total capture duration in seconds.\n"
+            "Sample period = duration / 1000 samples\n"
+            "(rounded to nearest 125 μs, min 125 μs)")
+        self.drv_sample_edit.textChanged.connect(lambda: self._update_drive_info_label())
+        self.drv_sample_edit.setVisible(False)
+        config_layout.addWidget(self.drv_sample_edit, 1, 1)
+        self.drv_sample_unit = QLabel("s  (res: 1.00 ms)")
+        self.drv_sample_unit.setVisible(False)
+        config_layout.addWidget(self.drv_sample_unit, 1, 2)
+
+        self.drv_trigger_label = QLabel("Trigger:")
+        self.drv_trigger_label.setVisible(False)
+        config_layout.addWidget(self.drv_trigger_label, 2, 0)
+        self.drv_trigger_combo = QComboBox()
+        for mode_id, mode_name in sorted(TRIGGER_MODES.items()):
+            self.drv_trigger_combo.addItem(mode_name, mode_id)
+        self.drv_trigger_combo.currentIndexChanged.connect(self._on_drive_trigger_changed)
+        self.drv_trigger_combo.setVisible(False)
+        config_layout.addWidget(self.drv_trigger_combo, 2, 1, 1, 2)
+
+        # Trigger value inputs (shown only for modes that need them)
+        self.drv_trig_val_label = QLabel("Trigger Value:")
+        self.drv_trig_val_label.setVisible(False)
+        config_layout.addWidget(self.drv_trig_val_label, 3, 0)
+        self.drv_trig_val1_edit = QLineEdit("0")
+        self.drv_trig_val1_edit.setFixedWidth(80)
+        self.drv_trig_val1_edit.setToolTip("Trigger threshold value")
+        self.drv_trig_val1_edit.setVisible(False)
+        config_layout.addWidget(self.drv_trig_val1_edit, 3, 1)
+        self.drv_trig_val2_edit = QLineEdit("0")
+        self.drv_trig_val2_edit.setFixedWidth(80)
+        self.drv_trig_val2_edit.setToolTip("Second threshold (for window trigger)")
+        self.drv_trig_val2_edit.setVisible(False)
+        config_layout.addWidget(self.drv_trig_val2_edit, 3, 2)
+
+        self.drv_axis_label = QLabel("Drive Axis:")
+        self.drv_axis_label.setVisible(False)
+        config_layout.addWidget(self.drv_axis_label, 4, 0)
+        self.drv_axis_spin = QSpinBox()
+        self.drv_axis_spin.setRange(0, 15)
+        self.drv_axis_spin.setFixedWidth(60)
+        self.drv_axis_spin.setVisible(False)
+        config_layout.addWidget(self.drv_axis_spin, 4, 1)
+
+        self.drv_info_label = QLabel("")
+        self.drv_info_label.setStyleSheet("color: #03DAC6; font-size: 8pt;")
+        self.drv_info_label.setVisible(False)
+        config_layout.addWidget(self.drv_info_label, 5, 0, 1, 3)
+
+        # Plot mode selector (shared)
+        config_layout.addWidget(QLabel("Plot Mode:"), 5, 0)
         self.plot_mode_combo = QComboBox()
         self.plot_mode_combo.addItems(["Time", "XY (2D path)", "XYZ (3D path)", "XYZW (4D path)"])
         self.plot_mode_combo.setToolTip(
@@ -836,11 +953,11 @@ class ParameterScopeOscilloscope(QMainWindow):
             "Use the FFT button on each trace for per-trace spectrum analysis"
         )
         self.plot_mode_combo.currentIndexChanged.connect(self._on_plot_mode_changed)
-        config_layout.addWidget(self.plot_mode_combo, 3, 1, 1, 2)
+        config_layout.addWidget(self.plot_mode_combo, 5, 1, 1, 2)
 
         self.path_info_label = QLabel("")
         self.path_info_label.setStyleSheet("color: #FFA500; font-size: 8pt;")
-        config_layout.addWidget(self.path_info_label, 4, 0, 1, 3)
+        config_layout.addWidget(self.path_info_label, 6, 0, 1, 3)
 
         # Table start (hidden, managed via settings dialog)
         self.table_start_edit = QLineEdit("0")
@@ -1561,6 +1678,77 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.lock_x_axis = checked
         self._update_x_links()
 
+    def _on_source_changed(self, index):
+        """Toggle between Controller SCOPE and Drive Scope UI."""
+        is_drive = (index == 1)
+        self.capture_source = 'drive' if is_drive else 'controller'
+
+        # Controller SCOPE widgets
+        for w in (self.ctrl_period_label, self.period_edit, self.ctrl_period_unit,
+                  self.ctrl_duration_label, self.duration_edit, self.ctrl_duration_unit,
+                  self.ctrl_mode_label, self.ctrl_mode_widget):
+            w.setVisible(not is_drive)
+
+        # Drive Scope widgets
+        for w in (self.drv_sample_label, self.drv_sample_edit, self.drv_sample_unit,
+                  self.drv_trigger_label, self.drv_trigger_combo,
+                  self.drv_axis_label, self.drv_axis_spin, self.drv_info_label):
+            w.setVisible(is_drive)
+
+        if is_drive:
+            self._update_drive_info_label()
+            self._on_drive_trigger_changed()  # show/hide trigger value inputs
+            # Switch trace controls to drive variable mode
+            for trace in self.traces:
+                trace.set_drive_mode(True)
+        else:
+            self.drv_info_label.setText("")
+            # Hide trigger value inputs when switching away from drive mode
+            self.drv_trig_val_label.setVisible(False)
+            self.drv_trig_val1_edit.setVisible(False)
+            self.drv_trig_val2_edit.setVisible(False)
+            for trace in self.traces:
+                trace.set_drive_mode(False)
+
+    def _get_drive_sample_time_units(self) -> int:
+        """Convert capture duration (seconds) to drive sample_time units (×125 μs).
+
+        sample_time_units = duration_s / (1000 × 125 μs)
+        e.g. 1.0 s → 1.0 / 0.125 = 8 units → 8 × 125 μs = 1 ms per sample
+        """
+        try:
+            duration_s = float(self.drv_sample_edit.text())
+        except ValueError:
+            return 8  # default → 1 ms/sample → 1 s capture
+        # duration_s = 1000_samples × sample_time_units × 125e-6
+        # sample_time_units = duration_s / (1000 × 125e-6) = duration_s / 0.125
+        units = max(1, round(duration_s / 0.125))
+        return units
+
+    def _update_drive_info_label(self):
+        """Update the drive scope info label and resolution display."""
+        units = self._get_drive_sample_time_units()
+        period_us = units * 125
+        # Update resolution next to the "s" unit label
+        if period_us >= 1000:
+            res_str = f"{period_us / 1000:.2f} ms"
+        else:
+            res_str = f"{period_us} μs"
+        self.drv_sample_unit.setText(f"s  (res: {res_str})")
+
+    def _on_drive_trigger_changed(self):
+        """Show/hide trigger value inputs based on selected trigger mode."""
+        mode = self.drv_trigger_combo.currentData()
+        # Modes needing a threshold: 1=Rising, 2=Falling, 3=Greater, 4=Less
+        needs_value1 = mode in (1, 2, 3, 4, 5, 6)
+        # Window modes need two thresholds: 5=Inside, 6=Outside
+        needs_value2 = mode in (5, 6)
+
+        is_drive = (self.capture_source == 'drive')
+        self.drv_trig_val_label.setVisible(is_drive and needs_value1)
+        self.drv_trig_val1_edit.setVisible(is_drive and needs_value1)
+        self.drv_trig_val2_edit.setVisible(is_drive and needs_value2)
+
     def _on_plot_mode_changed(self, index):
         modes = ['time', 'xy', 'xyz', 'xyzw']
         self.plot_mode = modes[index]
@@ -1631,9 +1819,17 @@ class ParameterScopeOscilloscope(QMainWindow):
             QMessageBox.warning(self, "Maximum Traces", f"Maximum {self.max_traces} traces allowed")
             return
 
-        trace = TraceControl(len(self.traces), parent=self.traces_container)
+        trace_idx = len(self.traces)
+        trace = TraceControl(trace_idx, parent=self.traces_container)
         trace.changed.connect(self.on_trace_changed)
         trace.btn_pin.toggled.connect(lambda checked, t=trace: self._on_pin_toggled(t, checked))
+        # Set drive mode if currently in drive scope source
+        if self.capture_source == 'drive':
+            trace.set_drive_mode(True)
+            # Auto-select different drive variables for each trace
+            n_vars = trace.drive_var_combo.count()
+            if trace_idx < n_vars:
+                trace.drive_var_combo.setCurrentIndex(trace_idx)
         self.traces_layout.addWidget(trace)
         self.traces.append(trace)
 
@@ -1782,6 +1978,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connected = False
         self.trio_connection = None
         self.scope_engine = None
+        self.drive_scope_engine = None
         if self._ai_panel is not None:
             self._ai_panel.set_connection(None, None)
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
@@ -1928,6 +2125,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.trio_connection = conn
                 self.trio_connected = True
                 self.scope_engine = engine
+                self.drive_scope_engine = DriveScopeEngine(conn, axis=0)
                 if self._ai_panel is not None:
                     self._ai_panel.set_connection(conn, self._conn_lock)
                 self._start_watchdog()
@@ -1971,6 +2169,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connection = None
         self.trio_connected = False
         self.scope_engine = None
+        self.drive_scope_engine = None
         self._shutting_down = False
         if self._ai_panel is not None:
             self._ai_panel.set_connection(None, None)
@@ -1987,6 +2186,11 @@ class ParameterScopeOscilloscope(QMainWindow):
     def start_capture(self):
         if not self.trio_connected:
             QMessageBox.critical(self, "Error", "Not connected")
+            return
+
+        # Route to drive scope or controller scope
+        if self.capture_source == 'drive':
+            self._start_drive_scope_capture()
             return
 
         enabled_traces = self.get_enabled_traces()
@@ -2073,6 +2277,181 @@ class ParameterScopeOscilloscope(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Start Error", str(e))
             logger.exception("Start capture failed")
+
+    # ─── Drive Scope capture ───────────────────────────────────────────
+
+    def _start_drive_scope_capture(self):
+        """Start drive-based scope capture via SDO protocol."""
+        enabled_traces = self.get_enabled_traces()
+        if not enabled_traces:
+            QMessageBox.warning(self, "No Traces", "Enable at least one trace")
+            return
+
+        # Collect channel addresses from enabled traces
+        channels = []
+        for t in enabled_traces:
+            addr = t.get_drive_variable_address()
+            if addr and addr != 0:
+                channels.append(addr)
+
+        if not channels:
+            QMessageBox.warning(self, "No Variables",
+                                "Select at least one drive variable (not '(Disabled)')")
+            return
+
+        if len(channels) > DRIVE_NUM_CHANNELS:
+            QMessageBox.warning(self, "Too Many Channels",
+                                f"Drive scope supports max {DRIVE_NUM_CHANNELS} channels.\n"
+                                f"You have {len(channels)} channels enabled.")
+            return
+
+        # Rebuild subplots
+        self.curves = {}
+        self.stats_texts = {}
+        self._recreate_subplots()
+
+        try:
+            sample_time = self._get_drive_sample_time_units()
+            trigger_mode = self.drv_trigger_combo.currentData()
+            axis = self.drv_axis_spin.value()
+
+            # Parse trigger values
+            try:
+                trigger_value1 = int(self.drv_trig_val1_edit.text())
+            except ValueError:
+                trigger_value1 = 0
+            try:
+                trigger_value2 = int(self.drv_trig_val2_edit.text())
+            except ValueError:
+                trigger_value2 = 0
+
+            # Update drive scope engine axis
+            self.drive_scope_engine.axis = axis
+
+            # Configure
+            config = self.drive_scope_engine.configure(
+                channels=channels,
+                sample_time=sample_time,
+                trigger_mode=trigger_mode,
+                trigger_value1=trigger_value1,
+                trigger_value2=trigger_value2,
+            )
+
+            # Clear data
+            self.accumulated_data = None
+            self.total_samples = 0
+            with self._data_lock:
+                self._time_chunks = []
+                self._param_chunks = {}
+                self._segment_breaks = []
+
+            # Update UI
+            self.btn_run.setEnabled(False)
+            self.btn_stop.setEnabled(True)
+            self.is_running = True
+            self.auto_scroll = True
+            self._update_auto_scroll_button()
+
+            # Start update timer
+            self._update_timer.start()
+
+            logger.info("Drive scope: %s", config)
+            self._pending_status = (
+                f"Drive scope: {config['active_channels']} ch, "
+                f"{config['sample_period_ms']:.2f} ms/sample, "
+                f"{config['capture_duration_sec']*1000:.1f} ms capture"
+            )
+
+            # Start capture thread (always single-shot for drive scope)
+            self.scope_thread = threading.Thread(
+                target=self._drive_scope_capture_thread, daemon=True)
+            self.scope_thread.start()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Drive Scope Error", str(e))
+            logger.exception("Drive scope start failed")
+
+    def _drive_scope_capture_thread(self):
+        """Background thread for drive scope: start → wait → download.
+
+        NOTE: We must NOT hold _conn_lock for long periods — the watchdog
+        needs it every 0.5s.  Acquire/release per-operation instead.
+        """
+        try:
+            engine = self.drive_scope_engine
+
+            # Step 1: Start capture on the drive
+            self._pending_status = "Drive scope: starting capture..."
+            with self._conn_lock:
+                engine.start_capture()
+
+            # Step 2: Wait for capture to complete (poll with short lock holds)
+            self._pending_status = "Drive scope: sampling..."
+            capture_timeout = max(30.0, engine.capture_duration_sec * 3)
+            wait_start = time.monotonic()
+            completed = False
+
+            while (time.monotonic() - wait_start) < capture_timeout:
+                if not self.is_running:
+                    with self._conn_lock:
+                        engine.stop_capture()
+                    return
+
+                with self._conn_lock:
+                    status = engine.get_status()
+
+                if status == 2:
+                    completed = True
+                    break
+
+                elapsed = time.monotonic() - wait_start
+                if engine.capture_duration_sec > 0:
+                    pct = min(0.99, elapsed / engine.capture_duration_sec)
+                    self._pending_progress = f"Sampling: {pct*100:.0f}%"
+
+                time.sleep(0.05)
+
+            if not completed:
+                self._pending_status = "Drive scope: capture timed out"
+                logger.warning("Drive scope capture timed out")
+                return
+
+            self._pending_progress = "Sampling: 100%"
+
+            # Step 3: Download data from drive via TABLE relay
+            # This takes ~20s for 8000 words — stop the watchdog so it
+            # doesn't kill the connection while we hold _conn_lock.
+            self._stop_watchdog()
+            self._pending_status = "Drive scope: downloading data..."
+
+            def _download_cb(pct, msg):
+                self._pending_progress = msg
+
+            with self._conn_lock:
+                data = engine.read_data(progress_callback=_download_cb)
+
+            # Restart the watchdog now that the long operation is done
+            self._start_watchdog()
+
+            if not self.is_running:
+                return
+
+            # Step 4: Push data into the display pipeline
+            if data and data['num_samples'] > 0:
+                self._push_data(data)
+                self._pending_status = (
+                    f"Drive scope: captured {data['num_samples']} samples "
+                    f"({data['num_samples'] * data['sample_period'] * 1000:.1f} ms)"
+                )
+            else:
+                self._pending_status = "Drive scope: no data captured"
+
+        except Exception as e:
+            self._pending_status = f"Drive scope error: {e}"
+            logger.exception("Drive scope capture error")
+        finally:
+            self.is_running = False
+            self._pending_stop_ui = True
 
     def _scope_single_shot_thread(self):
         """Single-shot capture — background thread"""
@@ -2698,11 +3077,18 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def stop_capture(self):
         self.is_running = False
-        if self.scope_engine:
-            try:
-                self.scope_engine.stop_capture()
-            except Exception:
-                pass
+        if self.capture_source == 'drive':
+            if self.drive_scope_engine:
+                try:
+                    self.drive_scope_engine.stop_capture()
+                except Exception:
+                    pass
+        else:
+            if self.scope_engine:
+                try:
+                    self.scope_engine.stop_capture()
+                except Exception:
+                    pass
         self.status_label.setText("Stopped")
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
