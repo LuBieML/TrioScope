@@ -6,8 +6,8 @@ EtherCAT object IDs are stored here for future auto-read implementation via
 CoE (CANopen over EtherCAT) SDO reads.
 
 Control loop structure (cascade, inner to outer):
-  Torque loop  ← Pn105 (torque filter)
-  Speed loop   ← Pn102 (Kp, rad/s), Pn103 (Ti, ×0.1ms)
+  Torque loop
+  Speed loop   ← Pn102 (Kp, rad/s), Pn103 (Ti, ×0.1ms), Pn135 (feedback filter)
   Position loop ← Pn104 (Kp, 1/s)
 """
 
@@ -23,12 +23,12 @@ ETHERCAT_OBJECT_IDS: dict[str, int] = {
     "pn102": 0x31CA,  # Speed loop gain
     "pn103": 0x31CB,  # Speed loop integral time
     "pn104": 0x31CC,  # Position loop gain
-    "pn105": 0x31CD,  # Torque command filter time
     "pn106": 0x31CE,  # Load inertia percentage
     "pn112": 0x31D4,  # Speed feedforward
     "pn113": 0x31D5,  # Speed feedforward filter time
     "pn114": 0x31D6,  # Torque feedforward
     "pn115": 0x31D7,  # Torque feedforward filter time
+    "pn135": 0x31EB,  # Encoder speed filter time (speed feedback low-pass)
 }
 
 # ---------------------------------------------------------------------------
@@ -124,13 +124,6 @@ PARAM_DEFS: list[tuple] = [
         "position tracking. Must stay below ~1/3 of speed loop bandwidth.",
     ),
     (
-        "pn105", "Pn105", "Torque Filter", "×0.01 ms",
-        0, 2500, 50,
-        "Low-pass filter on the torque (current) command. Increase to reduce "
-        "high-frequency torque noise / motor noise. Reduces effective torque "
-        "loop bandwidth.",
-    ),
-    (
         "pn106", "Pn106", "Load Inertia", "%",
         0, 9999, 0,
         "Load-to-motor inertia ratio in percent. "
@@ -145,6 +138,13 @@ PARAM_DEFS: list[tuple] = [
         "moves. Can introduce overshoot if too high.",
     ),
     (
+        "pn113", "Pn113", "Speed FF Filter", "×0.1 ms",
+        0, 640, 0,
+        "Low-pass filter on the speed feedforward signal. "
+        "Increase to filter noise from the speed feedforward differential. "
+        "Too high may increase overshoot.",
+    ),
+    (
         "pn114", "Pn114", "Torque Feedforward", "%",
         0, 100, 0,
         "Percentage of torque feedforward injected into the torque loop. "
@@ -157,6 +157,14 @@ PARAM_DEFS: list[tuple] = [
         "Low-pass filter on the torque feedforward signal. "
         "Increase to filter noise from the torque feedforward differential. "
         "Too high may increase overshoot.",
+    ),
+    (
+        "pn135", "Pn135", "Speed Filter", "×0.01 ms",
+        0, 30000, 4,
+        "Encoder speed filter time — low-pass filter on the speed feedback "
+        "signal derived from the encoder. Increase to smooth encoder noise at "
+        "low speeds. Too high introduces phase lag that reduces servo "
+        "performance. Only active when Pn162=0 (encoder speed feedback).",
     ),
 ]
 
@@ -186,11 +194,12 @@ class DriveProfile:
     pn102: Optional[int] = None   # Speed loop gain (rad/s)
     pn103: Optional[int] = None   # Speed loop Ti (×0.1ms)
     pn104: Optional[int] = None   # Position loop gain (1/s)
-    pn105: Optional[int] = None   # Torque filter (×0.01ms)
     pn106: Optional[int] = None   # Load inertia (%)
     pn112: Optional[int] = None   # Speed feedforward (%)
+    pn113: Optional[int] = None   # Speed feedforward filter (×0.1ms)
     pn114: Optional[int] = None   # Torque feedforward (%)
     pn115: Optional[int] = None   # Torque feedforward filter (×0.1ms)
+    pn135: Optional[int] = None   # Encoder speed filter (×0.01ms)
 
     # -----------------------------------------------------------------------
     def has_drive_params(self) -> bool:
@@ -211,11 +220,12 @@ class DriveProfile:
             "pn102": self.pn102,
             "pn103": self.pn103,
             "pn104": self.pn104,
-            "pn105": self.pn105,
             "pn106": self.pn106,
             "pn112": self.pn112,
+            "pn113": self.pn113,
             "pn114": self.pn114,
             "pn115": self.pn115,
+            "pn135": self.pn135,
         }
 
     @classmethod
@@ -262,16 +272,18 @@ class DriveProfile:
              "speed loop integral time — lower = faster integral action"),
             ("pn104", "Pn104 Position Loop Gain ", "1/s",
              "outer position loop Kp — higher = tighter position tracking"),
-            ("pn105", "Pn105 Torque Filter      ", "×0.01 ms",
-             "torque command low-pass filter — higher = smoother but slower"),
             ("pn106", "Pn106 Load Inertia       ", "%",
              "load/motor inertia ratio — critical for gain scaling"),
             ("pn112", "Pn112 Speed Feedforward  ", "%",
              "reduces position following error during constant-velocity moves"),
+            ("pn113", "Pn113 Speed FF Filter    ", "×0.1 ms",
+             "low-pass filter on speed feedforward — higher = smoother but more overshoot"),
             ("pn114", "Pn114 Torque Feedforward ", "%",
              "reduces speed following error during accel/decel"),
-            ("pn115", "Pn115 Torque FF Filter  ", "×0.1 ms",
+            ("pn115", "Pn115 Torque FF Filter   ", "×0.1 ms",
              "low-pass filter on torque feedforward — higher = smoother but more overshoot"),
+            ("pn135", "Pn135 Speed Filter       ", "×0.01 ms",
+             "encoder speed feedback low-pass filter — higher = less encoder noise but more phase lag"),
         ]
 
         for attr, label, unit, note in param_map:
