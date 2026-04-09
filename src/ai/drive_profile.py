@@ -197,6 +197,10 @@ class DriveProfile:
         """True if the profile type is a known Trio drive with parameters."""
         return self.drive_type in ("DX3", "DX4")
 
+    def has_any_values(self) -> bool:
+        """True if at least one Pn parameter was successfully read (non-None)."""
+        return any(v is not None for k, v in self.to_dict().items() if k != "drive_type")
+
     def to_dict(self) -> dict:
         return {
             "drive_type": self.drive_type,

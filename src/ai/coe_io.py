@@ -236,6 +236,11 @@ def read_drive_profile(
                     axis, attr.upper(), obj_index, exc,
                 )
 
+    if not profile.has_any_values():
+        raise ConnectionError(
+            f"All parameter reads failed for axis {axis} — drive may be offline or connection lost"
+        )
+
     return profile
 
 
