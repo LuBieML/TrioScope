@@ -76,6 +76,10 @@ class SignalMetrics:
             "end_value": round(float(values[-1]), 6),
         }
 
+        # settle_idx is set by settling detection and reused by spike
+        # detection further down — initialised here at function scope.
+        settle_idx = None
+
         # Dynamics — velocity/acceleration of the signal itself
         if n > 1 and sample_period and sample_period > 0:
             dt = sample_period
@@ -108,16 +112,19 @@ class SignalMetrics:
                     )
                     metrics["dynamics"]["settled_value"] = round(final_value, 6)
 
-            # Overshoot detection (for step-like signals)
-            if v_range > 0:
-                final_val = float(values[-1])
+            # Overshoot detection — only when the signal has settled, so we
+            # have a reliable baseline.  Without settling there is no known
+            # setpoint, and reporting "overshoot" off a raw start/end guess
+            # is misleading (e.g. speed profiles, dynamic current).
+            settled_value = metrics["dynamics"].get("settled_value")
+            if settled_value is not None and v_range > 0:
                 start_val = float(values[0])
-                step_size = final_val - start_val
+                step_size = settled_value - start_val
                 if abs(step_size) > v_range * 0.1:  # meaningful step
                     if step_size > 0:
-                        overshoot = (v_max - final_val) / abs(step_size) * 100
+                        overshoot = (v_max - settled_value) / abs(step_size) * 100
                     else:
-                        overshoot = (final_val - v_min) / abs(step_size) * 100
+                        overshoot = (settled_value - v_min) / abs(step_size) * 100
                     if overshoot > 1.0:  # > 1% overshoot is notable
                         metrics["dynamics"]["overshoot_percent"] = round(overshoot, 2)
 
@@ -160,18 +167,27 @@ class SignalMetrics:
         # Anomaly detection — spikes, clipping, sudden jumps
         anomalies = []
         if n > 2 and sample_period:
-            # Spike detection: points > 4 sigma from local mean
-            if v_std > 1e-9:
-                z_scores = np.abs(values - v_mean) / v_std
-                spike_mask = z_scores > 4.0
-                spike_count = int(np.sum(spike_mask))
-                if spike_count > 0:
-                    spike_times = time_arr[spike_mask]
-                    anomalies.append({
-                        "type": "spikes",
-                        "count": spike_count,
-                        "first_at_s": round(float(spike_times[0]), 6),
-                    })
+            # Spike detection — only in the settled region so that normal
+            # motion dynamics (accel/decel transients) are not mis-flagged.
+            # settle_idx is set by the dynamics block above; if the signal
+            # never settled there is no stable baseline to judge against.
+            if settle_idx is not None:
+                settled_vals = values[settle_idx:]
+                settled_times = time_arr[settle_idx:]
+                if len(settled_vals) > 2:
+                    s_mean = float(np.mean(settled_vals))
+                    s_std = float(np.std(settled_vals))
+                    if s_std > 1e-9:
+                        z_scores = np.abs(settled_vals - s_mean) / s_std
+                        spike_mask = z_scores > 4.0
+                        spike_count = int(np.sum(spike_mask))
+                        if spike_count > 0:
+                            spike_times = settled_times[spike_mask]
+                            anomalies.append({
+                                "type": "spikes",
+                                "count": spike_count,
+                                "first_at_s": round(float(spike_times[0]), 6),
+                            })
 
             # Clipping detection: sustained min or max values
             at_min = values == v_min
