@@ -171,6 +171,13 @@ def _int_or_none(value) -> int | None:
         return None
 
 
+# Channel-type parameters that use CHANNEL(n) instead of AXIS(n)
+CHANNEL_PARAMETERS = [
+    "AIN", "AINBI", "AOUT",
+    "DV_CONTROLWORD", "DV_IN", "DV_OUT", "DV_STATUSWORD",
+    "IN", "OUT",
+]
+
 SCOPE_PARAMETERS = [
     "ACCEL", "ACCEL_FACTOR", "ADDAX_AXIS", "AFF_GAIN", "ATYPE",
     "AXIS_A_OUTPUT", "AXIS_ACCEL", "AXIS_B_OUTPUT", "AXIS_BLENDING",
@@ -239,7 +246,10 @@ SCOPE_PARAMETERS = [
     "WORLD_ACCEL", "WORLD_DECEL", "WORLD_DPOS", "WORLD_FASTDEC",
     "WORLD_FS_LIMIT", "WORLD_JERK", "WORLD_JOGSPEED", "WORLD_RS_LIMIT",
     "WORLD_SPEED", "WORLD_UNITS",
-]
+] + CHANNEL_PARAMETERS
+
+# Set for fast lookup of channel-type parameters
+CHANNEL_PARAMETERS_SET = set(CHANNEL_PARAMETERS)
 
 TRACE_COLORS = [
     '#03DAC6',  # Teal
@@ -497,7 +507,7 @@ class TraceControl(QFrame):
         self.param_combo.setCurrentText("MPOS")
         self.param_combo.setMaxVisibleItems(20)
         self.param_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.param_combo.currentTextChanged.connect(lambda: self.changed.emit())
+        self.param_combo.currentTextChanged.connect(self._on_param_changed)
         row0.addWidget(self.param_combo, 1)
 
         # Drive variable combo (hidden by default)
@@ -523,7 +533,8 @@ class TraceControl(QFrame):
         row1 = QHBoxLayout()
         row1.setSpacing(4)
 
-        row1.addWidget(QLabel("Axis"))
+        self.axis_label = QLabel("Axis")
+        row1.addWidget(self.axis_label)
         self.axis_spin = QSpinBox()
         self.axis_spin.setRange(0, 15)
         self.axis_spin.setFixedWidth(28)
@@ -540,11 +551,13 @@ class TraceControl(QFrame):
         btn_ax_down = QPushButton("\u25bc")
         btn_ax_down.setFixedSize(18, 12)
         btn_ax_down.setStyleSheet(_arrow_style)
-        btn_ax_down.clicked.connect(lambda: self.axis_spin.setValue(max(0, self.axis_spin.value() - 1)))
+        btn_ax_down.clicked.connect(lambda: self.axis_spin.setValue(
+            max(self.axis_spin.minimum(), self.axis_spin.value() - 1)))
         btn_ax_up = QPushButton("\u25b2")
         btn_ax_up.setFixedSize(18, 12)
         btn_ax_up.setStyleSheet(_arrow_style)
-        btn_ax_up.clicked.connect(lambda: self.axis_spin.setValue(min(15, self.axis_spin.value() + 1)))
+        btn_ax_up.clicked.connect(lambda: self.axis_spin.setValue(
+            min(self.axis_spin.maximum(), self.axis_spin.value() + 1)))
 
         ax_arrows = QVBoxLayout()
         ax_arrows.setSpacing(1)
@@ -628,6 +641,23 @@ class TraceControl(QFrame):
 
         vbox.addLayout(row1)
 
+    def _on_param_changed(self):
+        """Update axis/channel label and range based on selected parameter."""
+        is_ch = self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
+        if is_ch:
+            self.axis_label.setText("Ch")
+            self.axis_spin.setRange(0, 1024)
+            self.axis_spin.setFixedWidth(40)
+        else:
+            self.axis_label.setText("Axis")
+            self.axis_spin.setRange(0, 15)
+            self.axis_spin.setFixedWidth(28)
+        self.changed.emit()
+
+    def is_channel_parameter(self):
+        """Return True if the currently selected parameter is a channel-type."""
+        return self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
+
     def _on_delete(self):
         self.setParent(None)
         self.deleteLater()
@@ -637,12 +667,20 @@ class TraceControl(QFrame):
         return self.chk_enable.isChecked()
 
     def get_parameter_string(self):
-        return f"{self.param_combo.currentText()} AXIS({self.axis_spin.value()})"
+        param = self.param_combo.currentText()
+        idx = self.axis_spin.value()
+        if param in CHANNEL_PARAMETERS_SET:
+            return f"{param}({idx})"
+        return f"{param} AXIS({idx})"
 
     def get_display_name(self):
         if self._drive_mode:
             return self.get_drive_display_name()
-        return f"{self.param_combo.currentText()}({self.axis_spin.value()})"
+        param = self.param_combo.currentText()
+        idx = self.axis_spin.value()
+        if param in CHANNEL_PARAMETERS_SET:
+            return f"{param} Ch({idx})"
+        return f"{param}({idx})"
 
     def update_value(self, value):
         self.value_label.setText(f"{value:>10.4f}")
