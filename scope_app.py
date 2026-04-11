@@ -56,6 +56,11 @@ except ImportError:
     AIAnalysisPanel = None
 
 try:
+    from ai.tuner_panel import TunerPanel
+except ImportError:
+    TunerPanel = None
+
+try:
     from ai.ethercat_map_window import EthercatMapWindow
 except ImportError:
     EthercatMapWindow = None
@@ -822,6 +827,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         # AI Analysis
         self._ai_panel = None
 
+        # Classical Tuner
+        self._tuner_panel = None
+
         # EtherCAT map window
         self._ethercat_map = None
 
@@ -1082,10 +1090,15 @@ class ParameterScopeOscilloscope(QMainWindow):
         btn_ai.clicked.connect(self._toggle_ai_panel)
         ctrl_grid.addWidget(btn_ai, 3, 0, 1, 2)
 
-        # Row 4: EtherCAT Map
+        # Row 4: Classical Tuner
+        btn_tuner = QPushButton("\u2699 Servo Tuner")
+        btn_tuner.clicked.connect(self._toggle_tuner_panel)
+        ctrl_grid.addWidget(btn_tuner, 4, 0, 1, 2)
+
+        # Row 5: EtherCAT Map
         btn_ecat = QPushButton("\u26a1 EtherCAT Map")
         btn_ecat.clicked.connect(self._open_ethercat_map)
-        ctrl_grid.addWidget(btn_ecat, 4, 0, 1, 2)
+        ctrl_grid.addWidget(btn_ecat, 5, 0, 1, 2)
 
         left_layout.addLayout(ctrl_grid)
 
@@ -3396,6 +3409,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         act_ai.triggered.connect(self._toggle_ai_panel)
         view_menu.addAction(act_ai)
 
+        act_tuner = QAction("&Servo Tuner", self)
+        act_tuner.setShortcut(QKeySequence("Ctrl+T"))
+        act_tuner.triggered.connect(self._toggle_tuner_panel)
+        view_menu.addAction(act_tuner)
+
         act_ecat = QAction("&EtherCAT Map", self)
         act_ecat.setShortcut(QKeySequence("Ctrl+M"))
         act_ecat.triggered.connect(self._open_ethercat_map)
@@ -3528,6 +3546,37 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.addDockWidget(Qt.RightDockWidgetArea, self._ai_panel)
         else:
             self._ai_panel.setVisible(not self._ai_panel.isVisible())
+
+    # ─── Classical Tuner ────────────────────────────────────────────
+
+    def _toggle_tuner_panel(self):
+        """Show/hide the classical tuner dock panel."""
+        if TunerPanel is None:
+            QMessageBox.warning(self, "Servo Tuner",
+                                "Tuner module not available. Check src/ai/ is present.")
+            return
+
+        if self._tuner_panel is None:
+            self._tuner_panel = TunerPanel(self)
+            self._tuner_panel.set_data_provider(self._get_scope_data_for_ai)
+            self._tuner_panel.set_profile_provider(self._get_active_drive_profile)
+            self.addDockWidget(Qt.RightDockWidgetArea, self._tuner_panel)
+        else:
+            self._tuner_panel.setVisible(not self._tuner_panel.isVisible())
+
+    def _get_active_drive_profile(self):
+        """Return the DriveProfile for the currently selected axis in the AI panel."""
+        if self._ai_panel is None:
+            return None
+        profiles = getattr(self._ai_panel, '_profiles', {})
+        axis_combo = getattr(self._ai_panel, '_axis_combo', None)
+        if axis_combo is None:
+            return None
+        try:
+            axis = int(axis_combo.currentText())
+        except (ValueError, TypeError):
+            axis = 0
+        return profiles.get(axis)
 
     # ─── EtherCAT Map ───────────────────────────────────────────────
 

@@ -17,6 +17,10 @@ from .coe_io import (
 )
 from .ethercat_scan import scan_network, EthercatNetwork, EthercatSlot, EthercatSlave, VENDOR_NAMES
 from .ethercat_map_window import EthercatMapWindow
+from .classical_tuner import (
+    ClassicalTuner, StepResponseMetrics, VelocityLoopMetrics, TuningResult,
+)
+from .tuner_panel import TunerPanel
 
 __all__ = [
     'NanoGPTClient', 'SignalMetrics', 'AIAnalysisPanel',
@@ -25,4 +29,6 @@ __all__ = [
     'read_single_pn', 'write_single_pn',
     'scan_network', 'EthercatNetwork', 'EthercatSlot', 'EthercatSlave', 'VENDOR_NAMES',
     'EthercatMapWindow',
+    'ClassicalTuner', 'StepResponseMetrics', 'VelocityLoopMetrics', 'TuningResult',
+    'TunerPanel',
 ]
