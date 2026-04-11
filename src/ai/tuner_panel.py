@@ -1,11 +1,13 @@
 """
-Classical Tuner Panel — dockable Qt widget for real-time servo loop analysis.
+Classical Tuner Panel — dockable Qt widget for servo loop analysis.
 
-Runs ClassicalTuner on the current scope capture and displays:
+Combines:
+  - Drive profile editor (axis selector, Pn parameter spinboxes, CoE Read/Write)
   - Tuning score gauge (custom-painted arc, 0–10)
   - Velocity loop health card
   - Position loop metrics card
   - Proposed corrections with current → new values
+  - Apply to Profile / Write to Drive action buttons
   - Cascade-aware warnings
 """
 
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from typing import Optional, Callable
 
 import numpy as np
@@ -20,9 +23,10 @@ import numpy as np
 from PySide6.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QSizePolicy, QGridLayout,
-    QGraphicsDropShadowEffect,
+    QGraphicsDropShadowEffect, QMessageBox, QComboBox, QSpinBox,
+    QFormLayout, QGroupBox,
 )
-from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QTimer
+from PySide6.QtCore import Qt, Signal, QObject, QRectF, QPointF, QTimer
 from PySide6.QtGui import (
     QFont, QColor, QPainter, QPen, QBrush, QConicalGradient,
     QLinearGradient, QRadialGradient, QPainterPath, QFontMetrics,
@@ -31,8 +35,14 @@ from PySide6.QtGui import (
 from .classical_tuner import (
     ClassicalTuner, StepResponseMetrics, VelocityLoopMetrics, TuningResult,
 )
-from .drive_profile import DriveProfile
+from .drive_profile import (
+    DriveProfile, DRIVE_TYPES, PARAM_DEFS, COMBO_ATTRS,
+    TUNING_MODE_LABELS, TUNING_MODE_VALUES,
+    VIBRATION_SUPPRESSION_LABELS, VIBRATION_SUPPRESSION_VALUES,
+    DAMPING_LABELS, DAMPING_VALUES,
+)
 from .signal_metrics import SignalMetrics
+from .coe_io import read_drive_profile, write_drive_profile, write_single_pn
 
 logger = logging.getLogger(__name__)
 
@@ -120,29 +130,25 @@ class _ScoreGauge(QWidget):
         w = self.width()
         h = self.height()
         cx = w / 2
-        # Gauge sits in upper portion
         gauge_size = min(w - 24, (h - 36) * 2)
         gauge_size = max(gauge_size, 100)
         radius = gauge_size / 2
-        cy = h - 32  # arc centre near bottom
+        cy = h - 32
 
         arc_rect = QRectF(cx - radius, cy - radius, gauge_size, gauge_size)
         pen_width = max(8, radius * 0.12)
 
-        # --- Background arc (220° sweep from 160° to -40°) ---
-        start_angle = 200 * 16   # Qt uses 1/16th degrees
+        start_angle = 200 * 16
         span_angle = -220 * 16
 
         bg_pen = QPen(QColor(_GAUGE_BG), pen_width, Qt.SolidLine, Qt.RoundCap)
         painter.setPen(bg_pen)
         painter.drawArc(arc_rect, start_angle, span_angle)
 
-        # --- Coloured arc (proportional to score) ---
         if self._score > 0.01:
             fraction = self._score / 10.0
             value_span = int(-220 * 16 * fraction)
 
-            # Gradient colour based on score
             if self._score < 4:
                 arc_color = _GAUGE_RED
             elif self._score < 7:
@@ -160,7 +166,6 @@ class _ScoreGauge(QWidget):
                     int(_GAUGE_AMBER.blue() + t * (_GAUGE_GREEN.blue() - _GAUGE_AMBER.blue())),
                 )
 
-            # Glow effect — draw wider translucent arc behind
             glow_pen = QPen(
                 QColor(arc_color.red(), arc_color.green(), arc_color.blue(), 50),
                 pen_width + 6, Qt.SolidLine, Qt.RoundCap,
@@ -172,7 +177,6 @@ class _ScoreGauge(QWidget):
             painter.setPen(arc_pen)
             painter.drawArc(arc_rect, start_angle, value_span)
 
-        # --- Score text ---
         score_font = QFont("Consolas", max(18, int(radius * 0.35)), QFont.Bold)
         painter.setFont(score_font)
         score_str = f"{self._score:.1f}"
@@ -181,21 +185,13 @@ class _ScoreGauge(QWidget):
         fm = QFontMetrics(score_font)
         text_rect = fm.boundingRect(score_str)
         text_y = cy - radius * 0.10
-        painter.drawText(
-            QPointF(cx - text_rect.width() / 2, text_y),
-            score_str,
-        )
+        painter.drawText(QPointF(cx - text_rect.width() / 2, text_y), score_str)
 
-        # "/10" subscript
         sub_font = QFont("Consolas", max(8, int(radius * 0.14)))
         painter.setFont(sub_font)
         painter.setPen(QColor(_TEXT_DIM))
-        painter.drawText(
-            QPointF(cx + text_rect.width() / 2 + 2, text_y),
-            "/10",
-        )
+        painter.drawText(QPointF(cx + text_rect.width() / 2 + 2, text_y), "/10")
 
-        # --- Verdict text below ---
         verdict_font = QFont("Segoe UI", max(8, int(radius * 0.13)))
         painter.setFont(verdict_font)
         painter.setPen(QColor(_score_color(self._score)))
@@ -203,7 +199,6 @@ class _ScoreGauge(QWidget):
         vw = vfm.horizontalAdvance(self._verdict)
         painter.drawText(QPointF(cx - vw / 2, h - 8), self._verdict)
 
-        # --- Tick marks ---
         tick_pen = QPen(QColor(_BORDER_LIGHT), 1)
         painter.setPen(tick_pen)
         small_font = QFont("Consolas", max(6, int(radius * 0.09)))
@@ -234,28 +229,23 @@ class _ScoreGauge(QWidget):
 # ---------------------------------------------------------------------------
 def _metric_label(name: str, value: str, unit: str = "",
                   color: str = _CYAN) -> QHBoxLayout:
-    """Build a single metric readout row: name ... value unit."""
     row = QHBoxLayout()
     row.setSpacing(4)
-
     lbl_name = QLabel(name)
     lbl_name.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 8pt;")
     lbl_name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     row.addWidget(lbl_name)
-
     lbl_val = QLabel(value)
     lbl_val.setStyleSheet(
         f"color: {color}; font-family: Consolas; font-size: 9pt; font-weight: bold;"
     )
     lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
     row.addWidget(lbl_val)
-
     if unit:
         lbl_unit = QLabel(unit)
         lbl_unit.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 7pt;")
         lbl_unit.setFixedWidth(28)
         row.addWidget(lbl_unit)
-
     return row
 
 
@@ -280,8 +270,6 @@ def _card_frame() -> QFrame:
 # Health indicator dot
 # ---------------------------------------------------------------------------
 class _HealthDot(QWidget):
-    """Small painted circle with glow for health status."""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._color = QColor(_TEXT_DIM)
@@ -299,7 +287,6 @@ class _HealthDot(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        # Glow
         glow = QRadialGradient(7, 7, 9)
         glow.setColorAt(0, QColor(self._color.red(), self._color.green(),
                                    self._color.blue(), 80))
@@ -307,43 +294,91 @@ class _HealthDot(QWidget):
         painter.setBrush(QBrush(glow))
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(0, 0, 14, 14)
-        # Dot
         painter.setBrush(QBrush(self._color))
         painter.drawEllipse(3, 3, 8, 8)
         painter.end()
 
 
 # ---------------------------------------------------------------------------
+# Thread-safe signals for CoE operations
+# ---------------------------------------------------------------------------
+class _CoESignals(QObject):
+    coe_read_done = Signal(int, object, str)   # axis, DriveProfile, error_msg
+    coe_write_done = Signal(int, object, str)  # axis, results_dict, error_msg
+
+
+# ---------------------------------------------------------------------------
 # Main panel
 # ---------------------------------------------------------------------------
 class TunerPanel(QDockWidget):
-    """Dockable servo tuner panel with visual metrics and correction display."""
+    """Dockable servo tuner panel with drive profile editor and analysis."""
 
     analysis_complete = Signal()
+    _correction_write_done = Signal(str)  # error message ("" on success)
 
     def __init__(self, parent=None):
-        super().__init__("Classical Tuner", parent)
+        super().__init__("Servo Tuner", parent)
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(560)
+        # Prevent the dock from forcing the main window to resize
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
+        # --- State ---
         self._data_provider: Callable | None = None
-        self._profile_provider: Callable | None = None
+        self._connection = None
+        self._conn_lock: threading.Lock | None = None
         self._pos_metrics: StepResponseMetrics | None = None
         self._vel_metrics: VelocityLoopMetrics | None = None
         self._tuning_result: TuningResult | None = None
 
+        # Per-axis drive profiles: {axis_int: DriveProfile}
+        self._profiles: dict[int, DriveProfile] = {}
+        self._param_widgets: dict[str, QWidget] = {}  # attr → spinbox/combo
+        self._param_frame: QFrame | None = None
+        self._axis_combo: QComboBox | None = None
+        self._drive_combo: QComboBox | None = None
+        self._read_btn: QPushButton | None = None
+        self._write_btn: QPushButton | None = None
+
+        # Signals for CoE background ops
+        self._coe_signals = _CoESignals()
+        self._coe_signals.coe_read_done.connect(self._on_coe_read_done)
+        self._coe_signals.coe_write_done.connect(self._on_coe_write_done)
+        self._correction_write_done.connect(self._on_correction_write_done)
+
         self._build_ui()
 
-    # ---------------------------------------------------------------- public
+    # ================================================================
+    # Public API
+    # ================================================================
+
     def set_data_provider(self, provider: Callable):
         """Set callback → (time_arr, params_dict)."""
         self._data_provider = provider
 
-    def set_profile_provider(self, provider: Callable):
-        """Set callback → DriveProfile for the active axis."""
-        self._profile_provider = provider
+    def set_connection(self, connection, conn_lock=None):
+        """Provide active TUA.TrioConnection for CoE reads/writes."""
+        self._connection = connection
+        self._conn_lock = conn_lock
+        self._update_drive_buttons()
+        self._update_action_buttons()
 
-    # ---------------------------------------------------------------- UI
+    def get_all_profiles(self) -> dict[int, dict]:
+        """Return all per-axis profiles as plain dicts for QSettings persistence."""
+        return {axis: p.to_dict() for axis, p in self._profiles.items()}
+
+    def set_all_profiles(self, profiles: dict[int, dict]):
+        """Restore per-axis profiles from plain dicts loaded from QSettings."""
+        self._profiles = {
+            int(axis): DriveProfile.from_dict(d)
+            for axis, d in profiles.items()
+        }
+        self._on_axis_changed()
+
+    # ================================================================
+    # UI construction
+    # ================================================================
+
     def _build_ui(self):
         container = QWidget()
         container.setStyleSheet(
@@ -414,7 +449,7 @@ class TunerPanel(QDockWidget):
         self._status_label.setWordWrap(True)
         root.addWidget(self._status_label)
 
-        # ── Scrollable content area ─────────────────────────────────
+        # ── Two-column scrollable content area ──────────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -428,43 +463,473 @@ class TunerPanel(QDockWidget):
         )
         self._scroll_content = QWidget()
         self._scroll_content.setStyleSheet(f"background-color: {_BG_DARK};")
-        self._scroll_layout = QVBoxLayout(self._scroll_content)
-        self._scroll_layout.setContentsMargins(0, 0, 0, 0)
-        self._scroll_layout.setSpacing(8)
+        self._scroll_content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        columns = QHBoxLayout(self._scroll_content)
+        columns.setContentsMargins(0, 0, 0, 0)
+        columns.setSpacing(8)
 
-        # -- Score gauge
+        # ── Left column: Drive Profile + Gauge ──────────────────────
+        left_col = QVBoxLayout()
+        left_col.setSpacing(8)
+        left_col.setContentsMargins(0, 0, 0, 0)
+
+        self._drive_card = self._build_drive_profile_section()
+        left_col.addWidget(self._drive_card)
+
         self._gauge = _ScoreGauge()
-        self._scroll_layout.addWidget(self._gauge)
+        left_col.addWidget(self._gauge)
 
-        # -- Velocity loop card
+        left_col.addStretch()
+        columns.addLayout(left_col, 1)
+
+        # ── Right column: Analysis cards ────────────────────────────
+        right_col = QVBoxLayout()
+        right_col.setSpacing(8)
+        right_col.setContentsMargins(0, 0, 0, 0)
+
         self._vel_card = self._build_vel_card()
-        self._scroll_layout.addWidget(self._vel_card)
+        right_col.addWidget(self._vel_card)
 
-        # -- Position loop card
         self._pos_card = self._build_pos_card()
-        self._scroll_layout.addWidget(self._pos_card)
+        right_col.addWidget(self._pos_card)
 
-        # -- Grade details card
         self._grade_card = self._build_grade_card()
-        self._scroll_layout.addWidget(self._grade_card)
+        right_col.addWidget(self._grade_card)
 
-        # -- Corrections card
         self._corrections_card = self._build_corrections_card()
-        self._scroll_layout.addWidget(self._corrections_card)
+        right_col.addWidget(self._corrections_card)
 
-        # -- Warnings card
         self._warnings_card = self._build_warnings_card()
-        self._scroll_layout.addWidget(self._warnings_card)
+        right_col.addWidget(self._warnings_card)
 
-        self._scroll_layout.addStretch()
+        right_col.addStretch()
+        columns.addLayout(right_col, 1)
 
         scroll.setWidget(self._scroll_content)
         root.addWidget(scroll, 1)
 
+        # ── Persistent action bar (always visible) ──────────────────
+        action_sep = QFrame()
+        action_sep.setFixedHeight(1)
+        action_sep.setStyleSheet(f"background-color: {_BORDER};")
+        root.addWidget(action_sep)
+
+        _action_btn_style = (
+            "QPushButton {{"
+            "  background-color: {bg}; color: {fg};"
+            "  font-family: Consolas; font-size: 8pt; font-weight: bold;"
+            "  letter-spacing: 1px; border: 1px solid {border};"
+            "  border-radius: 4px; padding: 6px 10px;"
+            "}}"
+            "QPushButton:hover {{ background-color: {hover}; }}"
+            "QPushButton:pressed {{ background-color: {press}; }}"
+            "QPushButton:disabled {{ background-color: #3a3a3a; color: #555;"
+            "  border-color: #4a4a4a; }}"
+        )
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        btn_row.setContentsMargins(0, 4, 0, 0)
+
+        self._btn_apply = QPushButton("APPLY TO PROFILE")
+        self._btn_apply.setCursor(Qt.PointingHandCursor)
+        self._btn_apply.setToolTip(
+            "Update the drive profile spinboxes above with the proposed values.\n"
+            "Does NOT write to the physical drive."
+        )
+        self._btn_apply.setStyleSheet(
+            _action_btn_style.format(
+                bg=_BLUE_MUTED, fg="#fff", border="#7a9fd0",
+                hover="#6b90c5", press="#4a70a5",
+            )
+        )
+        self._btn_apply.clicked.connect(self._on_apply_to_profile)
+        self._btn_apply.setEnabled(False)
+        btn_row.addWidget(self._btn_apply)
+
+        self._btn_correction_write = QPushButton("WRITE CORRECTIONS")
+        self._btn_correction_write.setCursor(Qt.PointingHandCursor)
+        self._btn_correction_write.setToolTip(
+            "Write ONLY the proposed corrections to the physical drive\n"
+            "via EtherCAT CoE SDO. Requires active controller connection."
+        )
+        self._btn_correction_write.setStyleSheet(
+            _action_btn_style.format(
+                bg="#2e8b3e", fg="#fff", border="#3aad4a",
+                hover="#38a548", press="#267a34",
+            )
+        )
+        self._btn_correction_write.clicked.connect(self._on_write_corrections)
+        self._btn_correction_write.setEnabled(False)
+        btn_row.addWidget(self._btn_correction_write)
+
+        root.addLayout(btn_row)
+
         self.setWidget(container)
         self._reset_display()
 
-    # ── Card builders ───────────────────────────────────────────────
+    # ================================================================
+    # Drive profile section
+    # ================================================================
+
+    def _build_drive_profile_section(self) -> QGroupBox:
+        """Build the drive profile configurator group."""
+        group = QGroupBox("Drive Profile")
+        group.setMaximumWidth(300)
+        group.setStyleSheet(
+            f"QGroupBox {{ color: {_TEXT_DIM}; font-size: 8pt;"
+            f" border: 1px solid {_BORDER}; border-radius: 4px;"
+            f" margin-top: 8px; padding-top: 6px; }}"
+            f"QGroupBox::title {{ subcontrol-origin: margin; left: 8px;"
+            f" padding: 0 4px; color: {_TEXT}; }}"
+        )
+        outer = QVBoxLayout(group)
+        outer.setContentsMargins(6, 4, 6, 6)
+        outer.setSpacing(4)
+
+        # ── Axis + Drive type row ──────────────────────────────────
+        selector_row = QHBoxLayout()
+        selector_row.setSpacing(4)
+
+        selector_row.addWidget(QLabel("Axis:"))
+        self._axis_combo = QComboBox()
+        self._axis_combo.setFixedWidth(50)
+        for i in range(16):
+            self._axis_combo.addItem(str(i))
+        self._axis_combo.currentIndexChanged.connect(self._on_axis_changed)
+        selector_row.addWidget(self._axis_combo)
+
+        selector_row.addWidget(QLabel("Drive:"))
+        self._drive_combo = QComboBox()
+        self._drive_combo.addItems(DRIVE_TYPES)
+        self._drive_combo.setFixedWidth(80)
+        self._drive_combo.currentTextChanged.connect(self._on_drive_type_changed)
+        selector_row.addWidget(self._drive_combo)
+
+        selector_row.addStretch()
+
+        # Read from Drive
+        self._read_btn = QPushButton("Read")
+        self._read_btn.setFixedHeight(22)
+        self._read_btn.setFixedWidth(55)
+        self._read_btn.setEnabled(False)
+        self._read_btn.setToolTip(
+            "Read Pn parameters from the drive via EtherCAT CoE SDO."
+        )
+        self._read_btn.clicked.connect(self._on_read_from_drive)
+        selector_row.addWidget(self._read_btn)
+
+        # Write to Drive
+        self._write_btn = QPushButton("Write")
+        self._write_btn.setFixedHeight(22)
+        self._write_btn.setFixedWidth(55)
+        self._write_btn.setEnabled(False)
+        self._write_btn.setToolTip(
+            "Write ALL Pn parameters to the drive via EtherCAT CoE SDO."
+        )
+        self._write_btn.clicked.connect(self._on_write_to_drive)
+        selector_row.addWidget(self._write_btn)
+
+        outer.addLayout(selector_row)
+
+        # ── Parameter fields (shown only for DX3 / DX4) ───────────
+        self._param_frame = QFrame()
+        self._param_frame.setVisible(False)
+        self._param_frame.setMaximumWidth(280)
+        self._param_frame.setStyleSheet(
+            f"QFrame {{ border: none; background: transparent; }}"
+        )
+        param_layout = QFormLayout(self._param_frame)
+        param_layout.setContentsMargins(0, 2, 0, 0)
+        param_layout.setSpacing(2)
+        param_layout.setLabelAlignment(Qt.AlignLeft)
+        param_layout.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
+
+        label_style = f"color: {_TEXT}; font-size: 8pt; border: none;"
+        combo_style = (
+            f"QComboBox {{ background: {_BG_PANEL}; color: {_TEXT};"
+            f" border: 1px solid {_BORDER}; border-radius: 2px;"
+            f" padding: 1px 3px; font-size: 8pt; }}"
+        )
+        arrow_style = (
+            f"QPushButton {{ background-color: {_BG_PANEL}; color: {_TEXT_DIM};"
+            f" border: 1px solid {_BORDER}; border-radius: 2px;"
+            f" font-size: 7pt; padding: 0px; }}"
+            f"QPushButton:pressed {{ background-color: {_BORDER_LIGHT}; }}"
+        )
+
+        for entry in PARAM_DEFS:
+            attr, pn_code, label, unit, min_v, max_v, default, tooltip = entry
+
+            row_label = QLabel(f"{pn_code} {label}:")
+            row_label.setStyleSheet(label_style)
+            row_label.setToolTip(tooltip)
+
+            if attr in COMBO_ATTRS:
+                combo_options = {
+                    "pn100_tuning_mode": TUNING_MODE_LABELS,
+                    "pn100_vibration": VIBRATION_SUPPRESSION_LABELS,
+                    "pn100_damping": DAMPING_LABELS,
+                }
+                w = QComboBox()
+                w.setStyleSheet(combo_style)
+                w.addItems(combo_options.get(attr, []))
+                w.setToolTip(tooltip)
+                w.currentIndexChanged.connect(self._on_param_changed)
+                self._param_widgets[attr] = w
+                param_layout.addRow(row_label, w)
+            else:
+                spin = QSpinBox()
+                spin.setRange(min_v, max_v)
+                spin.setValue(default)
+                spin.setToolTip(tooltip)
+                spin.setFixedWidth(110)
+                spin.setStyleSheet(
+                    f"QSpinBox {{ background: {_BG_PANEL}; color: {_TEXT};"
+                    f" border: 1px solid {_BORDER}; border-radius: 2px;"
+                    f" padding: 1px 3px; font-size: 8pt; }}"
+                    f"QSpinBox::up-button {{ width: 0; border: none; }}"
+                    f"QSpinBox::down-button {{ width: 0; border: none; }}"
+                )
+                spin.valueChanged.connect(self._on_param_changed)
+
+                btn_up = QPushButton("\u25b2")
+                btn_up.setFixedSize(18, 12)
+                btn_up.setStyleSheet(arrow_style)
+                btn_up.clicked.connect(
+                    lambda _, s=spin, mx=max_v: s.setValue(min(mx, s.value() + 1))
+                )
+
+                btn_down = QPushButton("\u25bc")
+                btn_down.setFixedSize(18, 12)
+                btn_down.setStyleSheet(arrow_style)
+                btn_down.clicked.connect(
+                    lambda _, s=spin, mn=min_v: s.setValue(max(mn, s.value() - 1))
+                )
+
+                arrows = QVBoxLayout()
+                arrows.setSpacing(1)
+                arrows.setContentsMargins(0, 0, 0, 0)
+                arrows.addWidget(btn_up)
+                arrows.addWidget(btn_down)
+
+                unit_lbl = QLabel(unit)
+                unit_lbl.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 8pt;")
+
+                field_row = QHBoxLayout()
+                field_row.setSpacing(2)
+                field_row.setContentsMargins(0, 0, 0, 0)
+                field_row.addWidget(spin)
+                field_row.addLayout(arrows)
+                field_row.addWidget(unit_lbl)
+                field_row.addStretch()
+
+                field_container = QWidget()
+                field_container.setStyleSheet("border: none; background: transparent;")
+                field_container.setLayout(field_row)
+
+                self._param_widgets[attr] = spin
+                param_layout.addRow(row_label, field_container)
+
+        outer.addWidget(self._param_frame)
+        return group
+
+    # ── Drive profile UI callbacks ──────────────────────────────────
+
+    def _current_axis(self) -> int:
+        return int(self._axis_combo.currentText())
+
+    def _on_axis_changed(self):
+        axis = self._current_axis()
+        profile = self._profiles.get(axis, DriveProfile())
+        self._load_profile_to_ui(profile)
+
+    def _on_drive_type_changed(self, drive_type: str):
+        is_trio_drive = drive_type in ("DX3", "DX4")
+        self._param_frame.setVisible(is_trio_drive)
+        self._update_drive_buttons()
+        axis = self._current_axis()
+        existing = self._profiles.get(axis)
+        if is_trio_drive and (existing is None or not existing.has_drive_params()):
+            self._set_ui_to_defaults()
+        self._save_ui_to_profile()
+
+    def _on_param_changed(self):
+        self._save_ui_to_profile()
+
+    def _update_drive_buttons(self):
+        if self._read_btn is None or self._write_btn is None or self._drive_combo is None:
+            return
+        drive_type = self._drive_combo.currentText()
+        enabled = self._connection is not None and drive_type in ("DX3", "DX4")
+        self._read_btn.setEnabled(enabled)
+        self._write_btn.setEnabled(enabled)
+
+    def _load_profile_to_ui(self, profile: DriveProfile):
+        self._drive_combo.blockSignals(True)
+        drive_idx = DRIVE_TYPES.index(profile.drive_type) if profile.drive_type in DRIVE_TYPES else 0
+        self._drive_combo.setCurrentIndex(drive_idx)
+        self._drive_combo.blockSignals(False)
+
+        is_trio = profile.has_drive_params()
+        self._param_frame.setVisible(is_trio)
+        self._update_drive_buttons()
+
+        if is_trio:
+            for entry in PARAM_DEFS:
+                attr = entry[0]
+                default = entry[6]
+                val = getattr(profile, attr, None)
+                w = self._param_widgets.get(attr)
+                if w is None:
+                    continue
+                w.blockSignals(True)
+                if attr in COMBO_ATTRS:
+                    combo_values = {
+                        "pn100_tuning_mode": TUNING_MODE_VALUES,
+                        "pn100_vibration": VIBRATION_SUPPRESSION_VALUES,
+                        "pn100_damping": DAMPING_VALUES,
+                    }
+                    values = combo_values.get(attr, [])
+                    idx = values.index(val) if val in values else 0
+                    w.setCurrentIndex(idx)
+                else:
+                    w.setValue(val if val is not None else default)
+                w.blockSignals(False)
+
+    def _set_ui_to_defaults(self):
+        for entry in PARAM_DEFS:
+            attr, _, _, _, _, _, default, _ = entry
+            w = self._param_widgets.get(attr)
+            if w is None:
+                continue
+            w.blockSignals(True)
+            if attr in COMBO_ATTRS:
+                w.setCurrentIndex(0)
+            else:
+                w.setValue(default)
+            w.blockSignals(False)
+
+    def _save_ui_to_profile(self):
+        axis = self._current_axis()
+        drive_type = self._drive_combo.currentText()
+        profile = DriveProfile(drive_type=drive_type)
+        if profile.has_drive_params():
+            for entry in PARAM_DEFS:
+                attr = entry[0]
+                w = self._param_widgets.get(attr)
+                if w is None:
+                    continue
+                if attr in COMBO_ATTRS:
+                    combo_values = {
+                        "pn100_tuning_mode": TUNING_MODE_VALUES,
+                        "pn100_vibration": VIBRATION_SUPPRESSION_VALUES,
+                        "pn100_damping": DAMPING_VALUES,
+                    }
+                    values = combo_values.get(attr, [])
+                    setattr(profile, attr, values[w.currentIndex()] if values else 0)
+                else:
+                    setattr(profile, attr, w.value())
+        self._profiles[axis] = profile
+
+    # ── CoE Read / Write ────────────────────────────────────────────
+
+    def _on_read_from_drive(self):
+        if self._connection is None:
+            return
+        axis = self._current_axis()
+        drive_type = self._drive_combo.currentText()
+        connection = self._connection
+        self._read_btn.setEnabled(False)
+        self._read_btn.setText("Reading\u2026")
+        conn_lock = self._conn_lock
+
+        def _do_read():
+            try:
+                profile = read_drive_profile(
+                    connection, axis=axis, drive_type=drive_type, conn_lock=conn_lock,
+                )
+                self._coe_signals.coe_read_done.emit(axis, profile, "")
+            except Exception as exc:
+                logger.error("Axis %d: read drive profile failed — %s", axis, exc)
+                self._coe_signals.coe_read_done.emit(
+                    axis, DriveProfile(drive_type=drive_type), str(exc),
+                )
+
+        threading.Thread(target=_do_read, name="TunerCoERead", daemon=True).start()
+
+    def _on_coe_read_done(self, axis: int, profile: DriveProfile, error: str):
+        self._read_btn.setText("Read")
+        self._update_drive_buttons()
+        if error:
+            QMessageBox.warning(
+                self, "CoE Read Error",
+                f"Failed to read drive parameters from axis {axis}:\n{error}",
+            )
+            return
+        self._profiles[axis] = profile
+        if axis == self._current_axis():
+            self._load_profile_to_ui(profile)
+        logger.info("Axis %d: read drive profile OK — %s", axis, profile.to_dict())
+
+    def _on_write_to_drive(self):
+        if self._connection is None:
+            return
+        axis = self._current_axis()
+        reply = QMessageBox.question(
+            self, "Write to Drive",
+            f"Write current Pn parameters to axis {axis} drive?\n\n"
+            "This will overwrite the drive's tuning parameters.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._save_ui_to_profile()
+        profile = self._profiles.get(axis)
+        if profile is None or not profile.has_drive_params():
+            return
+        connection = self._connection
+        self._write_btn.setEnabled(False)
+        self._read_btn.setEnabled(False)
+        self._write_btn.setText("Writing\u2026")
+        conn_lock = self._conn_lock
+
+        def _do_write():
+            try:
+                results = write_drive_profile(
+                    connection, axis=axis, profile=profile, conn_lock=conn_lock,
+                )
+                self._coe_signals.coe_write_done.emit(axis, results, "")
+            except Exception as exc:
+                logger.error("Axis %d: write drive profile failed — %s", axis, exc)
+                self._coe_signals.coe_write_done.emit(axis, {}, str(exc))
+
+        threading.Thread(target=_do_write, name="TunerCoEWrite", daemon=True).start()
+
+    def _on_coe_write_done(self, axis: int, results: dict, error: str):
+        self._write_btn.setText("Write")
+        self._update_drive_buttons()
+        if error:
+            QMessageBox.warning(
+                self, "CoE Write Error",
+                f"Failed to write drive parameters to axis {axis}:\n{error}",
+            )
+        else:
+            failures = {k: v for k, v in results.items() if v is not None}
+            if failures:
+                detail = "\n".join(f"  {k}: {v}" for k, v in failures.items())
+                QMessageBox.warning(
+                    self, "CoE Write Partial",
+                    f"Some parameters failed to write on axis {axis}:\n{detail}",
+                )
+            else:
+                n = len(results)
+                logger.info("Axis %d: wrote %d parameters OK", axis, n)
+
+    # ================================================================
+    # Analysis card builders
+    # ================================================================
 
     def _build_vel_card(self) -> QFrame:
         card = _card_frame()
@@ -472,7 +937,6 @@ class TunerPanel(QDockWidget):
         lay.setContentsMargins(10, 8, 10, 8)
         lay.setSpacing(4)
 
-        # Header row
         hdr = QHBoxLayout()
         hdr.setSpacing(6)
         self._vel_dot = _HealthDot()
@@ -492,12 +956,10 @@ class TunerPanel(QDockWidget):
         lay.addLayout(hdr)
         lay.addWidget(_separator())
 
-        # Metrics grid
         self._vel_metrics_layout = QVBoxLayout()
         self._vel_metrics_layout.setSpacing(2)
         lay.addLayout(self._vel_metrics_layout)
 
-        # Issue list
         self._vel_issues_label = QLabel("")
         self._vel_issues_label.setWordWrap(True)
         self._vel_issues_label.setStyleSheet(
@@ -588,7 +1050,6 @@ class TunerPanel(QDockWidget):
         )
         lay.addWidget(self._no_corrections_lbl)
 
-        # Reasons
         self._reasons_label = QLabel("")
         self._reasons_label.setWordWrap(True)
         self._reasons_label.setStyleSheet(
@@ -621,10 +1082,12 @@ class TunerPanel(QDockWidget):
 
         return card
 
-    # ── Helpers to populate metric rows ─────────────────────────────
+    # ================================================================
+    # Layout helpers
+    # ================================================================
 
     @staticmethod
-    def _clear_layout(layout: QVBoxLayout):
+    def _clear_layout(layout):
         while layout.count():
             item = layout.takeAt(0)
             w = item.widget()
@@ -632,24 +1095,14 @@ class TunerPanel(QDockWidget):
                 w.deleteLater()
             sub = item.layout()
             if sub:
-                TunerPanel._clear_layout_recursive(sub)
+                TunerPanel._clear_layout(sub)
 
-    @staticmethod
-    def _clear_layout_recursive(layout):
-        while layout.count():
-            item = layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-            sub = item.layout()
-            if sub:
-                TunerPanel._clear_layout_recursive(sub)
-
-    def _add_metric_row(self, layout: QVBoxLayout, name: str, value: str,
-                        unit: str = "", color: str = _CYAN):
+    def _add_metric_row(self, layout, name, value, unit="", color=_CYAN):
         layout.addLayout(_metric_label(name, value, unit, color))
 
-    # ── Reset / populate ────────────────────────────────────────────
+    # ================================================================
+    # Reset / populate display
+    # ================================================================
 
     def _reset_display(self):
         self._gauge.reset()
@@ -668,6 +1121,8 @@ class TunerPanel(QDockWidget):
         self._warnings_card.hide()
         self._grade_card.hide()
         self._corrections_card.hide()
+        self._btn_apply.setEnabled(False)
+        self._btn_correction_write.setEnabled(False)
 
         # Placeholder rows
         self._add_metric_row(self._vel_metrics_layout, "Accel overshoot", "--", "%")
@@ -754,7 +1209,6 @@ class TunerPanel(QDockWidget):
             )
             return
 
-        # Determine overall health from grade
         score, _, _ = pm.grade()
         self._pos_dot.set_healthy(score >= 5)
 
@@ -822,7 +1276,6 @@ class TunerPanel(QDockWidget):
 
         lines = []
         for d in details:
-            # Colour-code each line based on content
             if "excellent" in d.lower() or "well damped" in d.lower():
                 lines.append(f'<span style="color:{_GREEN}">\u2713 {d}</span>')
             elif "good" in d.lower():
@@ -844,7 +1297,6 @@ class TunerPanel(QDockWidget):
         delta = result.to_profile_delta()
         has_changes = len(delta) > 0
 
-        # Confidence badge
         conf = result.confidence
         conf_colors = {"high": _GREEN, "medium": _AMBER, "low": _RED}
         conf_c = conf_colors.get(conf, _TEXT_DIM)
@@ -855,7 +1307,6 @@ class TunerPanel(QDockWidget):
 
         if has_changes:
             self._no_corrections_lbl.hide()
-            # Build parameter change rows
             pn_labels = {
                 "pn101": "Pn101  Servo Rigidity",
                 "pn102": "Pn102  Speed Loop Gain",
@@ -880,7 +1331,6 @@ class TunerPanel(QDockWidget):
                 row_lay.setContentsMargins(8, 6, 8, 6)
                 row_lay.setSpacing(2)
 
-                # Param name
                 name_lbl = QLabel(pn_labels.get(attr, attr))
                 name_lbl.setStyleSheet(
                     f"color: {_TEXT}; font-family: Consolas; font-size: 8pt;"
@@ -888,7 +1338,6 @@ class TunerPanel(QDockWidget):
                 )
                 row_lay.addWidget(name_lbl)
 
-                # Current → New
                 val_row = QHBoxLayout()
                 val_row.setSpacing(4)
 
@@ -914,7 +1363,6 @@ class TunerPanel(QDockWidget):
                 val_row.addWidget(new_lbl)
                 val_row.addStretch()
 
-                # Delta badge
                 if current_val is not None and current_val != 0:
                     pct_change = ((new_val - current_val) / current_val) * 100
                     sign = "+" if pct_change > 0 else ""
@@ -934,7 +1382,6 @@ class TunerPanel(QDockWidget):
         else:
             self._no_corrections_lbl.show()
 
-        # Reasons
         corrections_text = result.diagnostics.get("corrections", [])
         if corrections_text:
             reason_lines = [f"\u2022 {r}" for r in corrections_text]
@@ -946,12 +1393,110 @@ class TunerPanel(QDockWidget):
         if result is None or not result.warnings:
             self._warnings_card.hide()
             return
-
         self._warnings_card.show()
         lines = [f"\u26a0 {w}" for w in result.warnings]
         self._warnings_label.setText("\n".join(lines))
 
-    # ── Analysis entry point ────────────────────────────────────────
+    # ================================================================
+    # Action button state
+    # ================================================================
+
+    def _update_action_buttons(self):
+        has_delta = (
+            self._tuning_result is not None
+            and len(self._tuning_result.to_profile_delta()) > 0
+        )
+        self._btn_apply.setEnabled(has_delta)
+        self._btn_correction_write.setEnabled(has_delta and self._connection is not None)
+
+    # ================================================================
+    # Apply / Write corrections
+    # ================================================================
+
+    def _on_apply_to_profile(self):
+        """Push proposed corrections into the drive profile spinboxes."""
+        if self._tuning_result is None:
+            return
+        delta = self._tuning_result.to_profile_delta()
+        if not delta:
+            return
+
+        axis = self._current_axis()
+        profile = self._profiles.get(axis)
+        if profile is None:
+            return
+
+        for attr, value in delta.items():
+            setattr(profile, attr, value)
+
+        if axis == self._current_axis():
+            self._load_profile_to_ui(profile)
+
+        names = ", ".join(f"Pn{k[2:]}" for k in delta)
+        self._status_label.setText(f"Applied to profile: {names}")
+        self._status_label.setStyleSheet(f"color: {_GREEN}; font-size: 8pt;")
+
+    def _on_write_corrections(self):
+        """Write only the proposed corrections to the drive via CoE SDO."""
+        if self._tuning_result is None or self._connection is None:
+            return
+        delta = self._tuning_result.to_profile_delta()
+        if not delta:
+            return
+
+        axis = self._current_axis()
+        names = ", ".join(f"Pn{k[2:]}={v}" for k, v in delta.items())
+        reply = QMessageBox.question(
+            self, "Write Corrections to Drive",
+            f"Write proposed corrections to axis {axis}?\n\n{names}\n\n"
+            "This will overwrite these drive parameters.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._btn_correction_write.setEnabled(False)
+        self._btn_correction_write.setText("Writing\u2026")
+        connection = self._connection
+        conn_lock = self._conn_lock
+
+        def _do_write():
+            errors = []
+            for attr, value in delta.items():
+                try:
+                    if conn_lock:
+                        with conn_lock:
+                            write_single_pn(connection, axis, attr, value)
+                    else:
+                        write_single_pn(connection, axis, attr, value)
+                except Exception as exc:
+                    errors.append(f"Pn{attr[2:]}: {exc}")
+            self._correction_write_done.emit("\n".join(errors) if errors else "")
+
+        threading.Thread(
+            target=_do_write, name="TunerCorrectionWrite", daemon=True,
+        ).start()
+
+    def _on_correction_write_done(self, error: str):
+        self._btn_correction_write.setText("WRITE CORRECTIONS")
+        self._update_action_buttons()
+
+        if error:
+            QMessageBox.warning(
+                self, "CoE Write Error",
+                f"Some parameters failed to write:\n{error}",
+            )
+        else:
+            delta = self._tuning_result.to_profile_delta() if self._tuning_result else {}
+            names = ", ".join(f"Pn{k[2:]}" for k in delta)
+            self._status_label.setText(f"Written to drive: {names}")
+            self._status_label.setStyleSheet(f"color: {_GREEN}; font-size: 8pt;")
+            # Sync profile spinboxes
+            self._on_apply_to_profile()
+
+    # ================================================================
+    # Analysis entry point
+    # ================================================================
 
     def _on_analyze(self):
         if not self._data_provider:
@@ -961,7 +1506,9 @@ class TunerPanel(QDockWidget):
 
         time_arr, params = self._data_provider()
         if time_arr is None or params is None:
-            self._status_label.setText("No captured data available — run a capture first")
+            self._status_label.setText(
+                "No captured data available \u2014 run a capture first"
+            )
             self._status_label.setStyleSheet(f"color: {_AMBER}; font-size: 8pt;")
             return
 
@@ -970,12 +1517,13 @@ class TunerPanel(QDockWidget):
             self._status_label.setStyleSheet(f"color: {_AMBER}; font-size: 8pt;")
             return
 
-        # Find channels using SignalMetrics' fuzzy match
         from .signal_metrics import _find_channel
 
         ch_dpos = _find_channel(params, "dpos", "demandposition", "targetposition")
         ch_mpos = _find_channel(params, "mpos", "measuredposition", "actualposition")
-        ch_mvel = _find_channel(params, "mspeed", "measuredvel", "actualvel", "vactual")
+        ch_mvel = _find_channel(
+            params, "mspeed", "measuredvel", "actualvel", "vactual",
+        )
 
         dpos = params.get(ch_dpos) if ch_dpos else None
         mpos = params.get(ch_mpos) if ch_mpos else None
@@ -994,8 +1542,7 @@ class TunerPanel(QDockWidget):
         velocity = np.asarray(mvel, dtype=np.float64) if mvel is not None else None
         time_np = np.asarray(time_arr, dtype=np.float64)
 
-        # Run analysis
-        self._status_label.setText("Analyzing...")
+        self._status_label.setText("Analyzing\u2026")
         self._status_label.setStyleSheet(f"color: {_ACCENT}; font-size: 8pt;")
 
         try:
@@ -1012,14 +1559,9 @@ class TunerPanel(QDockWidget):
         self._vel_metrics = vel_m
 
         # Get drive profile for corrections
-        profile: DriveProfile | None = None
-        if self._profile_provider:
-            try:
-                profile = self._profile_provider()
-            except Exception:
-                pass
+        axis = self._current_axis()
+        profile = self._profiles.get(axis)
 
-        # Run correction suggestion
         result: TuningResult | None = None
         if profile is not None and profile.has_drive_params():
             try:
@@ -1055,4 +1597,5 @@ class TunerPanel(QDockWidget):
         )
         self._status_label.setStyleSheet(f"color: {_GREEN}; font-size: 8pt;")
 
+        self._update_action_buttons()
         self.analysis_complete.emit()

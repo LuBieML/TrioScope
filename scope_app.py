@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFrame,
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
     QDialog, QFileDialog, QMessageBox, QGridLayout, QColorDialog,
-    QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit, QListWidget
+    QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QSettings, Slot
 from PySide6.QtGui import QFont, QColor, QPen, QBrush, QAction, QKeySequence
@@ -49,11 +49,6 @@ try:
 except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure Trio_UnifiedApi is installed and scope_engine.py is in src/scope/")
-
-try:
-    from ai.analysis_panel import AIAnalysisPanel
-except ImportError:
-    AIAnalysisPanel = None
 
 try:
     from ai.tuner_panel import TunerPanel
@@ -824,9 +819,6 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Settings window
         self._settings_window = None
 
-        # AI Analysis
-        self._ai_panel = None
-
         # Classical Tuner
         self._tuner_panel = None
 
@@ -1085,20 +1077,15 @@ class ParameterScopeOscilloscope(QMainWindow):
         btn_import.clicked.connect(self.import_from_csv)
         ctrl_grid.addWidget(btn_import, 2, 1)
 
-        # Row 3: AI Analysis
-        btn_ai = QPushButton("\u2728 AI Analysis")
-        btn_ai.clicked.connect(self._toggle_ai_panel)
-        ctrl_grid.addWidget(btn_ai, 3, 0, 1, 2)
-
-        # Row 4: Classical Tuner
+        # Row 3: Servo Tuner
         btn_tuner = QPushButton("\u2699 Servo Tuner")
         btn_tuner.clicked.connect(self._toggle_tuner_panel)
-        ctrl_grid.addWidget(btn_tuner, 4, 0, 1, 2)
+        ctrl_grid.addWidget(btn_tuner, 3, 0, 1, 2)
 
-        # Row 5: EtherCAT Map
+        # Row 4: EtherCAT Map
         btn_ecat = QPushButton("\u26a1 EtherCAT Map")
         btn_ecat.clicked.connect(self._open_ethercat_map)
-        ctrl_grid.addWidget(btn_ecat, 5, 0, 1, 2)
+        ctrl_grid.addWidget(btn_ecat, 4, 0, 1, 2)
 
         left_layout.addLayout(ctrl_grid)
 
@@ -2041,8 +2028,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connection = None
         self.scope_engine = None
         self.drive_scope_engine = None
-        if self._ai_panel is not None:
-            self._ai_panel.set_connection(None, None)
+        if self._tuner_panel is not None:
+            self._tuner_panel.set_connection(None)
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
         self.status_label.setText("Connection lost")
         self.btn_connect.setText("Connect")
@@ -2188,8 +2175,8 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.trio_connected = True
                 self.scope_engine = engine
                 self.drive_scope_engine = DriveScopeEngine(conn, axis=0)
-                if self._ai_panel is not None:
-                    self._ai_panel.set_connection(conn, self._conn_lock)
+                if self._tuner_panel is not None:
+                    self._tuner_panel.set_connection(conn, self._conn_lock)
                 self._start_watchdog()
                 self.status_dot.setStyleSheet("color: #00cc00; font-size: 16pt;")
                 sp_ms = servo_period * 1000 if servo_period else 0
@@ -2233,8 +2220,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.scope_engine = None
         self.drive_scope_engine = None
         self._shutting_down = False
-        if self._ai_panel is not None:
-            self._ai_panel.set_connection(None, None)
+        if self._tuner_panel is not None:
+            self._tuner_panel.set_connection(None)
         self._disconnect_cooldown_end = time.monotonic() + self._disconnect_cooldown_seconds
 
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
@@ -3404,11 +3391,6 @@ class ParameterScopeOscilloscope(QMainWindow):
         # ── View menu ──────────────────────────────────────────────
         view_menu = menubar.addMenu("&View")
 
-        act_ai = QAction("&AI Analysis Panel", self)
-        act_ai.setShortcut(QKeySequence("Ctrl+I"))
-        act_ai.triggered.connect(self._toggle_ai_panel)
-        view_menu.addAction(act_ai)
-
         act_tuner = QAction("&Servo Tuner", self)
         act_tuner.setShortcut(QKeySequence("Ctrl+T"))
         act_tuner.triggered.connect(self._toggle_tuner_panel)
@@ -3450,10 +3432,6 @@ class ParameterScopeOscilloscope(QMainWindow):
         act_fft = QAction("&FFT Analysis", self)
         act_fft.triggered.connect(lambda: self._show_help("06_fft.md"))
         help_menu.addAction(act_fft)
-
-        act_ai_help = QAction("AI &Analysis Panel", self)
-        act_ai_help.triggered.connect(lambda: self._show_help("08_ai_analysis.md"))
-        help_menu.addAction(act_ai_help)
 
         help_menu.addSeparator()
 
@@ -3503,25 +3481,22 @@ class ParameterScopeOscilloscope(QMainWindow):
             "<p><a href='#'>Help → User Manual</a> for full documentation.</p>"
         )
 
-    def _toggle_ai_panel(self):
-        """Show/hide the AI analysis dock panel."""
-        if AIAnalysisPanel is None:
-            QMessageBox.warning(self, "AI Analysis",
-                                "AI module not available. Check src/ai/ is present.")
+    # ─── Servo Tuner ──────────────────────────────────────────────
+
+    def _toggle_tuner_panel(self):
+        """Show/hide the servo tuner dock panel."""
+        if TunerPanel is None:
+            QMessageBox.warning(self, "Servo Tuner",
+                                "Tuner module not available. Check src/ai/ is present.")
             return
 
-        if self._ai_panel is None:
-            self._ai_panel = AIAnalysisPanel(self)
-            self._ai_panel.set_data_provider(self._get_scope_data_for_ai)
-            self._ai_panel.set_connection(self.trio_connection, self._conn_lock)
-            # Restore saved API key, model, and per-axis drive profiles
+        if self._tuner_panel is None:
+            self._tuner_panel = TunerPanel(self)
+            self._tuner_panel.set_data_provider(self._get_scope_data_for_ai)
+            if self.trio_connected and self.trio_connection:
+                self._tuner_panel.set_connection(self.trio_connection, self._conn_lock)
+            # Restore saved per-axis drive profiles
             s = QSettings("TrioScope", "ParameterScope")
-            api_key = str(s.value("ai/api_key", ""))
-            model = str(s.value("ai/model", "openai/gpt-4.1-mini"))
-            if api_key:
-                self._ai_panel.set_api_key(api_key)
-            self._ai_panel.set_model(model)
-            # Restore drive profiles saved per axis
             num_profiles = int(s.value("ai/drive_profiles/count", 0))
             saved_profiles = {}
             for i in range(num_profiles):
@@ -3529,7 +3504,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 if axis is None:
                     continue
                 axis = int(axis)
-                profile_dict = {
+                saved_profiles[axis] = {
                     "drive_type": s.value(f"ai/drive_profiles/{i}/drive_type", "None"),
                     "pn100": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn100")),
                     "pn101": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn101")),
@@ -3540,43 +3515,17 @@ class ParameterScopeOscilloscope(QMainWindow):
                     "pn106": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn106")),
                     "pn112": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn112")),
                 }
-                saved_profiles[axis] = profile_dict
             if saved_profiles:
-                self._ai_panel.set_all_profiles(saved_profiles)
-            self.addDockWidget(Qt.RightDockWidgetArea, self._ai_panel)
-        else:
-            self._ai_panel.setVisible(not self._ai_panel.isVisible())
-
-    # ─── Classical Tuner ────────────────────────────────────────────
-
-    def _toggle_tuner_panel(self):
-        """Show/hide the classical tuner dock panel."""
-        if TunerPanel is None:
-            QMessageBox.warning(self, "Servo Tuner",
-                                "Tuner module not available. Check src/ai/ is present.")
-            return
-
-        if self._tuner_panel is None:
-            self._tuner_panel = TunerPanel(self)
-            self._tuner_panel.set_data_provider(self._get_scope_data_for_ai)
-            self._tuner_panel.set_profile_provider(self._get_active_drive_profile)
+                self._tuner_panel.set_all_profiles(saved_profiles)
+            # Preserve window geometry — adding the dock triggers a deferred
+            # layout pass that inflates the main window's minimumSizeHint.
+            saved_size = self.size()
+            self.setFixedWidth(saved_size.width())
             self.addDockWidget(Qt.RightDockWidgetArea, self._tuner_panel)
+            # Release the width lock after the layout settles
+            QTimer.singleShot(0, lambda: self.setMaximumWidth(16777215))
         else:
             self._tuner_panel.setVisible(not self._tuner_panel.isVisible())
-
-    def _get_active_drive_profile(self):
-        """Return the DriveProfile for the currently selected axis in the AI panel."""
-        if self._ai_panel is None:
-            return None
-        profiles = getattr(self._ai_panel, '_profiles', {})
-        axis_combo = getattr(self._ai_panel, '_axis_combo', None)
-        if axis_combo is None:
-            return None
-        try:
-            axis = int(axis_combo.currentText())
-        except (ValueError, TypeError):
-            axis = 0
-        return profiles.get(axis)
 
     # ─── EtherCAT Map ───────────────────────────────────────────────
 
@@ -3668,68 +3617,6 @@ class ParameterScopeOscilloscope(QMainWindow):
         style_layout.addRow("Plot background:", plot_bg_edit)
         main_layout.addWidget(style_group)
 
-        # AI Analysis section
-        ai_group = QGroupBox("AI Analysis (NanoGPT)")
-        ai_group_layout = QVBoxLayout(ai_group)
-        ai_group_layout.setSpacing(6)
-
-        s_ai = QSettings("TrioScope", "ParameterScope")
-
-        # API key + active model in a compact form
-        ai_form = QFormLayout()
-        ai_key_edit = QLineEdit(s_ai.value("ai/api_key", ""))
-        ai_key_edit.setEchoMode(QLineEdit.Password)
-        ai_key_edit.setPlaceholderText("Enter NanoGPT API key")
-        ai_form.addRow("API Key:", ai_key_edit)
-
-        ai_model_edit = QComboBox()
-        if AIAnalysisPanel is not None:
-            from ai.nanogpt_client import NanoGPTClient
-            ai_model_edit.addItems(NanoGPTClient.load_model_list())
-        ai_model_edit.setCurrentText(str(s_ai.value("ai/model", "openai/gpt-4.1-mini")))
-        ai_model_edit.setEditable(True)
-        ai_form.addRow("Model:", ai_model_edit)
-        ai_group_layout.addLayout(ai_form)
-
-        # Model list management — full-width
-        ai_group_layout.addWidget(QLabel("Available models:"))
-
-        model_list_widget = QListWidget()
-        if AIAnalysisPanel is not None:
-            model_list_widget.addItems(NanoGPTClient.load_model_list())
-        model_list_widget.setMinimumHeight(80)
-        model_list_widget.setMaximumHeight(140)
-        ai_group_layout.addWidget(model_list_widget)
-
-        model_add_row = QHBoxLayout()
-        model_add_edit = QLineEdit()
-        model_add_edit.setPlaceholderText("e.g. openai/gpt-4.1-mini")
-        model_add_row.addWidget(model_add_edit)
-
-        btn_add_model = QPushButton("Add")
-        def _add_model():
-            name = model_add_edit.text().strip()
-            if not name:
-                return
-            existing = [model_list_widget.item(i).text() for i in range(model_list_widget.count())]
-            if name in existing:
-                return
-            model_list_widget.addItem(name)
-            model_add_edit.clear()
-        btn_add_model.clicked.connect(_add_model)
-        model_add_row.addWidget(btn_add_model)
-
-        btn_remove_model = QPushButton("Remove")
-        def _remove_model():
-            sel = model_list_widget.currentRow()
-            if sel >= 0:
-                model_list_widget.takeItem(sel)
-        btn_remove_model.clicked.connect(_remove_model)
-        model_add_row.addWidget(btn_remove_model)
-
-        ai_group_layout.addLayout(model_add_row)
-        main_layout.addWidget(ai_group)
-
         # Buttons
         btn_layout = QHBoxLayout()
 
@@ -3744,24 +3631,6 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.grid_alpha = max(0.0, min(1.0, float(grid_a_edit.text())))
                 self.plot_bg_color = plot_bg_edit.text()
                 self._apply_plot_settings()
-                # AI settings
-                s_save = QSettings("TrioScope", "ParameterScope")
-                s_save.setValue("ai/api_key", ai_key_edit.text().strip())
-                s_save.setValue("ai/model", ai_model_edit.currentText().strip())
-                # Save model list and refresh dropdowns
-                model_names = [model_list_widget.item(i).text()
-                               for i in range(model_list_widget.count())]
-                if model_names:
-                    NanoGPTClient.save_model_list(model_names)
-                    # Refresh the model selector in this dialog
-                    current_model = ai_model_edit.currentText()
-                    ai_model_edit.clear()
-                    ai_model_edit.addItems(model_names)
-                    ai_model_edit.setCurrentText(current_model)
-                if self._ai_panel is not None:
-                    self._ai_panel.set_api_key(ai_key_edit.text().strip())
-                    self._ai_panel.set_model(ai_model_edit.currentText().strip())
-                    self._ai_panel.refresh_model_list()
                 self.status_label.setText("Settings applied")
             except ValueError as e:
                 QMessageBox.critical(dlg, "Invalid value", str(e))
@@ -3885,9 +3754,9 @@ class ParameterScopeOscilloscope(QMainWindow):
             s.setValue(f"traces/{i}/fft",
                        "true" if t.is_fft() else "false")
 
-        # Per-axis drive profiles (from AI panel if open)
-        if self._ai_panel is not None:
-            profiles = self._ai_panel.get_all_profiles()
+        # Per-axis drive profiles (from tuner panel if open)
+        if self._tuner_panel is not None:
+            profiles = self._tuner_panel.get_all_profiles()
             s.setValue("ai/drive_profiles/count", len(profiles))
             for i, (axis, profile_dict) in enumerate(profiles.items()):
                 s.setValue(f"ai/drive_profiles/{i}/axis", axis)
