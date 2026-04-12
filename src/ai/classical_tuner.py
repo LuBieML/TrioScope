@@ -230,10 +230,15 @@ class ClassicalTuner:
     def analyze_velocity_loop(
         time_arr: np.ndarray,
         measured_velocity: np.ndarray,
-        command: np.ndarray,
+        demand_velocity: np.ndarray,
     ) -> VelocityLoopMetrics:
-        """Assess velocity-loop quality from MSPEED vs command-derived demand."""
-        dvel = np.gradient(command, time_arr)
+        """Assess velocity-loop quality from MSPEED vs captured DEMAND_SPEED.
+
+        Both inputs must be in the same units (user units per second). The
+        caller is responsible for scaling DEMAND_SPEED (captured as
+        units/servocycle) by 1/servo_period_sec before passing it in.
+        """
+        dvel = demand_velocity
         dacc = np.gradient(dvel, time_arr)
         verr = measured_velocity - dvel
 
@@ -249,14 +254,26 @@ class ClassicalTuner:
 
         metrics = VelocityLoopMetrics()
 
-        # Accel overshoot
-        if accel.sum() > 5 and cruise.sum() > 5:
-            signed_err = verr[accel] * np.sign(dvel[accel])
-            cruise_speed = float(np.mean(np.abs(dvel[cruise])))
-            if cruise_speed > 1e-9:
-                metrics.accel_overshoot_pct = max(
-                    0.0, float(np.max(signed_err)) / cruise_speed * 100
-                )
+        # Accel overshoot — evaluated in the transition window where
+        # acceleration drops to near zero (velocity peaks), normalized
+        # against the commanded velocity at that instant, and filtered
+        # to require a local maximum (rejects single-sample noise spikes).
+        if a_peak > 1e-9:
+            transition_mask = moving & (np.abs(dacc) <= 0.05 * a_peak)
+            if transition_mask.sum() > 2:
+                v_target = float(np.mean(np.abs(dvel[transition_mask])))
+                if v_target > 1e-9:
+                    signed_err = verr[transition_mask] * np.sign(dvel[transition_mask])
+                    peak_idx = int(np.argmax(signed_err))
+                    if 0 < peak_idx < len(signed_err) - 1:
+                        local_max = float(signed_err[peak_idx])
+                        if (
+                            local_max > float(signed_err[peak_idx - 1])
+                            and local_max > float(signed_err[peak_idx + 1])
+                        ):
+                            metrics.accel_overshoot_pct = max(
+                                0.0, local_max / v_target * 100.0
+                            )
 
         # Cruise tracking ratio
         if cruise.sum() > 10:
@@ -344,6 +361,7 @@ class ClassicalTuner:
         response: np.ndarray,
         command: np.ndarray,
         velocity: np.ndarray | None = None,
+        demand_velocity: np.ndarray | None = None,
     ) -> tuple[StepResponseMetrics, VelocityLoopMetrics | None]:
         """Analyse a profiled-move capture for position-loop quality.
 
@@ -436,11 +454,11 @@ class ClassicalTuner:
                 if period > 0:
                     natural_freq_hz = 1.0 / period
 
-        # Velocity loop analysis
+        # Velocity loop analysis — requires captured DEMAND_SPEED (units/s).
         vel_metrics: VelocityLoopMetrics | None = None
-        if velocity is not None:
+        if velocity is not None and demand_velocity is not None:
             vel_metrics = ClassicalTuner.analyze_velocity_loop(
-                time_arr, velocity, command
+                time_arr, velocity, demand_velocity
             )
 
         metrics = StepResponseMetrics(
@@ -889,6 +907,7 @@ class ClassicalTuner:
         time_arr: np.ndarray,
         command: np.ndarray,
         response: np.ndarray,
+        demand_velocity: np.ndarray,
         current_pn112: int = 0,
         current_pn114: int = 0,
     ) -> dict:
@@ -896,8 +915,10 @@ class ClassicalTuner:
 
         Analyses cruise-phase FE proportionality to velocity (→ Pn112) and
         accel-phase FE proportionality to acceleration (→ Pn114).
+
+        demand_velocity must be DEMAND_SPEED already scaled to units/second.
         """
-        dvel = np.gradient(command, time_arr)
+        dvel = demand_velocity
         dacc = np.gradient(dvel, time_arr)
         fe = command - response
 

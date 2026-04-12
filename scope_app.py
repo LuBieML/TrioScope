@@ -3549,14 +3549,22 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._ethercat_map.activateWindow()
 
     def _get_scope_data_for_ai(self):
-        """Data provider callback for AI panel. Returns (time_arr, params_dict)."""
+        """Data provider callback for AI panel.
+
+        Returns (time_arr, params_dict, servo_period_sec). servo_period_sec
+        is needed to scale DEMAND_SPEED (captured as units/servocycle) into
+        units/second for velocity-loop analysis.
+        """
         if self.accumulated_data is None:
-            return None, None
+            return None, None, None
         time_arr = self.accumulated_data.get('time')
         params = self.accumulated_data.get('params')
         if time_arr is None or len(time_arr) == 0:
-            return None, None
-        return time_arr, params
+            return None, None, None
+        servo_period_sec = None
+        if self.scope_engine is not None:
+            servo_period_sec = self.scope_engine.servo_period_sec
+        return time_arr, params, servo_period_sec
 
     def open_settings(self):
         if self._settings_window is not None:

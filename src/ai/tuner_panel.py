@@ -99,7 +99,7 @@ class _ScoreGauge(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(16)  # ~60 fps
         self._timer.timeout.connect(self._animate_step)
-        self.setMinimumSize(200, 140)
+        self.setMinimumSize(200, 170)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def set_score(self, score: float, verdict: str):
@@ -130,10 +130,17 @@ class _ScoreGauge(QWidget):
         w = self.width()
         h = self.height()
         cx = w / 2
-        gauge_size = min(w - 24, (h - 36) * 2)
-        gauge_size = max(gauge_size, 100)
-        radius = gauge_size / 2
-        cy = h - 32
+
+        # Arc spans 200° → -20°, so its endpoints dip sin(20°)·r below cy.
+        # Reserve space below for the verdict label, and above for top padding.
+        verdict_reserve = 26
+        top_pad = 6
+        sin20 = math.sin(math.radians(20))
+        max_r_h = max(30.0, (h - verdict_reserve - top_pad) / (1.0 + sin20))
+        max_r_w = max(30.0, (w - 24) / 2.0)
+        radius = min(max_r_h, max_r_w)
+        gauge_size = radius * 2
+        cy = top_pad + radius
 
         arc_rect = QRectF(cx - radius, cy - radius, gauge_size, gauge_size)
         pen_width = max(8, radius * 0.12)
@@ -672,6 +679,7 @@ class TunerPanel(QDockWidget):
                     "pn100_damping": DAMPING_LABELS,
                 }
                 w = QComboBox()
+                w.setFixedWidth(150)
                 w.setStyleSheet(combo_style)
                 w.addItems(combo_options.get(attr, []))
                 w.setToolTip(tooltip)
@@ -683,7 +691,7 @@ class TunerPanel(QDockWidget):
                 spin.setRange(min_v, max_v)
                 spin.setValue(default)
                 spin.setToolTip(tooltip)
-                spin.setFixedWidth(110)
+                spin.setFixedWidth(60)
                 spin.setStyleSheet(
                     f"QSpinBox {{ background: {_BG_PANEL}; color: {_TEXT};"
                     f" border: 1px solid {_BORDER}; border-radius: 2px;"
@@ -714,6 +722,7 @@ class TunerPanel(QDockWidget):
                 arrows.addWidget(btn_down)
 
                 unit_lbl = QLabel(unit)
+                unit_lbl.setFixedWidth(50)
                 unit_lbl.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 8pt;")
 
                 field_row = QHBoxLayout()
@@ -1504,7 +1513,14 @@ class TunerPanel(QDockWidget):
             self._status_label.setStyleSheet(f"color: {_RED}; font-size: 8pt;")
             return
 
-        time_arr, params = self._data_provider()
+        provider_result = self._data_provider()
+        if provider_result is None:
+            time_arr, params, servo_period_sec = None, None, None
+        elif len(provider_result) == 3:
+            time_arr, params, servo_period_sec = provider_result
+        else:
+            time_arr, params = provider_result
+            servo_period_sec = None
         if time_arr is None or params is None:
             self._status_label.setText(
                 "No captured data available \u2014 run a capture first"
@@ -1524,10 +1540,12 @@ class TunerPanel(QDockWidget):
         ch_mvel = _find_channel(
             params, "mspeed", "measuredvel", "actualvel", "vactual",
         )
+        ch_dvel = _find_channel(params, "demandspeed", "demandvel", "dspeed")
 
         dpos = params.get(ch_dpos) if ch_dpos else None
         mpos = params.get(ch_mpos) if ch_mpos else None
         mvel = params.get(ch_mvel) if ch_mvel else None
+        dvel_raw = params.get(ch_dvel) if ch_dvel else None
 
         if dpos is None or mpos is None:
             self._status_label.setText(
@@ -1537,9 +1555,27 @@ class TunerPanel(QDockWidget):
             self._status_label.setStyleSheet(f"color: {_AMBER}; font-size: 8pt;")
             return
 
+        if dvel_raw is None:
+            self._status_label.setText(
+                "DEMAND_SPEED not captured \u2014 velocity-loop analysis skipped. "
+                "Add DEMAND_SPEED to the scope channel list and re-capture."
+            )
+            self._status_label.setStyleSheet(f"color: {_AMBER}; font-size: 8pt;")
+            return
+
+        if not servo_period_sec or servo_period_sec <= 0:
+            self._status_label.setText(
+                "Servo period unknown \u2014 cannot scale DEMAND_SPEED. "
+                "Reconnect to the controller and re-capture."
+            )
+            self._status_label.setStyleSheet(f"color: {_AMBER}; font-size: 8pt;")
+            return
+
         command = np.asarray(dpos, dtype=np.float64)
         response = np.asarray(mpos, dtype=np.float64)
         velocity = np.asarray(mvel, dtype=np.float64) if mvel is not None else None
+        # DEMAND_SPEED is captured as user-units per servocycle; scale to units/second.
+        demand_velocity = np.asarray(dvel_raw, dtype=np.float64) / float(servo_period_sec)
         time_np = np.asarray(time_arr, dtype=np.float64)
 
         self._status_label.setText("Analyzing\u2026")
@@ -1547,7 +1583,7 @@ class TunerPanel(QDockWidget):
 
         try:
             pos_m, vel_m = ClassicalTuner.analyze_step_response(
-                time_np, response, command, velocity,
+                time_np, response, command, velocity, demand_velocity,
             )
         except Exception as exc:
             logger.exception("Step response analysis failed")
@@ -1590,6 +1626,8 @@ class TunerPanel(QDockWidget):
             channels_used.append("MPOS")
         if ch_mvel:
             channels_used.append("MSPEED")
+        if ch_dvel:
+            channels_used.append("DEMAND_SPEED")
         ch_str = " + ".join(channels_used)
 
         self._status_label.setText(
