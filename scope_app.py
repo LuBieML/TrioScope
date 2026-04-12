@@ -32,7 +32,7 @@ pg.setConfigOptions(
     background='#0A0A0A',
     foreground='#d4d4d4',
     antialias=False,       # AA + width>1 is a Qt software-path; skip for pan/zoom speed
-    useOpenGL=False,       # Multi-panel 2D plots: software raster beats per-surface GL ctx switches
+    useOpenGL=True,        # Single shared GraphicsLayoutWidget = 1 GL surface, no context switches
 )
 
 # Add src to path for scope engine
@@ -1107,13 +1107,16 @@ class ParameterScopeOscilloscope(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
 
-        # 2D Plot area — vertical splitter so scope heights are draggable
-        self.plot_splitter = QSplitter(Qt.Vertical)
-        self.plot_splitter.setHandleWidth(5)
-        self.plot_splitter.setStyleSheet(
-            "QSplitter::handle { background-color: #353536; }"
-        )
-        right_layout.addWidget(self.plot_splitter, 1)
+        # 2D Plot area — single shared GraphicsLayoutWidget (1 scene, 1 view).
+        # Previously each plot was its own widget in a QSplitter; that cost a
+        # full paintEvent per widget per pan tick (N-linked axes = N repaints).
+        self.plot_layout_widget = pg.GraphicsLayoutWidget()
+        self.plot_layout_widget.setBackground('#0A0A0A')
+        self.plot_layout_widget.ci.setSpacing(4)
+        self.plot_layout_widget.ci.setContentsMargins(0, 0, 0, 0)
+        # Kept for backward compat with show/hide and layout code paths
+        self.plot_splitter = self.plot_layout_widget
+        right_layout.addWidget(self.plot_layout_widget, 1)
 
         # 3D Plot area (hidden by default)
         self.gl_widget = gl.GLViewWidget()
@@ -1206,14 +1209,13 @@ class ParameterScopeOscilloscope(QMainWindow):
     # ─── Plot management ────────────────────────────────────────────
 
     def _create_scope_plot(self):
-        """Create a PlotItem inside its own GraphicsLayoutWidget and add to the splitter."""
+        """Add a PlotItem as a new row in the shared GraphicsLayoutWidget."""
         vb = ScopeViewBox()
         vb.doubleClicked.connect(self._on_plot_double_click)
         pi = pg.PlotItem(viewBox=vb)
-        pw = pg.GraphicsLayoutWidget()
-        pw.setBackground('#0A0A0A')
-        pw.addItem(pi, 0, 0)
-        self.plot_splitter.addWidget(pw)
+        # Append as next row in the shared layout (single scene → single repaint)
+        self.plot_layout_widget.addItem(pi)
+        self.plot_layout_widget.nextRow()
         return pi
 
     def _on_plot_double_click(self):
@@ -1227,11 +1229,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         """Recreate subplots — one row per enabled trace for independent Y-scales.
         Each trace gets its own left Y-axis, color-coded. X-axes are linked.
         In XY mode, a single plot shows trace1 vs trace2."""
-        # Remove all plot widgets from the splitter
-        while self.plot_splitter.count():
-            w = self.plot_splitter.widget(0)
-            w.setParent(None)
-            w.deleteLater()
+        # Clear all PlotItems from the shared layout (keeps the widget itself).
+        # clear() removes items but doesn't reset the row/col cursor — reset manually
+        # so the next addItem() starts at (0, 0) instead of after the old positions.
+        self.plot_layout_widget.clear()
+        self.plot_layout_widget.ci.currentRow = 0
+        self.plot_layout_widget.ci.currentCol = 0
         self.plot_items = {}
         self.curves = {}
         self.ref_curves = {}
@@ -1324,7 +1327,9 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Y auto-range follows visible data
         plot_item.enableAutoRange(axis='y', enable=True)
-        plot_item.setAutoVisible(y=True)
+        # NOTE: setAutoVisible(y=True) forces a Y-bounds rescan of visible X data
+        # on every pan tick — ~100 Hz × N curves × N points. Leave it off;
+        # Y still autoranges on data updates via enableAutoRange.
 
         # Disable auto-scroll when user manually interacts
         vb.sigRangeChangedManually.connect(self._on_manual_range_change)
@@ -1344,7 +1349,9 @@ class ParameterScopeOscilloscope(QMainWindow):
             plot_item.setLabel('bottom', '')
         plot_item.setLabel('left', 'Magnitude', color='#d4d4d4')
         plot_item.enableAutoRange(axis='y', enable=True)
-        plot_item.setAutoVisible(y=True)
+        # NOTE: setAutoVisible(y=True) forces a Y-bounds rescan of visible X data
+        # on every pan tick — ~100 Hz × N curves × N points. Leave it off;
+        # Y still autoranges on data updates via enableAutoRange.
         vb.sigRangeChanged.connect(self._reposition_stats_texts)
 
     def _on_manual_range_change(self, _changes):
