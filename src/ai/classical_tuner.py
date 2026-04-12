@@ -1,21 +1,13 @@
 """
-Classical servo-loop analyser and correction engine.
+Classical servo-loop analyser.
 
 Two-level analysis:
   1. Velocity loop — compares MSPEED against demand velocity derived from the
      command profile.  Detects overshoot, ringing, and tracking errors during
      accel/cruise phases.
-  2. Position loop — analyses following-error (FE = command − response) after
-     the profiled move completes.  Measures overshoot, oscillation, settling
-     time, steady-state error, and damping.
-
-Corrections follow inside-out cascade priority: the velocity loop (Pn102/Pn103)
-must be healthy before the position loop (Pn104) is touched.
-
-Tuning-mode awareness (Pn100.0):
-  1 = Tuningless  → only Pn101 (servo rigidity 1–31)
-  3 = One-Param   → only Pn101
-  5 = Manual       → Pn102, Pn103, Pn104
+  2. Position loop — analyses following-error (FE = command − response) during
+     and after the profiled move.  Measures overshoot, oscillation, settling
+     time, steady-state error, damping, and following error during motion.
 
 All analysis is designed for real profiled moves (trapezoidal / S-curve ramps),
 NOT ideal step inputs.
@@ -29,46 +21,13 @@ from typing import Optional
 
 import numpy as np
 
-from .drive_profile import DriveProfile
-
-# ---------------------------------------------------------------------------
-# Parameter limits (from PARAM_DEFS in drive_profile.py)
-# ---------------------------------------------------------------------------
-_PN_LIMITS: dict[str, tuple[int, int]] = {
-    "pn101": (1, 31),
-    "pn102": (1, 10000),
-    "pn103": (1, 5000),
-    "pn104": (0, 1000),
-    "pn112": (0, 100),
-    "pn113": (0, 640),
-    "pn114": (0, 100),
-    "pn115": (0, 640),
-    "pn135": (0, 30000),
-}
-
-
-def _clamp_pn(name: str, value: float) -> int:
-    """Clamp a parameter value to its valid range and round to int."""
-    lo, hi = _PN_LIMITS.get(name, (0, 65535))
-    return max(lo, min(hi, round(value)))
-
-
-# ---------------------------------------------------------------------------
-# Bandwidth presets
-# ---------------------------------------------------------------------------
-BANDWIDTH_PRESETS: dict[str, dict[str, float]] = {
-    "conservative": {"pn102": 200, "pn103": 200, "pn104": 20},
-    "moderate":     {"pn102": 500, "pn103": 125, "pn104": 40},
-    "aggressive":   {"pn102": 1000, "pn103": 80, "pn104": 80},
-}
-
 
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
 @dataclass
 class VelocityLoopMetrics:
-    """Velocity loop quality assessed from MSPEED vs demand velocity."""
+    """Velocity-loop observations from MSPEED vs demand velocity."""
     accel_overshoot_pct: float = 0.0
     cruise_tracking_ratio: float = 1.0
     cruise_velocity_std: float = 0.0
@@ -80,7 +39,7 @@ class VelocityLoopMetrics:
 
 @dataclass
 class StepResponseMetrics:
-    """Position-loop quality from following-error analysis after move end."""
+    """Position-loop observations from following-error analysis."""
     overshoot_pct: float = 0.0
     settling_time_ms: float = 0.0
     rise_time_ms: float = 0.0
@@ -88,142 +47,17 @@ class StepResponseMetrics:
     oscillation_count: int = 0
     damping_ratio: float = 0.0
     natural_freq_est_hz: float = 0.0
-    velocity_overshoot_pct: float = 0.0   # from VelocityLoopMetrics when available
-
-    def grade(self) -> tuple[float, str, list[str]]:
-        """Score the response 0–10 with symptom-only detail messages.
-
-        Returns (score, verdict, detail_list).
-        """
-        score = 10.0
-        details: list[str] = []
-
-        # --- Overshoot ---
-        if self.overshoot_pct <= 5:
-            details.append(f"Overshoot {self.overshoot_pct:.1f}% — excellent")
-        elif self.overshoot_pct <= 15:
-            score -= 2.0
-            details.append(
-                f"Overshoot {self.overshoot_pct:.1f}% — loop response too aggressive"
-            )
-        elif self.overshoot_pct <= 25:
-            score -= 4.0
-            details.append(
-                f"Overshoot {self.overshoot_pct:.1f}% — high, loop response too aggressive"
-            )
-        else:
-            score -= 6.0
-            details.append(
-                f"Overshoot {self.overshoot_pct:.1f}% — excessive, loop response too aggressive"
-            )
-
-        # --- Oscillations ---
-        if self.oscillation_count <= 1:
-            details.append(
-                f"Oscillations: {self.oscillation_count} — excellent (well damped)"
-            )
-        elif self.oscillation_count <= 3:
-            score -= 1.5
-            details.append(
-                f"Oscillations: {self.oscillation_count} — moderate ringing"
-            )
-        else:
-            score -= 3.0
-            details.append(
-                f"Oscillations: {self.oscillation_count} — significant ringing, "
-                f"gains need reduction"
-            )
-
-        # --- Steady-state error ---
-        ss_pct = self.steady_state_error * 100.0
-        has_overshoot = self.overshoot_pct > 5
-        if ss_pct <= 0.5:
-            details.append(f"Steady-state error {ss_pct:.2f}% — excellent")
-        elif ss_pct <= 2.0:
-            score -= 1.0
-            details.append(f"Steady-state error {ss_pct:.2f}% — good")
-        else:
-            score -= 2.0
-            if has_overshoot:
-                details.append(
-                    f"Steady-state error {ss_pct:.2f}% — resolve overshoot first, "
-                    f"then assess"
-                )
-            else:
-                details.append(
-                    f"Steady-state error {ss_pct:.2f}% — consider faster integral action"
-                )
-
-        # --- Settling time ---
-        if self.settling_time_ms <= 50:
-            details.append(f"Settling time {self.settling_time_ms:.0f}ms — excellent")
-        elif self.settling_time_ms <= 200:
-            score -= 0.5
-            details.append(f"Settling time {self.settling_time_ms:.0f}ms — good")
-        elif self.settling_time_ms <= 500:
-            score -= 1.5
-            details.append(f"Settling time {self.settling_time_ms:.0f}ms — slow")
-        else:
-            score -= 3.0
-            if has_overshoot:
-                details.append(
-                    f"Settling time {self.settling_time_ms:.0f}ms — very slow, "
-                    f"caused by overshoot"
-                )
-            else:
-                details.append(
-                    f"Settling time {self.settling_time_ms:.0f}ms — very slow, "
-                    f"consider faster integral action"
-                )
-
-        score = max(0.0, min(10.0, score))
-
-        if score >= 8:
-            verdict = "Well tuned"
-        elif score >= 5:
-            verdict = "Acceptable — minor improvements possible"
-        else:
-            verdict = "Needs attention"
-
-        return score, verdict, details
-
-
-@dataclass
-class TuningResult:
-    """Proposed parameter changes with diagnostics."""
-    method: str = ""
-    pn101: Optional[int] = None
-    pn102: Optional[int] = None
-    pn103: Optional[int] = None
-    pn104: Optional[int] = None
-    pn106: Optional[int] = None
-    pn112: Optional[int] = None
-    pn113: Optional[int] = None
-    pn114: Optional[int] = None
-    pn115: Optional[int] = None
-    pn135: Optional[int] = None
-    diagnostics: dict = field(default_factory=dict)
-    warnings: list[str] = field(default_factory=list)
-    confidence: str = "low"
-
-    def to_profile_delta(self) -> dict[str, int]:
-        """Return only the Pn fields that have proposed values."""
-        delta = {}
-        for attr in (
-            "pn101", "pn102", "pn103", "pn104", "pn106",
-            "pn112", "pn113", "pn114", "pn115", "pn135",
-        ):
-            val = getattr(self, attr)
-            if val is not None:
-                delta[attr] = val
-        return delta
+    drive_fe_peak: float = 0.0            # peak |FE| during motion (user units)
+    drive_fe_cruise_mean: float = 0.0     # mean |FE| during cruise (user units)
+    drive_fe_peak_pct: float = 0.0        # peak |FE| during motion / step_size
+    drive_fe_cruise_mean_pct: float = 0.0  # mean |FE| during cruise / step_size
 
 
 # ---------------------------------------------------------------------------
-# Classical tuner
+# Classical analyser
 # ---------------------------------------------------------------------------
 class ClassicalTuner:
-    """Analyse profiled-move captures and suggest gain corrections."""
+    """Analyse profiled-move captures of the servo loops."""
 
     # --------------------------------------------------------------- velocity
     @staticmethod
@@ -232,7 +66,7 @@ class ClassicalTuner:
         measured_velocity: np.ndarray,
         demand_velocity: np.ndarray,
     ) -> VelocityLoopMetrics:
-        """Assess velocity-loop quality from MSPEED vs captured DEMAND_SPEED.
+        """Observe velocity-loop behaviour from MSPEED vs captured DEMAND_SPEED.
 
         Both inputs must be in the same units (user units per second). The
         caller is responsible for scaling DEMAND_SPEED (captured as
@@ -297,7 +131,6 @@ class ClassicalTuner:
             t_trans = time_arr[last_transition_idx]
             for i in range(last_transition_idx, len(time_arr)):
                 if abs(verr[i]) <= band:
-                    # Check all remaining in a small window stay within band
                     settled = True
                     for j in range(i, min(i + 10, len(time_arr))):
                         if abs(verr[j]) > band:
@@ -321,7 +154,7 @@ class ClassicalTuner:
                 zero_crossings = int(np.sum(sign_changes != 0))
                 metrics.accel_oscillation_count = zero_crossings // 2
 
-        # Health assessment
+        # Observations
         issues: list[str] = []
         if metrics.accel_overshoot_pct > 15:
             issues.append(
@@ -362,8 +195,9 @@ class ClassicalTuner:
         command: np.ndarray,
         velocity: np.ndarray | None = None,
         demand_velocity: np.ndarray | None = None,
+        drive_fe: np.ndarray | None = None,
     ) -> tuple[StepResponseMetrics, VelocityLoopMetrics | None]:
-        """Analyse a profiled-move capture for position-loop quality.
+        """Analyse a profiled-move capture for position-loop behaviour.
 
         Returns (position_metrics, velocity_metrics_or_None).
         """
@@ -371,7 +205,13 @@ class ClassicalTuner:
             return (StepResponseMetrics(), None)
 
         dt = float(np.median(np.diff(time_arr)))
-        fe = command - response
+        # Prefer drive-reported FE when available — matches what the drive
+        # itself sees (accounts for feedback ratio, sampling offsets, and
+        # any internal compensation).  Fall back to command − response.
+        if drive_fe is not None and len(drive_fe) == len(time_arr):
+            fe = np.asarray(drive_fe, dtype=np.float64)
+        else:
+            fe = command - response
         dvel = np.gradient(command, time_arr)
         v_peak = float(np.max(np.abs(dvel)))
 
@@ -384,8 +224,21 @@ class ClassicalTuner:
         if len(transitions) == 0:
             return (StepResponseMetrics(), None)
 
-        # Settle window
+        # Settle window — anchor move-end to when DPOS itself stops changing,
+        # not to demand-velocity threshold.  Settling time must be counted
+        # from the moment the commanded profile has truly reached its final
+        # value, otherwise we count samples where DPOS is still ramping.
         move_end_idx = transitions[-1] + 1
+        cmd_final_est = float(command[-1])
+        cmd_span = float(np.max(command) - np.min(command))
+        dpos_stable_thresh = max(1e-4 * cmd_span, 1e-9)
+        dpos_changing = np.abs(command - cmd_final_est) > dpos_stable_thresh
+        dpos_change_idx = np.where(dpos_changing)[0]
+        if len(dpos_change_idx) > 0:
+            dpos_end_idx = int(dpos_change_idx[-1]) + 1
+            # Use whichever is later — DPOS-based or velocity-based.
+            move_end_idx = max(move_end_idx, dpos_end_idx)
+            move_end_idx = min(move_end_idx, len(time_arr) - 1)
         t_end = time_arr[move_end_idx]
         settle_mask = time_arr >= t_end
         if settle_mask.sum() < 10:
@@ -415,17 +268,45 @@ class ClassicalTuner:
         zero_crossings = int(np.sum(sign_changes != 0))
         oscillation_count = zero_crossings // 2
 
-        # Settling time — time from move-end until FE stays within +/-2% of step_size
-        band = 0.02 * step_size
-        if band < 1e-9:
-            band = peak_fe * 0.05
-        within_band = np.abs(fe_settle) <= band
+        # Settling time — time from move-end until MPOS stops changing for
+        # N consecutive samples (mechanical settle, not FE-band).  MPOS is
+        # considered "stable" when |diff(MPOS)| stays below a small fraction
+        # of step_size.  This captures true mechanical settling including
+        # ringdown / low-frequency oscillation that FE-band would miss.
+        mpos_settle = response[settle_mask]
+        dpos_settle = command[settle_mask]
         settling_time_ms = 0.0
-        for i in range(len(within_band) - 1, -1, -1):
-            if not within_band[i]:
-                if i < len(t_settle) - 1:
-                    settling_time_ms = float(t_settle[i + 1]) * 1000.0
-                break
+        if len(mpos_settle) >= 2:
+            # Thresholds: 0.05% of step size, floored to encoder-noise level.
+            stable_thresh = max(5e-4 * step_size, 1e-9)
+            # Position error threshold — MPOS must also be near DPOS.
+            pos_err_thresh = max(2e-3 * step_size, stable_thresh)
+            # Window length: 100 samples minimum (or ~100 ms worth).
+            win_samples = max(100, int(round(0.100 / dt))) if dt > 0 else 100
+            mpos_diff = np.abs(np.diff(mpos_settle))
+            fe_settle_abs = np.abs(dpos_settle - mpos_settle)[1:]
+            unstable = (mpos_diff > stable_thresh) | (fe_settle_abs > pos_err_thresh)
+            # Find the LAST unstable sample.  Settling time is the first
+            # sample after it that stays stable for the remainder of the
+            # capture (or at least win_samples, whichever is shorter).
+            unstable_idx = np.where(unstable)[0]
+            if len(unstable_idx) == 0:
+                # Already settled at move-end.
+                settling_time_ms = 0.0
+            else:
+                last_unstable = int(unstable_idx[-1])
+                # Require at least win_samples of stability after last unstable.
+                tail_len = len(unstable) - (last_unstable + 1)
+                if tail_len >= win_samples:
+                    # +1 because `unstable` was computed on diff (index offset).
+                    settle_idx = last_unstable + 2
+                    if settle_idx < len(t_settle):
+                        settling_time_ms = float(t_settle[settle_idx]) * 1000.0
+                    else:
+                        settling_time_ms = float(t_settle[-1]) * 1000.0
+                else:
+                    # Unstable right up to end of capture — never settled.
+                    settling_time_ms = float(t_settle[-1]) * 1000.0
 
         # Steady-state error — mean FE in last 10% of settle window
         tail_len = max(1, len(fe_settle) // 10)
@@ -454,6 +335,22 @@ class ClassicalTuner:
                 if period > 0:
                     natural_freq_hz = 1.0 / period
 
+        # Following-error peak — absolute max |FE| across the whole capture
+        # (covers accel/decel transitions and ringdown, not just cruise).
+        drive_fe_peak = float(np.max(np.abs(fe)))
+        drive_fe_peak_pct = drive_fe_peak / step_size * 100.0
+
+        # Mean |FE| during cruise phase (constant-velocity segment).
+        drive_fe_cruise_mean = 0.0
+        drive_fe_cruise_mean_pct = 0.0
+        dacc = np.gradient(dvel, time_arr)
+        a_peak = float(np.max(np.abs(dacc)))
+        if a_peak > 1e-9:
+            cruise_mask = moving & (np.abs(dacc) <= 0.10 * a_peak)
+            if cruise_mask.sum() > 5:
+                drive_fe_cruise_mean = float(np.mean(np.abs(fe[cruise_mask])))
+                drive_fe_cruise_mean_pct = drive_fe_cruise_mean / step_size * 100.0
+
         # Velocity loop analysis — requires captured DEMAND_SPEED (units/s).
         vel_metrics: VelocityLoopMetrics | None = None
         if velocity is not None and demand_velocity is not None:
@@ -469,350 +366,13 @@ class ClassicalTuner:
             oscillation_count=oscillation_count,
             damping_ratio=damping_ratio,
             natural_freq_est_hz=natural_freq_hz,
-            velocity_overshoot_pct=(
-                vel_metrics.accel_overshoot_pct if vel_metrics is not None else 0.0
-            ),
+            drive_fe_peak=drive_fe_peak,
+            drive_fe_cruise_mean=drive_fe_cruise_mean,
+            drive_fe_peak_pct=drive_fe_peak_pct,
+            drive_fe_cruise_mean_pct=drive_fe_cruise_mean_pct,
         )
 
         return (metrics, vel_metrics)
-
-    # ----------------------------------------------------------- corrections
-    @staticmethod
-    def suggest_corrections(
-        pos_metrics: StepResponseMetrics,
-        vel_metrics: VelocityLoopMetrics | None,
-        current_profile: DriveProfile,
-    ) -> TuningResult:
-        """Propose gain changes based on analysis results and tuning mode."""
-        tuning_mode = getattr(current_profile, "pn100_tuning_mode", None)
-
-        if tuning_mode in (1, 3):
-            return ClassicalTuner._suggest_rigidity(pos_metrics, current_profile)
-        elif tuning_mode == 5:
-            return ClassicalTuner._suggest_manual(
-                pos_metrics, vel_metrics, current_profile
-            )
-        else:
-            result = ClassicalTuner._suggest_manual(
-                pos_metrics, vel_metrics, current_profile
-            )
-            result.warnings.insert(
-                0,
-                "Tuning mode unknown — assuming Manual (Pn100.0=5). "
-                "Read drive profile to confirm.",
-            )
-            return result
-
-    # -------------------------------------------------- rigidity (mode 1 / 3)
-    @staticmethod
-    def _suggest_rigidity(
-        pos_metrics: StepResponseMetrics,
-        current_profile: DriveProfile,
-    ) -> TuningResult:
-        """Suggest Pn101 (servo rigidity) changes for Tuningless / One-Param modes."""
-        pn101 = current_profile.pn101
-        if pn101 is None:
-            return TuningResult(
-                method="step_response",
-                warnings=["Pn101 unknown — read drive profile first."],
-                confidence="low",
-            )
-
-        score, verdict, grade_details = pos_metrics.grade()
-
-        if score >= 8:
-            return TuningResult(
-                method="step_response",
-                diagnostics={
-                    "tuning_score": f"{score}/10",
-                    "verdict": verdict,
-                    "assessment": grade_details,
-                },
-                warnings=[
-                    f"Tuning Score: {score}/10 — {verdict}. No changes needed."
-                ],
-                confidence="high",
-            )
-
-        new_101 = float(pn101)
-        reasons: list[str] = []
-        has_overshoot = pos_metrics.overshoot_pct > 5
-
-        if pos_metrics.oscillation_count > 3 or pos_metrics.overshoot_pct > 25:
-            new_101 *= 0.80
-            reasons.append(
-                f"Overshoot {pos_metrics.overshoot_pct:.1f}% / "
-                f"{pos_metrics.oscillation_count} oscillations "
-                f"→ Pn101 Servo Rigidity -20% (softer)"
-            )
-        elif pos_metrics.overshoot_pct > 10:
-            new_101 *= 0.90
-            reasons.append(
-                f"Overshoot {pos_metrics.overshoot_pct:.1f}% "
-                f"→ Pn101 Servo Rigidity -10%"
-            )
-        elif pos_metrics.overshoot_pct > 5:
-            new_101 *= 0.95
-            reasons.append(
-                f"Overshoot {pos_metrics.overshoot_pct:.1f}% "
-                f"→ Pn101 Servo Rigidity -5%"
-            )
-        elif pos_metrics.settling_time_ms > 200 and not has_overshoot:
-            new_101 *= 1.15
-            reasons.append(
-                f"Slow settling ({pos_metrics.settling_time_ms:.0f}ms) "
-                f"→ Pn101 Servo Rigidity +15% (stiffer)"
-            )
-        elif pos_metrics.steady_state_error > 0.02 and not has_overshoot:
-            new_101 *= 1.10
-            reasons.append(
-                f"Steady-state error {pos_metrics.steady_state_error:.4f} "
-                f"→ Pn101 Servo Rigidity +10%"
-            )
-
-        new_101_clamped = max(1, min(31, round(new_101)))
-
-        result = TuningResult(
-            method="step_response",
-            diagnostics={
-                "tuning_score": f"{score}/10",
-                "verdict": verdict,
-                "metrics": {
-                    "overshoot_pct": pos_metrics.overshoot_pct,
-                    "settling_time_ms": pos_metrics.settling_time_ms,
-                    "oscillation_count": pos_metrics.oscillation_count,
-                    "steady_state_error": pos_metrics.steady_state_error,
-                },
-                "assessment": grade_details,
-                "corrections": reasons,
-            },
-            warnings=[f"Tuning Score: {score}/10 — {verdict}."],
-            confidence="medium",
-        )
-
-        if int(new_101_clamped) != pn101:
-            result.pn101 = int(new_101_clamped)
-
-        return result
-
-    # --------------------------------------------------- manual (mode 5)
-    @staticmethod
-    def _suggest_manual(
-        pos_metrics: StepResponseMetrics,
-        vel_metrics: VelocityLoopMetrics | None,
-        current_profile: DriveProfile,
-    ) -> TuningResult:
-        """Suggest Pn102/Pn103/Pn104 changes for Manual tuning mode."""
-        pn102 = current_profile.pn102
-        pn103 = current_profile.pn103
-        pn104 = current_profile.pn104
-
-        if any(v is None for v in (pn102, pn103, pn104)):
-            missing = [
-                f"Pn{code}"
-                for code, val in [("102", pn102), ("103", pn103), ("104", pn104)]
-                if val is None
-            ]
-            return TuningResult(
-                method="step_response",
-                warnings=[
-                    f"{', '.join(missing)} unknown — read drive profile first."
-                ],
-                confidence="low",
-            )
-
-        score, verdict, grade_details = pos_metrics.grade()
-
-        if score >= 8:
-            return TuningResult(
-                method="step_response",
-                diagnostics={
-                    "tuning_score": f"{score}/10",
-                    "verdict": verdict,
-                    "assessment": grade_details,
-                },
-                warnings=[
-                    f"Tuning Score: {score}/10 — {verdict}. No changes needed."
-                ],
-                confidence="high",
-            )
-
-        new_102 = float(pn102)
-        new_103 = float(pn103)
-        new_104 = float(pn104)
-        reasons: list[str] = []
-        loop_assessment = "full_cascade"
-
-        # ---- Step 1: Velocity loop (inside-out — MUST come first) ----
-        if vel_metrics is not None:
-            if not vel_metrics.is_healthy:
-                loop_assessment = "velocity_only"
-
-                if vel_metrics.accel_overshoot_pct > 30:
-                    new_102 *= 0.85
-                    reasons.append(
-                        f"Velocity overshoot {vel_metrics.accel_overshoot_pct:.1f}% "
-                        f"(>30%) → Pn102 -15%"
-                    )
-                elif vel_metrics.accel_overshoot_pct > 15:
-                    new_102 *= 0.90
-                    reasons.append(
-                        f"Velocity overshoot {vel_metrics.accel_overshoot_pct:.1f}% "
-                        f"(>15%) → Pn102 -10%"
-                    )
-
-                if vel_metrics.accel_oscillation_count > 3:
-                    new_102 *= 0.90
-                    new_103 *= 1.15
-                    reasons.append(
-                        f"Velocity ringing "
-                        f"({vel_metrics.accel_oscillation_count} oscillations) "
-                        f"→ Pn102 -10%, Pn103 +15%"
-                    )
-
-                if vel_metrics.cruise_tracking_ratio < 0.95:
-                    new_102 *= 1.15
-                    reasons.append(
-                        f"Velocity not reaching demand "
-                        f"(ratio {vel_metrics.cruise_tracking_ratio:.3f}) "
-                        f"→ Pn102 +15%"
-                    )
-
-                # Return immediately — do NOT assess position loop
-                return TuningResult(
-                    method="step_response",
-                    pn102=_clamp_pn("pn102", new_102),
-                    pn103=_clamp_pn("pn103", new_103),
-                    diagnostics={
-                        "tuning_score": f"{score}/10",
-                        "verdict": verdict,
-                        "loop_assessment": loop_assessment,
-                        "velocity_issues": vel_metrics.issues,
-                        "assessment": grade_details,
-                        "corrections": reasons,
-                    },
-                    warnings=[
-                        f"Tuning Score: {score}/10 — {verdict}.",
-                        "Velocity loop has issues — fix Pn102/Pn103 first, "
-                        "then re-capture to assess position loop.",
-                    ],
-                    confidence="medium",
-                )
-            # else: velocity loop healthy, proceed to position loop
-        else:
-            loop_assessment = "position_only"
-
-        # ---- Step 2: Position loop (velocity healthy or unavailable) ----
-        has_overshoot = pos_metrics.overshoot_pct > 5
-
-        # High-frequency ringing → mechanical resonance
-        if (
-            pos_metrics.oscillation_count > 3
-            and pos_metrics.natural_freq_est_hz > 100
-        ):
-            reasons.append(
-                f"Ringing at {pos_metrics.natural_freq_est_hz:.0f} Hz — "
-                f"likely mechanical resonance. Use notch filter (Pn4xx) or "
-                f"vibration suppression, not gain changes."
-            )
-            return TuningResult(
-                method="step_response",
-                diagnostics={
-                    "tuning_score": f"{score}/10",
-                    "verdict": verdict,
-                    "loop_assessment": loop_assessment,
-                    "assessment": grade_details,
-                    "corrections": reasons,
-                },
-                warnings=[
-                    f"Tuning Score: {score}/10 — {verdict}.",
-                    "Mechanical resonance detected — gains not adjusted.",
-                ],
-                confidence="medium",
-            )
-
-        # Ringing at lower frequency → position loop issue
-        if pos_metrics.oscillation_count > 3:
-            new_104 *= 0.85
-            new_103 *= 1.20
-            reasons.append(
-                f"Ringing ({pos_metrics.oscillation_count} oscillations) "
-                f"→ Pn104 -15%, Pn103 +20%"
-            )
-        elif pos_metrics.overshoot_pct > 25:
-            new_104 *= 0.85
-            reasons.append(
-                f"Overshoot {pos_metrics.overshoot_pct:.1f}% (>25%) → Pn104 -15%"
-            )
-        elif pos_metrics.overshoot_pct > 10:
-            new_104 *= 0.90
-            reasons.append(
-                f"Overshoot {pos_metrics.overshoot_pct:.1f}% (>10%) → Pn104 -10%"
-            )
-        elif pos_metrics.overshoot_pct > 5:
-            new_104 *= 0.95
-            reasons.append(
-                f"Overshoot {pos_metrics.overshoot_pct:.1f}% (>5%) → Pn104 -5%"
-            )
-        elif pos_metrics.settling_time_ms > 200 and not has_overshoot:
-            new_104 *= 1.15
-            reasons.append(
-                f"Sluggish settling ({pos_metrics.settling_time_ms:.0f}ms) "
-                f"→ Pn104 +15%"
-            )
-
-        # Steady-state error — only speed up integral if NOT fighting overshoot
-        if pos_metrics.steady_state_error > 0.02 and not has_overshoot:
-            new_103 *= 0.85
-            reasons.append(
-                f"Steady-state error {pos_metrics.steady_state_error:.4f} "
-                f"→ Pn103 -15% (faster integral)"
-            )
-
-        # Slow settling caused by overshoot → need to damp, not tighten
-        if pos_metrics.settling_time_ms > 500 and has_overshoot:
-            new_104 *= 0.90
-            reasons.append(
-                f"Slow settling ({pos_metrics.settling_time_ms:.0f}ms with overshoot) "
-                f"→ Pn104 -10%"
-            )
-
-        # Build result — NEVER set pn102 in position-loop block
-        result_warnings = [f"Tuning Score: {score}/10 — {verdict}."]
-        if vel_metrics is None:
-            result_warnings.append(
-                "No MSPEED data — velocity loop not assessed. "
-                "Capture MSPEED for full cascade analysis."
-            )
-
-        result = TuningResult(
-            method="step_response",
-            diagnostics={
-                "tuning_score": f"{score}/10",
-                "verdict": verdict,
-                "loop_assessment": loop_assessment,
-                "metrics": {
-                    "overshoot_pct": pos_metrics.overshoot_pct,
-                    "settling_time_ms": pos_metrics.settling_time_ms,
-                    "oscillation_count": pos_metrics.oscillation_count,
-                    "steady_state_error": pos_metrics.steady_state_error,
-                    "natural_freq_hz": pos_metrics.natural_freq_est_hz,
-                },
-                "assessment": grade_details,
-                "corrections": reasons,
-            },
-            warnings=result_warnings,
-            confidence="medium",
-        )
-
-        clamped_103 = _clamp_pn("pn103", new_103)
-        clamped_104 = _clamp_pn("pn104", new_104)
-        if clamped_103 != pn103:
-            result.pn103 = clamped_103
-        if clamped_104 != pn104:
-            result.pn104 = clamped_104
-
-        return result
 
     # --------------------------------------------------------- bandwidth calc
     @staticmethod
@@ -825,7 +385,7 @@ class ClassicalTuner:
         pn103: speed loop integral time (×0.1 ms)
         pn104: position loop gain (1/s)
         """
-        ti_s = pn103 * 0.1e-3  # convert to seconds
+        ti_s = pn103 * 0.1e-3
         speed_bw_hz = pn102 / (2 * math.pi)
         pos_bw_hz = pn104 / (2 * math.pi)
         integral_freq_hz = 1.0 / (2 * math.pi * ti_s) if ti_s > 0 else 0.0
@@ -880,92 +440,3 @@ class ClassicalTuner:
             "noise_floor": round(noise_floor, 6),
             "is_oscillating": bool(is_osc),
         }
-
-    # ------------------------------------------------------ Ziegler-Nichols
-    @staticmethod
-    def ziegler_nichols_pi(ku: float, tu: float) -> dict[str, float]:
-        """Ziegler-Nichols PI tuning from ultimate gain and period.
-
-        ku: ultimate gain (where sustained oscillation begins)
-        tu: ultimate period (seconds)
-        """
-        kp = 0.45 * ku
-        ti = tu / 1.2
-        return {"kp": round(kp, 4), "ti_s": round(ti, 6)}
-
-    @staticmethod
-    def ziegler_nichols_pid(ku: float, tu: float) -> dict[str, float]:
-        """Ziegler-Nichols PID tuning from ultimate gain and period."""
-        kp = 0.6 * ku
-        ti = tu / 2.0
-        td = tu / 8.0
-        return {"kp": round(kp, 4), "ti_s": round(ti, 6), "td_s": round(td, 6)}
-
-    # --------------------------------------------------------- feedforward
-    @staticmethod
-    def estimate_feedforward(
-        time_arr: np.ndarray,
-        command: np.ndarray,
-        response: np.ndarray,
-        demand_velocity: np.ndarray,
-        current_pn112: int = 0,
-        current_pn114: int = 0,
-    ) -> dict:
-        """Estimate speed and torque feedforward percentages from a capture.
-
-        Analyses cruise-phase FE proportionality to velocity (→ Pn112) and
-        accel-phase FE proportionality to acceleration (→ Pn114).
-
-        demand_velocity must be DEMAND_SPEED already scaled to units/second.
-        """
-        dvel = demand_velocity
-        dacc = np.gradient(dvel, time_arr)
-        fe = command - response
-
-        v_peak = float(np.max(np.abs(dvel)))
-        a_peak = float(np.max(np.abs(dacc)))
-        if v_peak < 1e-9:
-            return {"note": "no motion detected"}
-
-        moving = np.abs(dvel) > 0.02 * v_peak
-        accel = moving & (np.abs(dacc) > 0.10 * a_peak) if a_peak > 1e-9 else np.zeros_like(moving)
-        cruise = moving & ~accel
-
-        result: dict = {}
-
-        # Speed feedforward (Pn112) — from cruise FE vs velocity slope
-        if cruise.sum() > 20:
-            v = dvel[cruise]
-            f = fe[cruise]
-            if np.std(v) > 1e-9:
-                slope, _ = np.polyfit(v, f, 1)
-                # slope ≈ missing VFF fraction * (1/Kp_pos)
-                # Suggest increasing Pn112 proportionally
-                residual_vff_pct = abs(slope) * 100
-                suggested = min(100, current_pn112 + round(residual_vff_pct))
-                result["speed_feedforward"] = {
-                    "current_pn112": current_pn112,
-                    "fe_velocity_slope": round(float(slope), 6),
-                    "suggested_pn112": suggested,
-                    "note": "slope>0 → FE proportional to velocity → increase Pn112",
-                }
-
-        # Torque feedforward (Pn114) — from accel FE vs acceleration slope
-        if accel.sum() > 20:
-            a = dacc[accel]
-            f = fe[accel]
-            if np.std(a) > 1e-9:
-                slope, _ = np.polyfit(a, f, 1)
-                residual_tff_pct = abs(slope) * 100
-                suggested = min(100, current_pn114 + round(residual_tff_pct))
-                result["torque_feedforward"] = {
-                    "current_pn114": current_pn114,
-                    "fe_accel_slope": round(float(slope), 6),
-                    "suggested_pn114": suggested,
-                    "note": "slope>0 → FE proportional to accel → increase Pn114",
-                }
-
-        if not result:
-            result["note"] = "insufficient cruise/accel data for feedforward estimation"
-
-        return result

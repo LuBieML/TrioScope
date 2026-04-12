@@ -1,20 +1,15 @@
 """
-Classical Tuner Panel — dockable Qt widget for servo loop analysis.
+Servo Loop Analyser Panel — dockable Qt widget for scope-based loop diagnostics.
 
 Combines:
   - Drive profile editor (axis selector, Pn parameter spinboxes, CoE Read/Write)
-  - Tuning score gauge (custom-painted arc, 0–10)
-  - Velocity loop health card
-  - Position loop metrics card
-  - Proposed corrections with current → new values
-  - Apply to Profile / Write to Drive action buttons
-  - Cascade-aware warnings
+  - Velocity loop metrics card
+  - Position loop metrics card (including following-error during motion)
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import threading
 from typing import Optional, Callable
 
@@ -22,18 +17,17 @@ import numpy as np
 
 from PySide6.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QScrollArea, QSizePolicy, QGridLayout,
-    QGraphicsDropShadowEffect, QMessageBox, QComboBox, QSpinBox,
-    QFormLayout, QGroupBox,
+    QPushButton, QFrame, QScrollArea, QSizePolicy,
+    QMessageBox, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
+    QFormLayout, QGroupBox, QGridLayout,
 )
-from PySide6.QtCore import Qt, Signal, QObject, QRectF, QPointF, QTimer
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import (
-    QFont, QColor, QPainter, QPen, QBrush, QConicalGradient,
-    QLinearGradient, QRadialGradient, QPainterPath, QFontMetrics,
+    QColor, QPainter, QBrush, QRadialGradient,
 )
 
 from .classical_tuner import (
-    ClassicalTuner, StepResponseMetrics, VelocityLoopMetrics, TuningResult,
+    ClassicalTuner, StepResponseMetrics, VelocityLoopMetrics,
 )
 from .drive_profile import (
     DriveProfile, DRIVE_TYPES, PARAM_DEFS, COMBO_ATTRS,
@@ -41,8 +35,7 @@ from .drive_profile import (
     VIBRATION_SUPPRESSION_LABELS, VIBRATION_SUPPRESSION_VALUES,
     DAMPING_LABELS, DAMPING_VALUES,
 )
-from .signal_metrics import SignalMetrics
-from .coe_io import read_drive_profile, write_drive_profile, write_single_pn
+from .coe_io import read_drive_profile, write_drive_profile
 
 logger = logging.getLogger(__name__)
 
@@ -57,178 +50,17 @@ _BORDER_LIGHT = "#4b4b5a"
 _TEXT          = "#d4d4d4"
 _TEXT_DIM      = "#888899"
 _TEXT_BRIGHT   = "#f0f0f5"
-_ACCENT        = "#FFA500"      # orange — matches app accent
-_CYAN          = "#00d4aa"      # oscilloscope readout
+_ACCENT        = "#FFA500"
+_CYAN          = "#00d4aa"
 _GREEN         = "#2ecc71"
 _AMBER         = "#f39c12"
 _RED           = "#e74c3c"
-_BLUE_MUTED    = "#5b7fb5"
-
-# Gauge arc colours
-_GAUGE_RED     = QColor(231, 76, 60)
-_GAUGE_AMBER   = QColor(243, 156, 18)
-_GAUGE_GREEN   = QColor(46, 204, 113)
-_GAUGE_BG      = QColor(42, 42, 54)
 
 
 def _health_color(healthy: bool | None) -> str:
     if healthy is None:
         return _TEXT_DIM
     return _GREEN if healthy else _RED
-
-
-def _score_color(score: float) -> str:
-    if score >= 8:
-        return _GREEN
-    elif score >= 5:
-        return _AMBER
-    return _RED
-
-
-# ---------------------------------------------------------------------------
-# Custom gauge widget
-# ---------------------------------------------------------------------------
-class _ScoreGauge(QWidget):
-    """Custom-painted arc gauge showing tuning score 0–10."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._score: float = 0.0
-        self._verdict: str = "No data"
-        self._animating_to: float = 0.0
-        self._timer = QTimer(self)
-        self._timer.setInterval(16)  # ~60 fps
-        self._timer.timeout.connect(self._animate_step)
-        self.setMinimumSize(200, 170)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-    def set_score(self, score: float, verdict: str):
-        self._verdict = verdict
-        self._animating_to = max(0.0, min(10.0, score))
-        if not self._timer.isActive():
-            self._timer.start()
-
-    def reset(self):
-        self._score = 0.0
-        self._verdict = "No data"
-        self._animating_to = 0.0
-        self.update()
-
-    def _animate_step(self):
-        diff = self._animating_to - self._score
-        if abs(diff) < 0.02:
-            self._score = self._animating_to
-            self._timer.stop()
-        else:
-            self._score += diff * 0.12
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        w = self.width()
-        h = self.height()
-        cx = w / 2
-
-        # Arc spans 200° → -20°, so its endpoints dip sin(20°)·r below cy.
-        # Reserve space below for the verdict label, and above for top padding.
-        verdict_reserve = 26
-        top_pad = 6
-        sin20 = math.sin(math.radians(20))
-        max_r_h = max(30.0, (h - verdict_reserve - top_pad) / (1.0 + sin20))
-        max_r_w = max(30.0, (w - 24) / 2.0)
-        radius = min(max_r_h, max_r_w)
-        gauge_size = radius * 2
-        cy = top_pad + radius
-
-        arc_rect = QRectF(cx - radius, cy - radius, gauge_size, gauge_size)
-        pen_width = max(8, radius * 0.12)
-
-        start_angle = 200 * 16
-        span_angle = -220 * 16
-
-        bg_pen = QPen(QColor(_GAUGE_BG), pen_width, Qt.SolidLine, Qt.RoundCap)
-        painter.setPen(bg_pen)
-        painter.drawArc(arc_rect, start_angle, span_angle)
-
-        if self._score > 0.01:
-            fraction = self._score / 10.0
-            value_span = int(-220 * 16 * fraction)
-
-            if self._score < 4:
-                arc_color = _GAUGE_RED
-            elif self._score < 7:
-                t = (self._score - 4) / 3.0
-                arc_color = QColor(
-                    int(_GAUGE_RED.red() + t * (_GAUGE_AMBER.red() - _GAUGE_RED.red())),
-                    int(_GAUGE_RED.green() + t * (_GAUGE_AMBER.green() - _GAUGE_RED.green())),
-                    int(_GAUGE_RED.blue() + t * (_GAUGE_AMBER.blue() - _GAUGE_RED.blue())),
-                )
-            else:
-                t = (self._score - 7) / 3.0
-                arc_color = QColor(
-                    int(_GAUGE_AMBER.red() + t * (_GAUGE_GREEN.red() - _GAUGE_AMBER.red())),
-                    int(_GAUGE_AMBER.green() + t * (_GAUGE_GREEN.green() - _GAUGE_AMBER.green())),
-                    int(_GAUGE_AMBER.blue() + t * (_GAUGE_GREEN.blue() - _GAUGE_AMBER.blue())),
-                )
-
-            glow_pen = QPen(
-                QColor(arc_color.red(), arc_color.green(), arc_color.blue(), 50),
-                pen_width + 6, Qt.SolidLine, Qt.RoundCap,
-            )
-            painter.setPen(glow_pen)
-            painter.drawArc(arc_rect, start_angle, value_span)
-
-            arc_pen = QPen(arc_color, pen_width, Qt.SolidLine, Qt.RoundCap)
-            painter.setPen(arc_pen)
-            painter.drawArc(arc_rect, start_angle, value_span)
-
-        score_font = QFont("Consolas", max(18, int(radius * 0.35)), QFont.Bold)
-        painter.setFont(score_font)
-        score_str = f"{self._score:.1f}"
-        painter.setPen(QColor(_TEXT_BRIGHT))
-
-        fm = QFontMetrics(score_font)
-        text_rect = fm.boundingRect(score_str)
-        text_y = cy - radius * 0.10
-        painter.drawText(QPointF(cx - text_rect.width() / 2, text_y), score_str)
-
-        sub_font = QFont("Consolas", max(8, int(radius * 0.14)))
-        painter.setFont(sub_font)
-        painter.setPen(QColor(_TEXT_DIM))
-        painter.drawText(QPointF(cx + text_rect.width() / 2 + 2, text_y), "/10")
-
-        verdict_font = QFont("Segoe UI", max(8, int(radius * 0.13)))
-        painter.setFont(verdict_font)
-        painter.setPen(QColor(_score_color(self._score)))
-        vfm = QFontMetrics(verdict_font)
-        vw = vfm.horizontalAdvance(self._verdict)
-        painter.drawText(QPointF(cx - vw / 2, h - 8), self._verdict)
-
-        tick_pen = QPen(QColor(_BORDER_LIGHT), 1)
-        painter.setPen(tick_pen)
-        small_font = QFont("Consolas", max(6, int(radius * 0.09)))
-        painter.setFont(small_font)
-        for i in range(11):
-            angle_deg = 200 - (i / 10.0) * 220
-            angle_rad = math.radians(angle_deg)
-            inner_r = radius - pen_width / 2 - 4
-            outer_r = radius - pen_width / 2 - 10
-            x1 = cx + inner_r * math.cos(angle_rad)
-            y1 = cy - inner_r * math.sin(angle_rad)
-            x2 = cx + outer_r * math.cos(angle_rad)
-            y2 = cy - outer_r * math.sin(angle_rad)
-            painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
-            if i % 2 == 0:
-                lbl = str(i)
-                lw = QFontMetrics(small_font).horizontalAdvance(lbl)
-                label_r = outer_r - 8
-                lx = cx + label_r * math.cos(angle_rad) - lw / 2
-                ly = cy - label_r * math.sin(angle_rad) + 3
-                painter.drawText(QPointF(lx, ly), lbl)
-
-        painter.end()
 
 
 # ---------------------------------------------------------------------------
@@ -310,24 +142,22 @@ class _HealthDot(QWidget):
 # Thread-safe signals for CoE operations
 # ---------------------------------------------------------------------------
 class _CoESignals(QObject):
-    coe_read_done = Signal(int, object, str)   # axis, DriveProfile, error_msg
-    coe_write_done = Signal(int, object, str)  # axis, results_dict, error_msg
+    coe_read_done = Signal(int, object, str)
+    coe_write_done = Signal(int, object, str)
 
 
 # ---------------------------------------------------------------------------
 # Main panel
 # ---------------------------------------------------------------------------
 class TunerPanel(QDockWidget):
-    """Dockable servo tuner panel with drive profile editor and analysis."""
+    """Dockable servo loop analyser panel with drive profile editor."""
 
     analysis_complete = Signal()
-    _correction_write_done = Signal(str)  # error message ("" on success)
 
     def __init__(self, parent=None):
-        super().__init__("Servo Tuner", parent)
+        super().__init__("Servo Loop Analyser", parent)
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.setMinimumWidth(560)
-        # Prevent the dock from forcing the main window to resize
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         # --- State ---
@@ -336,22 +166,24 @@ class TunerPanel(QDockWidget):
         self._conn_lock: threading.Lock | None = None
         self._pos_metrics: StepResponseMetrics | None = None
         self._vel_metrics: VelocityLoopMetrics | None = None
-        self._tuning_result: TuningResult | None = None
 
-        # Per-axis drive profiles: {axis_int: DriveProfile}
         self._profiles: dict[int, DriveProfile] = {}
-        self._param_widgets: dict[str, QWidget] = {}  # attr → spinbox/combo
+        self._param_widgets: dict[str, QWidget] = {}
         self._param_frame: QFrame | None = None
         self._axis_combo: QComboBox | None = None
         self._drive_combo: QComboBox | None = None
         self._read_btn: QPushButton | None = None
         self._write_btn: QPushButton | None = None
+        self._autowrite_chk: QCheckBox | None = None
+        self._autowrite_busy: bool = False
+        self._autowrite_timer = QTimer(self)
+        self._autowrite_timer.setSingleShot(True)
+        self._autowrite_timer.setInterval(400)
+        self._autowrite_timer.timeout.connect(self._trigger_autowrite)
 
-        # Signals for CoE background ops
         self._coe_signals = _CoESignals()
         self._coe_signals.coe_read_done.connect(self._on_coe_read_done)
         self._coe_signals.coe_write_done.connect(self._on_coe_write_done)
-        self._correction_write_done.connect(self._on_correction_write_done)
 
         self._build_ui()
 
@@ -360,22 +192,17 @@ class TunerPanel(QDockWidget):
     # ================================================================
 
     def set_data_provider(self, provider: Callable):
-        """Set callback → (time_arr, params_dict)."""
         self._data_provider = provider
 
     def set_connection(self, connection, conn_lock=None):
-        """Provide active TUA.TrioConnection for CoE reads/writes."""
         self._connection = connection
         self._conn_lock = conn_lock
         self._update_drive_buttons()
-        self._update_action_buttons()
 
     def get_all_profiles(self) -> dict[int, dict]:
-        """Return all per-axis profiles as plain dicts for QSettings persistence."""
         return {axis: p.to_dict() for axis, p in self._profiles.items()}
 
     def set_all_profiles(self, profiles: dict[int, dict]):
-        """Restore per-axis profiles from plain dicts loaded from QSettings."""
         self._profiles = {
             int(axis): DriveProfile.from_dict(d)
             for axis, d in profiles.items()
@@ -399,7 +226,7 @@ class TunerPanel(QDockWidget):
         header = QHBoxLayout()
         header.setSpacing(6)
 
-        title = QLabel("SERVO TUNER")
+        title = QLabel("SERVO LOOP ANALYSER")
         title.setStyleSheet(
             f"color: {_ACCENT}; font-family: Consolas; font-size: 11pt;"
             f" font-weight: bold; letter-spacing: 3px;"
@@ -423,16 +250,9 @@ class TunerPanel(QDockWidget):
                 border-radius: 4px;
                 padding: 4px 12px;
             }}
-            QPushButton:hover {{
-                background-color: #ffb52e;
-            }}
-            QPushButton:pressed {{
-                background-color: #e09000;
-            }}
-            QPushButton:disabled {{
-                background-color: #4a4a4a;
-                color: #777;
-            }}
+            QPushButton:hover {{ background-color: #ffb52e; }}
+            QPushButton:pressed {{ background-color: #e09000; }}
+            QPushButton:disabled {{ background-color: #4a4a4a; color: #777; }}
         """)
         self._btn_analyze.clicked.connect(self._on_analyze)
         header.addWidget(self._btn_analyze)
@@ -475,7 +295,7 @@ class TunerPanel(QDockWidget):
         columns.setContentsMargins(0, 0, 0, 0)
         columns.setSpacing(8)
 
-        # ── Left column: Drive Profile + Gauge ──────────────────────
+        # ── Left column: Drive Profile ──────────────────────────────
         left_col = QVBoxLayout()
         left_col.setSpacing(8)
         left_col.setContentsMargins(0, 0, 0, 0)
@@ -483,8 +303,8 @@ class TunerPanel(QDockWidget):
         self._drive_card = self._build_drive_profile_section()
         left_col.addWidget(self._drive_card)
 
-        self._gauge = _ScoreGauge()
-        left_col.addWidget(self._gauge)
+        self._zn_card = self._build_zn_card()
+        left_col.addWidget(self._zn_card)
 
         left_col.addStretch()
         columns.addLayout(left_col, 1)
@@ -500,77 +320,11 @@ class TunerPanel(QDockWidget):
         self._pos_card = self._build_pos_card()
         right_col.addWidget(self._pos_card)
 
-        self._grade_card = self._build_grade_card()
-        right_col.addWidget(self._grade_card)
-
-        self._corrections_card = self._build_corrections_card()
-        right_col.addWidget(self._corrections_card)
-
-        self._warnings_card = self._build_warnings_card()
-        right_col.addWidget(self._warnings_card)
-
         right_col.addStretch()
         columns.addLayout(right_col, 1)
 
         scroll.setWidget(self._scroll_content)
         root.addWidget(scroll, 1)
-
-        # ── Persistent action bar (always visible) ──────────────────
-        action_sep = QFrame()
-        action_sep.setFixedHeight(1)
-        action_sep.setStyleSheet(f"background-color: {_BORDER};")
-        root.addWidget(action_sep)
-
-        _action_btn_style = (
-            "QPushButton {{"
-            "  background-color: {bg}; color: {fg};"
-            "  font-family: Consolas; font-size: 8pt; font-weight: bold;"
-            "  letter-spacing: 1px; border: 1px solid {border};"
-            "  border-radius: 4px; padding: 6px 10px;"
-            "}}"
-            "QPushButton:hover {{ background-color: {hover}; }}"
-            "QPushButton:pressed {{ background-color: {press}; }}"
-            "QPushButton:disabled {{ background-color: #3a3a3a; color: #555;"
-            "  border-color: #4a4a4a; }}"
-        )
-
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(6)
-        btn_row.setContentsMargins(0, 4, 0, 0)
-
-        self._btn_apply = QPushButton("APPLY TO PROFILE")
-        self._btn_apply.setCursor(Qt.PointingHandCursor)
-        self._btn_apply.setToolTip(
-            "Update the drive profile spinboxes above with the proposed values.\n"
-            "Does NOT write to the physical drive."
-        )
-        self._btn_apply.setStyleSheet(
-            _action_btn_style.format(
-                bg=_BLUE_MUTED, fg="#fff", border="#7a9fd0",
-                hover="#6b90c5", press="#4a70a5",
-            )
-        )
-        self._btn_apply.clicked.connect(self._on_apply_to_profile)
-        self._btn_apply.setEnabled(False)
-        btn_row.addWidget(self._btn_apply)
-
-        self._btn_correction_write = QPushButton("WRITE CORRECTIONS")
-        self._btn_correction_write.setCursor(Qt.PointingHandCursor)
-        self._btn_correction_write.setToolTip(
-            "Write ONLY the proposed corrections to the physical drive\n"
-            "via EtherCAT CoE SDO. Requires active controller connection."
-        )
-        self._btn_correction_write.setStyleSheet(
-            _action_btn_style.format(
-                bg="#2e8b3e", fg="#fff", border="#3aad4a",
-                hover="#38a548", press="#267a34",
-            )
-        )
-        self._btn_correction_write.clicked.connect(self._on_write_corrections)
-        self._btn_correction_write.setEnabled(False)
-        btn_row.addWidget(self._btn_correction_write)
-
-        root.addLayout(btn_row)
 
         self.setWidget(container)
         self._reset_display()
@@ -580,7 +334,6 @@ class TunerPanel(QDockWidget):
     # ================================================================
 
     def _build_drive_profile_section(self) -> QGroupBox:
-        """Build the drive profile configurator group."""
         group = QGroupBox("Drive Profile")
         group.setMaximumWidth(300)
         group.setStyleSheet(
@@ -594,7 +347,6 @@ class TunerPanel(QDockWidget):
         outer.setContentsMargins(6, 4, 6, 6)
         outer.setSpacing(4)
 
-        # ── Axis + Drive type row ──────────────────────────────────
         selector_row = QHBoxLayout()
         selector_row.setSpacing(4)
 
@@ -615,7 +367,11 @@ class TunerPanel(QDockWidget):
 
         selector_row.addStretch()
 
-        # Read from Drive
+        outer.addLayout(selector_row)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(4)
+
         self._read_btn = QPushButton("Read")
         self._read_btn.setFixedHeight(22)
         self._read_btn.setFixedWidth(55)
@@ -624,9 +380,8 @@ class TunerPanel(QDockWidget):
             "Read Pn parameters from the drive via EtherCAT CoE SDO."
         )
         self._read_btn.clicked.connect(self._on_read_from_drive)
-        selector_row.addWidget(self._read_btn)
+        button_row.addWidget(self._read_btn)
 
-        # Write to Drive
         self._write_btn = QPushButton("Write")
         self._write_btn.setFixedHeight(22)
         self._write_btn.setFixedWidth(55)
@@ -635,11 +390,28 @@ class TunerPanel(QDockWidget):
             "Write ALL Pn parameters to the drive via EtherCAT CoE SDO."
         )
         self._write_btn.clicked.connect(self._on_write_to_drive)
-        selector_row.addWidget(self._write_btn)
+        button_row.addWidget(self._write_btn)
 
-        outer.addLayout(selector_row)
+        self._autowrite_chk = QCheckBox("Auto")
+        self._autowrite_chk.setStyleSheet(
+            f"QCheckBox {{ color: {_TEXT_DIM}; font-size: 8pt; }}"
+        )
+        self._autowrite_chk.setToolTip(
+            "⚠ WARNING — Auto-write to drive\n\n"
+            "When checked, any change to a Pn parameter is sent to the drive\n"
+            "automatically (after a short debounce) WITHOUT a confirmation\n"
+            "prompt. This speeds up interactive tuning but lets you push bad\n"
+            "values to a live servo instantly.\n\n"
+            "Only enable on a safe setup \n"
+            "and keep E-stop within reach. Uncheck to require the Write button\n"
+            "and confirmation dialog."
+        )
+        self._autowrite_chk.setEnabled(False)
+        button_row.addWidget(self._autowrite_chk)
+        button_row.addStretch()
 
-        # ── Parameter fields (shown only for DX3 / DX4) ───────────
+        outer.addLayout(button_row)
+
         self._param_frame = QFrame()
         self._param_frame.setVisible(False)
         self._param_frame.setMaximumWidth(280)
@@ -765,6 +537,44 @@ class TunerPanel(QDockWidget):
 
     def _on_param_changed(self):
         self._save_ui_to_profile()
+        if (
+            self._autowrite_chk is not None
+            and self._autowrite_chk.isChecked()
+            and self._autowrite_chk.isEnabled()
+        ):
+            self._autowrite_timer.start()
+
+    def _trigger_autowrite(self):
+        if self._autowrite_busy:
+            self._autowrite_timer.start()
+            return
+        if self._connection is None:
+            return
+        if self._autowrite_chk is None or not self._autowrite_chk.isChecked():
+            return
+        axis = self._current_axis()
+        profile = self._profiles.get(axis)
+        if profile is None or not profile.has_drive_params():
+            return
+
+        connection = self._connection
+        conn_lock = self._conn_lock
+        self._autowrite_busy = True
+        self._write_btn.setEnabled(False)
+        self._read_btn.setEnabled(False)
+        self._write_btn.setText("Auto\u2026")
+
+        def _do_write():
+            try:
+                results = write_drive_profile(
+                    connection, axis=axis, profile=profile, conn_lock=conn_lock,
+                )
+                self._coe_signals.coe_write_done.emit(axis, results, "")
+            except Exception as exc:
+                logger.error("Axis %d: auto-write drive profile failed — %s", axis, exc)
+                self._coe_signals.coe_write_done.emit(axis, {}, str(exc))
+
+        threading.Thread(target=_do_write, name="TunerCoEAutoWrite", daemon=True).start()
 
     def _update_drive_buttons(self):
         if self._read_btn is None or self._write_btn is None or self._drive_combo is None:
@@ -773,6 +583,10 @@ class TunerPanel(QDockWidget):
         enabled = self._connection is not None and drive_type in ("DX3", "DX4")
         self._read_btn.setEnabled(enabled)
         self._write_btn.setEnabled(enabled)
+        if self._autowrite_chk is not None:
+            self._autowrite_chk.setEnabled(enabled)
+            if not enabled:
+                self._autowrite_chk.setChecked(False)
 
     def _load_profile_to_ui(self, profile: DriveProfile):
         self._drive_combo.blockSignals(True)
@@ -917,9 +731,13 @@ class TunerPanel(QDockWidget):
         threading.Thread(target=_do_write, name="TunerCoEWrite", daemon=True).start()
 
     def _on_coe_write_done(self, axis: int, results: dict, error: str):
+        was_autowrite = self._autowrite_busy
+        self._autowrite_busy = False
         self._write_btn.setText("Write")
         self._update_drive_buttons()
         if error:
+            if was_autowrite and self._autowrite_chk is not None:
+                self._autowrite_chk.setChecked(False)
             QMessageBox.warning(
                 self, "CoE Write Error",
                 f"Failed to write drive parameters to axis {axis}:\n{error}",
@@ -935,6 +753,152 @@ class TunerPanel(QDockWidget):
             else:
                 n = len(results)
                 logger.info("Axis %d: wrote %d parameters OK", axis, n)
+
+    # ================================================================
+    # Ziegler-Nichols PI calculator
+    # ================================================================
+
+    # (Ku multiplier, Tu multiplier for Ti). Ti = Tu * ti_mult.
+    _ZN_PI_METHODS: tuple[tuple[str, float, float], ...] = (
+        ("Classical ZN",     0.45,  1.0 / 1.2),   # Kp=0.45 Ku, Ti=Tu/1.2
+        ("Tyreus-Luyben",    1.0 / 3.2, 2.2),     # Kp=Ku/3.2, Ti=2.2 Tu  (conservative)
+        ("Ciancone-Marlin",  0.303, 1.74),        # robust / low overshoot
+    )
+
+    def _build_zn_card(self) -> QGroupBox:
+        group = QGroupBox("Ziegler-Nichols PI Calculator")
+        group.setMaximumWidth(300)
+        group.setStyleSheet(
+            f"QGroupBox {{ color: {_TEXT_DIM}; font-size: 8pt;"
+            f" border: 1px solid {_BORDER}; border-radius: 4px;"
+            f" margin-top: 8px; padding-top: 6px; }}"
+            f"QGroupBox::title {{ subcontrol-origin: margin; left: 8px;"
+            f" padding: 0 4px; color: {_TEXT}; }}"
+        )
+        outer = QVBoxLayout(group)
+        outer.setContentsMargins(6, 4, 6, 6)
+        outer.setSpacing(4)
+
+        hint = QLabel(
+            "Speed loop: raise gain until sustained oscillation.\n"
+            "Enter Ku (gain at onset) and Tu (period)."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 7pt;")
+        outer.addWidget(hint)
+
+        spin_style = (
+            f"QDoubleSpinBox {{ background: {_BG_PANEL}; color: {_TEXT};"
+            f" border: 1px solid {_BORDER}; border-radius: 2px;"
+            f" padding: 1px 3px; font-size: 8pt; }}"
+        )
+
+        inputs = QFormLayout()
+        inputs.setContentsMargins(0, 2, 0, 2)
+        inputs.setSpacing(3)
+        inputs.setLabelAlignment(Qt.AlignLeft)
+
+        lbl_style = f"color: {_TEXT}; font-size: 8pt;"
+
+        self._zn_ku = QDoubleSpinBox()
+        self._zn_ku.setRange(0.0, 100000.0)
+        self._zn_ku.setDecimals(2)
+        self._zn_ku.setValue(500.0)
+        self._zn_ku.setSuffix("  rad/s")
+        self._zn_ku.setFixedWidth(130)
+        self._zn_ku.setStyleSheet(spin_style)
+        self._zn_ku.setToolTip("Ultimate gain — Pn102 value where the loop just begins sustained oscillation.")
+        self._zn_ku.valueChanged.connect(self._recalc_zn)
+        ku_lbl = QLabel("Ku (ultimate gain):")
+        ku_lbl.setStyleSheet(lbl_style)
+        inputs.addRow(ku_lbl, self._zn_ku)
+
+        self._zn_tu = QDoubleSpinBox()
+        self._zn_tu.setRange(0.0, 100000.0)
+        self._zn_tu.setDecimals(2)
+        self._zn_tu.setValue(10.0)
+        self._zn_tu.setSuffix("  ms")
+        self._zn_tu.setFixedWidth(130)
+        self._zn_tu.setStyleSheet(spin_style)
+        self._zn_tu.setToolTip("Ultimate period — period of the sustained oscillation, in milliseconds.")
+        self._zn_tu.valueChanged.connect(self._recalc_zn)
+        tu_lbl = QLabel("Tu (period):")
+        tu_lbl.setStyleSheet(lbl_style)
+        inputs.addRow(tu_lbl, self._zn_tu)
+
+        outer.addLayout(inputs)
+        outer.addWidget(_separator())
+
+        # Results grid: Method | Kp (→Pn102) | Ti ms (→Pn103)
+        self._zn_results_grid = QGridLayout()
+        self._zn_results_grid.setHorizontalSpacing(6)
+        self._zn_results_grid.setVerticalSpacing(2)
+        self._zn_results_grid.setContentsMargins(0, 2, 0, 0)
+
+        hdr_style = (
+            f"color: {_TEXT_DIM}; font-family: Consolas; font-size: 7pt;"
+            f" font-weight: bold; letter-spacing: 1px;"
+        )
+        for col, text in enumerate(("METHOD", "Kp (Pn102)", "Ti (Pn103)")):
+            h = QLabel(text)
+            h.setStyleSheet(hdr_style)
+            self._zn_results_grid.addWidget(h, 0, col)
+
+        self._zn_result_labels: list[tuple[QLabel, QLabel]] = []
+        for row, (name, _, _) in enumerate(self._ZN_PI_METHODS, start=1):
+            name_lbl = QLabel(name)
+            name_lbl.setStyleSheet(f"color: {_TEXT}; font-size: 8pt;")
+            self._zn_results_grid.addWidget(name_lbl, row, 0)
+
+            kp_lbl = QLabel("--")
+            kp_lbl.setStyleSheet(
+                f"color: {_CYAN}; font-family: Consolas; font-size: 8pt;"
+                f" font-weight: bold;"
+            )
+            kp_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self._zn_results_grid.addWidget(kp_lbl, row, 1)
+
+            ti_lbl = QLabel("--")
+            ti_lbl.setStyleSheet(
+                f"color: {_ACCENT}; font-family: Consolas; font-size: 8pt;"
+                f" font-weight: bold;"
+            )
+            ti_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self._zn_results_grid.addWidget(ti_lbl, row, 2)
+
+            self._zn_result_labels.append((kp_lbl, ti_lbl))
+
+        outer.addLayout(self._zn_results_grid)
+
+        note = QLabel(
+            "Kp shown in rad/s → write to Pn102.\n"
+            "Ti shown in ×0.1 ms units → write to Pn103."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 7pt; padding-top: 4px;")
+        outer.addWidget(note)
+
+        self._recalc_zn()
+        return group
+
+    def _recalc_zn(self):
+        ku = float(self._zn_ku.value())
+        tu_ms = float(self._zn_tu.value())
+        tu_s = tu_ms * 1e-3
+
+        for (kp_lbl, ti_lbl), (_, kp_mult, ti_mult) in zip(
+            self._zn_result_labels, self._ZN_PI_METHODS,
+        ):
+            if ku <= 0 or tu_s <= 0:
+                kp_lbl.setText("--")
+                ti_lbl.setText("--")
+                continue
+            kp = ku * kp_mult
+            ti_s = tu_s * ti_mult
+            # Pn103 is in units of 0.1 ms
+            pn103 = ti_s / 0.1e-3
+            kp_lbl.setText(f"{kp:.1f}")
+            ti_lbl.setText(f"{pn103:.0f}")
 
     # ================================================================
     # Analysis card builders
@@ -1005,92 +969,6 @@ class TunerPanel(QDockWidget):
 
         return card
 
-    def _build_grade_card(self) -> QFrame:
-        card = _card_frame()
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(4)
-
-        lbl = QLabel("ASSESSMENT")
-        lbl.setStyleSheet(
-            f"color: {_TEXT_BRIGHT}; font-family: Consolas; font-size: 9pt;"
-            f" font-weight: bold; letter-spacing: 1px;"
-        )
-        lay.addWidget(lbl)
-        lay.addWidget(_separator())
-
-        self._grade_details_label = QLabel("")
-        self._grade_details_label.setWordWrap(True)
-        self._grade_details_label.setStyleSheet(
-            f"color: {_TEXT}; font-size: 8pt; line-height: 1.4;"
-        )
-        lay.addWidget(self._grade_details_label)
-
-        return card
-
-    def _build_corrections_card(self) -> QFrame:
-        card = _card_frame()
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(4)
-
-        hdr = QHBoxLayout()
-        lbl = QLabel("CORRECTIONS")
-        lbl.setStyleSheet(
-            f"color: {_TEXT_BRIGHT}; font-family: Consolas; font-size: 9pt;"
-            f" font-weight: bold; letter-spacing: 1px;"
-        )
-        hdr.addWidget(lbl)
-        hdr.addStretch()
-
-        self._confidence_lbl = QLabel("")
-        self._confidence_lbl.setStyleSheet(f"font-size: 7pt;")
-        hdr.addWidget(self._confidence_lbl)
-        lay.addLayout(hdr)
-        lay.addWidget(_separator())
-
-        self._corrections_layout = QVBoxLayout()
-        self._corrections_layout.setSpacing(4)
-        lay.addLayout(self._corrections_layout)
-
-        self._no_corrections_lbl = QLabel("No corrections needed")
-        self._no_corrections_lbl.setStyleSheet(
-            f"color: {_GREEN}; font-size: 8pt; font-style: italic;"
-        )
-        lay.addWidget(self._no_corrections_lbl)
-
-        self._reasons_label = QLabel("")
-        self._reasons_label.setWordWrap(True)
-        self._reasons_label.setStyleSheet(
-            f"color: {_TEXT_DIM}; font-size: 8pt; padding-top: 4px;"
-        )
-        lay.addWidget(self._reasons_label)
-
-        return card
-
-    def _build_warnings_card(self) -> QFrame:
-        card = _card_frame()
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(4)
-
-        lbl = QLabel("WARNINGS")
-        lbl.setStyleSheet(
-            f"color: {_AMBER}; font-family: Consolas; font-size: 9pt;"
-            f" font-weight: bold; letter-spacing: 1px;"
-        )
-        lay.addWidget(lbl)
-        lay.addWidget(_separator())
-
-        self._warnings_label = QLabel("")
-        self._warnings_label.setWordWrap(True)
-        self._warnings_label.setStyleSheet(
-            f"color: {_AMBER}; font-size: 8pt; line-height: 1.4;"
-        )
-        lay.addWidget(self._warnings_label)
-
-        return card
-
     # ================================================================
     # Layout helpers
     # ================================================================
@@ -1114,26 +992,13 @@ class TunerPanel(QDockWidget):
     # ================================================================
 
     def _reset_display(self):
-        self._gauge.reset()
         self._vel_dot.set_healthy(None)
         self._vel_status_lbl.setText("--")
         self._vel_issues_label.hide()
         self._pos_dot.set_healthy(None)
         self._clear_layout(self._vel_metrics_layout)
         self._clear_layout(self._pos_metrics_layout)
-        self._clear_layout(self._corrections_layout)
-        self._grade_details_label.setText("")
-        self._no_corrections_lbl.show()
-        self._reasons_label.setText("")
-        self._confidence_lbl.setText("")
-        self._warnings_label.setText("")
-        self._warnings_card.hide()
-        self._grade_card.hide()
-        self._corrections_card.hide()
-        self._btn_apply.setEnabled(False)
-        self._btn_correction_write.setEnabled(False)
 
-        # Placeholder rows
         self._add_metric_row(self._vel_metrics_layout, "Accel overshoot", "--", "%")
         self._add_metric_row(self._vel_metrics_layout, "Cruise tracking", "--")
         self._add_metric_row(self._vel_metrics_layout, "Settle time", "--", "ms")
@@ -1144,6 +1009,8 @@ class TunerPanel(QDockWidget):
         self._add_metric_row(self._pos_metrics_layout, "Rise time", "--", "ms")
         self._add_metric_row(self._pos_metrics_layout, "Oscillations", "--")
         self._add_metric_row(self._pos_metrics_layout, "Steady-state err", "--")
+        self._add_metric_row(self._pos_metrics_layout, "Drive FE (peak)", "--", "u")
+        self._add_metric_row(self._pos_metrics_layout, "Drive FE (cruise)", "--", "u")
         self._add_metric_row(self._pos_metrics_layout, "Damping ratio", "--")
 
     def _populate_vel(self, vm: VelocityLoopMetrics | None):
@@ -1159,7 +1026,9 @@ class TunerPanel(QDockWidget):
             return
 
         self._vel_dot.set_healthy(vm.is_healthy)
-        self._vel_status_lbl.setText("Healthy" if vm.is_healthy else "Issues detected")
+        self._vel_status_lbl.setText(
+            "No issues" if vm.is_healthy else "Issues detected"
+        )
         self._vel_status_lbl.setStyleSheet(
             f"color: {_health_color(vm.is_healthy)}; font-size: 8pt;"
             f" font-style: italic;"
@@ -1218,8 +1087,14 @@ class TunerPanel(QDockWidget):
             )
             return
 
-        score, _, _ = pm.grade()
-        self._pos_dot.set_healthy(score >= 5)
+        # Simple health indicator from raw metrics (no scoring/verdict).
+        healthy = (
+            pm.overshoot_pct <= 15
+            and pm.oscillation_count <= 3
+            and pm.settling_time_ms <= 500
+            and pm.drive_fe_peak_pct <= 1.5
+        )
+        self._pos_dot.set_healthy(healthy)
 
         ov_color = _CYAN if pm.overshoot_pct <= 5 else (
             _AMBER if pm.overshoot_pct <= 15 else _RED
@@ -1257,6 +1132,22 @@ class TunerPanel(QDockWidget):
             f"{ss_pct:.2f}", "%", ss_color,
         )
 
+        fe_color = _CYAN if pm.drive_fe_peak_pct <= 0.2 else (
+            _AMBER if pm.drive_fe_peak_pct <= 0.5 else _RED
+        )
+        self._add_metric_row(
+            self._pos_metrics_layout, "Drive FE (peak)",
+            f"{pm.drive_fe_peak:.4g}", "u", fe_color,
+        )
+
+        fe_cruise_color = _CYAN if pm.drive_fe_cruise_mean_pct <= 0.2 else (
+            _AMBER if pm.drive_fe_cruise_mean_pct <= 0.5 else _RED
+        )
+        self._add_metric_row(
+            self._pos_metrics_layout, "Drive FE (cruise)",
+            f"{pm.drive_fe_cruise_mean:.4g}", "u", fe_cruise_color,
+        )
+
         self._add_metric_row(
             self._pos_metrics_layout, "Damping ratio",
             f"{pm.damping_ratio:.3f}", "",
@@ -1267,241 +1158,6 @@ class TunerPanel(QDockWidget):
                 self._pos_metrics_layout, "Natural freq",
                 f"{pm.natural_freq_est_hz:.1f}", "Hz",
             )
-
-    def _populate_grade(self, pm: StepResponseMetrics):
-        score, verdict, details = pm.grade()
-
-        is_empty = (
-            pm.overshoot_pct == 0 and pm.oscillation_count == 0
-            and pm.settling_time_ms == 0
-        )
-        if is_empty:
-            self._gauge.set_score(0, "No data")
-            self._grade_card.hide()
-            return
-
-        self._gauge.set_score(score, verdict)
-        self._grade_card.show()
-
-        lines = []
-        for d in details:
-            if "excellent" in d.lower() or "well damped" in d.lower():
-                lines.append(f'<span style="color:{_GREEN}">\u2713 {d}</span>')
-            elif "good" in d.lower():
-                lines.append(f'<span style="color:{_CYAN}">\u2713 {d}</span>')
-            else:
-                lines.append(f'<span style="color:{_AMBER}">\u2022 {d}</span>')
-        self._grade_details_label.setText("<br>".join(lines))
-
-    def _populate_corrections(self, result: TuningResult | None,
-                              profile: DriveProfile | None):
-        self._clear_layout(self._corrections_layout)
-
-        if result is None:
-            self._corrections_card.hide()
-            return
-
-        self._corrections_card.show()
-
-        delta = result.to_profile_delta()
-        has_changes = len(delta) > 0
-
-        conf = result.confidence
-        conf_colors = {"high": _GREEN, "medium": _AMBER, "low": _RED}
-        conf_c = conf_colors.get(conf, _TEXT_DIM)
-        self._confidence_lbl.setText(f"confidence: {conf}")
-        self._confidence_lbl.setStyleSheet(
-            f"color: {conf_c}; font-size: 7pt; font-family: Consolas;"
-        )
-
-        if has_changes:
-            self._no_corrections_lbl.hide()
-            pn_labels = {
-                "pn101": "Pn101  Servo Rigidity",
-                "pn102": "Pn102  Speed Loop Gain",
-                "pn103": "Pn103  Speed Loop Ti",
-                "pn104": "Pn104  Position Loop Gain",
-                "pn106": "Pn106  Load Inertia",
-                "pn112": "Pn112  Speed Feedforward",
-                "pn113": "Pn113  Speed FF Filter",
-                "pn114": "Pn114  Torque Feedforward",
-                "pn115": "Pn115  Torque FF Filter",
-                "pn135": "Pn135  Speed Filter",
-            }
-            for attr, new_val in delta.items():
-                current_val = getattr(profile, attr, None) if profile else None
-
-                row_frame = QFrame()
-                row_frame.setStyleSheet(
-                    f"QFrame {{ background-color: {_BG_PANEL};"
-                    f" border: 1px solid {_BORDER}; border-radius: 4px; }}"
-                )
-                row_lay = QVBoxLayout(row_frame)
-                row_lay.setContentsMargins(8, 6, 8, 6)
-                row_lay.setSpacing(2)
-
-                name_lbl = QLabel(pn_labels.get(attr, attr))
-                name_lbl.setStyleSheet(
-                    f"color: {_TEXT}; font-family: Consolas; font-size: 8pt;"
-                    f" border: none;"
-                )
-                row_lay.addWidget(name_lbl)
-
-                val_row = QHBoxLayout()
-                val_row.setSpacing(4)
-
-                if current_val is not None:
-                    cur_lbl = QLabel(str(current_val))
-                    cur_lbl.setStyleSheet(
-                        f"color: {_TEXT_DIM}; font-family: Consolas;"
-                        f" font-size: 10pt; border: none;"
-                    )
-                    val_row.addWidget(cur_lbl)
-
-                    arrow = QLabel("\u2192")
-                    arrow.setStyleSheet(
-                        f"color: {_ACCENT}; font-size: 12pt; border: none;"
-                    )
-                    val_row.addWidget(arrow)
-
-                new_lbl = QLabel(str(new_val))
-                new_lbl.setStyleSheet(
-                    f"color: {_ACCENT}; font-family: Consolas; font-size: 12pt;"
-                    f" font-weight: bold; border: none;"
-                )
-                val_row.addWidget(new_lbl)
-                val_row.addStretch()
-
-                if current_val is not None and current_val != 0:
-                    pct_change = ((new_val - current_val) / current_val) * 100
-                    sign = "+" if pct_change > 0 else ""
-                    badge_color = _RED if pct_change < 0 else _GREEN
-                    badge = QLabel(f"{sign}{pct_change:.0f}%")
-                    badge.setStyleSheet(
-                        f"color: {badge_color}; font-family: Consolas;"
-                        f" font-size: 8pt; font-weight: bold;"
-                        f" background-color: {badge_color}22;"
-                        f" border: 1px solid {badge_color}44;"
-                        f" border-radius: 3px; padding: 1px 4px;"
-                    )
-                    val_row.addWidget(badge)
-
-                row_lay.addLayout(val_row)
-                self._corrections_layout.addWidget(row_frame)
-        else:
-            self._no_corrections_lbl.show()
-
-        corrections_text = result.diagnostics.get("corrections", [])
-        if corrections_text:
-            reason_lines = [f"\u2022 {r}" for r in corrections_text]
-            self._reasons_label.setText("\n".join(reason_lines))
-        else:
-            self._reasons_label.setText("")
-
-    def _populate_warnings(self, result: TuningResult | None):
-        if result is None or not result.warnings:
-            self._warnings_card.hide()
-            return
-        self._warnings_card.show()
-        lines = [f"\u26a0 {w}" for w in result.warnings]
-        self._warnings_label.setText("\n".join(lines))
-
-    # ================================================================
-    # Action button state
-    # ================================================================
-
-    def _update_action_buttons(self):
-        has_delta = (
-            self._tuning_result is not None
-            and len(self._tuning_result.to_profile_delta()) > 0
-        )
-        self._btn_apply.setEnabled(has_delta)
-        self._btn_correction_write.setEnabled(has_delta and self._connection is not None)
-
-    # ================================================================
-    # Apply / Write corrections
-    # ================================================================
-
-    def _on_apply_to_profile(self):
-        """Push proposed corrections into the drive profile spinboxes."""
-        if self._tuning_result is None:
-            return
-        delta = self._tuning_result.to_profile_delta()
-        if not delta:
-            return
-
-        axis = self._current_axis()
-        profile = self._profiles.get(axis)
-        if profile is None:
-            return
-
-        for attr, value in delta.items():
-            setattr(profile, attr, value)
-
-        if axis == self._current_axis():
-            self._load_profile_to_ui(profile)
-
-        names = ", ".join(f"Pn{k[2:]}" for k in delta)
-        self._status_label.setText(f"Applied to profile: {names}")
-        self._status_label.setStyleSheet(f"color: {_GREEN}; font-size: 8pt;")
-
-    def _on_write_corrections(self):
-        """Write only the proposed corrections to the drive via CoE SDO."""
-        if self._tuning_result is None or self._connection is None:
-            return
-        delta = self._tuning_result.to_profile_delta()
-        if not delta:
-            return
-
-        axis = self._current_axis()
-        names = ", ".join(f"Pn{k[2:]}={v}" for k, v in delta.items())
-        reply = QMessageBox.question(
-            self, "Write Corrections to Drive",
-            f"Write proposed corrections to axis {axis}?\n\n{names}\n\n"
-            "This will overwrite these drive parameters.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        self._btn_correction_write.setEnabled(False)
-        self._btn_correction_write.setText("Writing\u2026")
-        connection = self._connection
-        conn_lock = self._conn_lock
-
-        def _do_write():
-            errors = []
-            for attr, value in delta.items():
-                try:
-                    if conn_lock:
-                        with conn_lock:
-                            write_single_pn(connection, axis, attr, value)
-                    else:
-                        write_single_pn(connection, axis, attr, value)
-                except Exception as exc:
-                    errors.append(f"Pn{attr[2:]}: {exc}")
-            self._correction_write_done.emit("\n".join(errors) if errors else "")
-
-        threading.Thread(
-            target=_do_write, name="TunerCorrectionWrite", daemon=True,
-        ).start()
-
-    def _on_correction_write_done(self, error: str):
-        self._btn_correction_write.setText("WRITE CORRECTIONS")
-        self._update_action_buttons()
-
-        if error:
-            QMessageBox.warning(
-                self, "CoE Write Error",
-                f"Some parameters failed to write:\n{error}",
-            )
-        else:
-            delta = self._tuning_result.to_profile_delta() if self._tuning_result else {}
-            names = ", ".join(f"Pn{k[2:]}" for k in delta)
-            self._status_label.setText(f"Written to drive: {names}")
-            self._status_label.setStyleSheet(f"color: {_GREEN}; font-size: 8pt;")
-            # Sync profile spinboxes
-            self._on_apply_to_profile()
 
     # ================================================================
     # Analysis entry point
@@ -1541,11 +1197,13 @@ class TunerPanel(QDockWidget):
             params, "mspeed", "measuredvel", "actualvel", "vactual",
         )
         ch_dvel = _find_channel(params, "demandspeed", "demandvel", "dspeed")
+        ch_fe = _find_channel(params, "drivefe", "fe", "followingerror")
 
         dpos = params.get(ch_dpos) if ch_dpos else None
         mpos = params.get(ch_mpos) if ch_mpos else None
         mvel = params.get(ch_mvel) if ch_mvel else None
         dvel_raw = params.get(ch_dvel) if ch_dvel else None
+        drive_fe_raw = params.get(ch_fe) if ch_fe else None
 
         if dpos is None or mpos is None:
             self._status_label.setText(
@@ -1574,8 +1232,11 @@ class TunerPanel(QDockWidget):
         command = np.asarray(dpos, dtype=np.float64)
         response = np.asarray(mpos, dtype=np.float64)
         velocity = np.asarray(mvel, dtype=np.float64) if mvel is not None else None
-        # DEMAND_SPEED is captured as user-units per servocycle; scale to units/second.
         demand_velocity = np.asarray(dvel_raw, dtype=np.float64) / float(servo_period_sec)
+        drive_fe = (
+            np.asarray(drive_fe_raw, dtype=np.float64)
+            if drive_fe_raw is not None else None
+        )
         time_np = np.asarray(time_arr, dtype=np.float64)
 
         self._status_label.setText("Analyzing\u2026")
@@ -1584,6 +1245,7 @@ class TunerPanel(QDockWidget):
         try:
             pos_m, vel_m = ClassicalTuner.analyze_step_response(
                 time_np, response, command, velocity, demand_velocity,
+                drive_fe=drive_fe,
             )
         except Exception as exc:
             logger.exception("Step response analysis failed")
@@ -1594,28 +1256,8 @@ class TunerPanel(QDockWidget):
         self._pos_metrics = pos_m
         self._vel_metrics = vel_m
 
-        # Get drive profile for corrections
-        axis = self._current_axis()
-        profile = self._profiles.get(axis)
-
-        result: TuningResult | None = None
-        if profile is not None and profile.has_drive_params():
-            try:
-                result = ClassicalTuner.suggest_corrections(pos_m, vel_m, profile)
-            except Exception as exc:
-                logger.exception("Correction suggestion failed")
-                result = TuningResult(
-                    warnings=[f"Correction engine error: {exc}"],
-                    confidence="low",
-                )
-        self._tuning_result = result
-
-        # Populate UI
         self._populate_vel(vel_m)
         self._populate_pos(pos_m)
-        self._populate_grade(pos_m)
-        self._populate_corrections(result, profile)
-        self._populate_warnings(result)
 
         n_samples = len(time_np)
         dur_s = float(time_np[-1] - time_np[0])
@@ -1635,5 +1277,4 @@ class TunerPanel(QDockWidget):
         )
         self._status_label.setStyleSheet(f"color: {_GREEN}; font-size: 8pt;")
 
-        self._update_action_buttons()
         self.analysis_complete.emit()
