@@ -31,8 +31,8 @@ import pyqtgraph.opengl as gl
 pg.setConfigOptions(
     background='#0A0A0A',
     foreground='#d4d4d4',
-    antialias=True,         # Smooth lines
-    useOpenGL=True,         # GPU acceleration
+    antialias=False,       # AA + width>1 is a Qt software-path; skip for pan/zoom speed
+    useOpenGL=False,       # Multi-panel 2D plots: software raster beats per-surface GL ctx switches
 )
 
 # Add src to path for scope engine
@@ -788,7 +788,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Plot settings
         self.grid_alpha = 0.3
-        self.line_width = 1.8
+        self.line_width = 1  # int width uses Qt's fast cosmetic pen path
         self.plot_bg_color = '#0A0A0A'
         self.plot_mode = 'time'  # 'time', 'xy', 'xyz', 'xyzw'
 
@@ -836,6 +836,16 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._fft_max_samples = 16384  # cap FFT size when cursors disabled
         self._last_data_len = 0     # track data growth to skip redundant setData
         self._stats_cache = {}      # {trace_id: (v_min_str, v_max_str)}
+        self._ref_set = {}          # {trace_id: id(ref_data_tuple)} — skip re-setData on static refs
+        self._stats_pos_cache = {}  # {trace_id: (x, y)} — skip redundant TextItem.setPos
+        self._last_render_data_len = 0  # last length passed to setData; skip if unchanged
+        # Pan/zoom debounce: sigRangeChanged fires per mouse event × N linked views (O(N²))
+        self._stats_reposition_scheduled = False
+        self._pending_stats_vbs = set()
+        self._pending_stats_vb_refs = {}
+        self._detail_update_scheduled = False
+        self._pending_detail_vbs = set()
+        self._pending_detail_vb_refs = {}
 
         self._create_ui()
         self._load_settings()
@@ -1226,6 +1236,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.curves = {}
         self.ref_curves = {}
         self.stats_texts = {}
+        self._ref_set = {}
+        self._stats_pos_cache = {}
         self._cursor_lines_c1.clear()
         self._cursor_lines_c2.clear()
         self._xy_auto_range = True
@@ -1342,17 +1354,55 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._update_auto_scroll_button()
 
     def _reposition_stats_texts(self, vb):
-        """Reposition stats text items to top-right of the visible area."""
-        for trace_id, pi in self.plot_items.items():
-            if trace_id in self.stats_texts and pi.getViewBox() is vb:
-                view_range = vb.viewRange()
-                self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
-                break
+        """Debounced: coalesce pan events via a 0ms timer, then reposition."""
+        self._pending_stats_vbs.add(id(vb))
+        self._pending_stats_vb_refs[id(vb)] = vb
+        if not self._stats_reposition_scheduled:
+            self._stats_reposition_scheduled = True
+            QTimer.singleShot(16, self._flush_stats_reposition)
+
+    def _flush_stats_reposition(self):
+        self._stats_reposition_scheduled = False
+        vbs = [self._pending_stats_vb_refs[i] for i in self._pending_stats_vbs
+               if i in self._pending_stats_vb_refs]
+        self._pending_stats_vbs.clear()
+        self._pending_stats_vb_refs.clear()
+        if not self.stats_texts:
+            return
+        for vb in vbs:
+            for trace_id, pi in self.plot_items.items():
+                if trace_id in self.stats_texts and pi.getViewBox() is vb:
+                    view_range = vb.viewRange()
+                    new_pos = (view_range[0][1], view_range[1][1])
+                    if self._stats_pos_cache.get(trace_id) != new_pos:
+                        self.stats_texts[trace_id].setPos(*new_pos)
+                        self._stats_pos_cache[trace_id] = new_pos
+                    break
 
     def _update_curve_detail(self, vb):
-        """Show/hide sample dots and adjust downsampling based on zoom level."""
+        """Debounced: coalesce dot-detail updates to end of pan burst."""
         if self.plot_mode in ('xy', 'xyz'):
             return
+        if not self.curves:
+            return
+        self._pending_detail_vbs.add(id(vb))
+        self._pending_detail_vb_refs[id(vb)] = vb
+        if not self._detail_update_scheduled:
+            self._detail_update_scheduled = True
+            QTimer.singleShot(50, self._flush_curve_detail)
+
+    def _flush_curve_detail(self):
+        self._detail_update_scheduled = False
+        vbs = [self._pending_detail_vb_refs[i] for i in self._pending_detail_vbs
+               if i in self._pending_detail_vb_refs]
+        self._pending_detail_vbs.clear()
+        self._pending_detail_vb_refs.clear()
+        if self.plot_mode in ('xy', 'xyz') or not self.curves:
+            return
+        for vb in vbs:
+            self._do_update_curve_detail(vb)
+
+    def _do_update_curve_detail(self, vb):
         view_range = vb.viewRange()
         visible_span = view_range[0][1] - view_range[0][0]
         for trace_id, pi in self.plot_items.items():
@@ -1383,7 +1433,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 curve._has_dots = True
             elif not want_dots and had_dots:
                 curve.setSymbol(None)
-                curve.setDownsampling(auto=True, method='peak')
+                curve.setDownsampling(auto=True, method='subsample')
                 curve._has_dots = False
 
     def _on_xy_manual_zoom(self, _changes):
@@ -1891,12 +1941,15 @@ class ParameterScopeOscilloscope(QMainWindow):
         deleted_ids = {id(t) for t in self.traces} - {id(t) for t in alive_traces}
         for tid in deleted_ids:
             self.ref_curves.pop(tid, None)
+            self._ref_set.pop(tid, None)
         self.traces = alive_traces
         self.curves = {}
         self.stats_texts = {}
         self._fft_cache = {}
         self._fft_peak_cache = {}
         self._stats_cache = {}
+        self._ref_set = {}
+        self._stats_pos_cache = {}
         self._update_path_info_label()
         self._recreate_subplots()
 
@@ -1939,6 +1992,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 ref_curve = self.ref_curves.pop(trace_id)
                 if trace_id in self.plot_items:
                     self.plot_items[trace_id].removeItem(ref_curve)
+            self._ref_set.pop(trace_id, None)
         # Re-render to show/hide reference
         if not self.is_running and self.accumulated_data is not None:
             self._render_plots()
@@ -2928,6 +2982,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         fft_time = time_arr
         fft_params = plot_data['params']
         fft_cursor_key = None
+        # Only slice params for traces that actually need FFT (avoid O(N_traces) copies)
+        fft_needed_names = (
+            {t.get_display_name() for t in enabled_traces if t.is_fft()}
+            if has_fft_traces else set()
+        )
         if has_fft_traces and len(time_arr) >= 2:
             sample_dt = float(time_arr[1] - time_arr[0])
             if sample_dt > 0:
@@ -2938,7 +2997,11 @@ class ParameterScopeOscilloscope(QMainWindow):
                     mask = (time_arr >= t1) & (time_arr <= t2)
                     if np.sum(mask) >= 2:
                         fft_time = time_arr[mask]
-                        fft_params = {k: v[mask] for k, v in plot_data['params'].items()}
+                        fft_params = {
+                            k: plot_data['params'][k][mask]
+                            for k in fft_needed_names
+                            if k in plot_data['params']
+                        }
                         duration = float(fft_time[-1] - fft_time[0])
                         freq_res = 1.0 / duration if duration > 0 else 0
                         self.path_info_label.setText(
@@ -2952,7 +3015,17 @@ class ParameterScopeOscilloscope(QMainWindow):
                     # Cap FFT size to last N samples for performance
                     if len(fft_time) > self._fft_max_samples:
                         fft_time = fft_time[-self._fft_max_samples:]
-                        fft_params = {k: v[-self._fft_max_samples:] for k, v in plot_data['params'].items()}
+                        fft_params = {
+                            k: plot_data['params'][k][-self._fft_max_samples:]
+                            for k in fft_needed_names
+                            if k in plot_data['params']
+                        }
+                    else:
+                        fft_params = {
+                            k: plot_data['params'][k]
+                            for k in fft_needed_names
+                            if k in plot_data['params']
+                        }
                     self.path_info_label.setText(
                         f"FFT: last {len(fft_time)} pts (enable cursors to window)")
                 n_fft = len(fft_time)
@@ -2980,8 +3053,9 @@ class ParameterScopeOscilloscope(QMainWindow):
                 values = fft_params[param_name]
                 n_fft = len(fft_time)
 
-                # Check FFT cache — skip recompute if data unchanged
-                cache_key = (n_fft, len(time_arr), fft_cursor_key)
+                # Check FFT cache — throttle recompute to ~10Hz by bucketing last-sample time
+                last_t_bucket = int(float(time_arr[-1]) * 10) if len(time_arr) else 0
+                cache_key = (n_fft, last_t_bucket, fft_cursor_key)
                 cached = self._fft_cache.get(trace_id)
                 if cached and cached['key'] == cache_key:
                     magnitude = cached['magnitude']
@@ -3011,10 +3085,10 @@ class ParameterScopeOscilloscope(QMainWindow):
                     pen = pg.mkPen(color, width=self.line_width)
                     curve = pi.plot(name=param_name, pen=pen)
                     curve.setClipToView(True)
-                    curve.setDownsampling(auto=True, method='peak')
+                    curve.setDownsampling(auto=True, method='subsample')
                     self.curves[trace_id] = curve
 
-                self.curves[trace_id].setData(freqs, magnitude)
+                self.curves[trace_id].setData(freqs, magnitude, skipFiniteCheck=True)
 
                 # ── Reference (pinned) FFT overlay ──
                 if (trace.has_ref_data()
@@ -3026,11 +3100,14 @@ class ParameterScopeOscilloscope(QMainWindow):
                         ref_curve = pi.plot(
                             name=f"{param_name} (REF)", pen=ref_pen)
                         ref_curve.setClipToView(True)
-                        ref_curve.setDownsampling(auto=True, method='peak')
+                        ref_curve.setDownsampling(auto=True, method='subsample')
                         self.ref_curves[trace_id] = ref_curve
-                    self.ref_curves[trace_id].setData(
-                        trace.ref_data['fft_freqs'],
-                        trace.ref_data['fft_magnitude'])
+                    ref_key = ('fft', id(trace.ref_data))
+                    if self._ref_set.get(trace_id) != ref_key:
+                        self.ref_curves[trace_id].setData(
+                            trace.ref_data['fft_freqs'],
+                            trace.ref_data['fft_magnitude'])
+                        self._ref_set[trace_id] = ref_key
 
                 # Peak frequency annotation (throttled — only update when values change)
                 if len(magnitude) > 1:
@@ -3056,7 +3133,10 @@ class ParameterScopeOscilloscope(QMainWindow):
                     if trace_id in self.stats_texts:
                         vb = pi.getViewBox()
                         view_range = vb.viewRange()
-                        self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+                        new_pos = (view_range[0][1], view_range[1][1])
+                        if self._stats_pos_cache.get(trace_id) != new_pos:
+                            self.stats_texts[trace_id].setPos(*new_pos)
+                            self._stats_pos_cache[trace_id] = new_pos
             else:
                 # ── Time-domain rendering for this trace ──
                 if param_name not in plot_data['params']:
@@ -3076,10 +3156,16 @@ class ParameterScopeOscilloscope(QMainWindow):
                     pen = pg.mkPen(color, width=self.line_width)
                     curve = pi.plot(name=param_name, pen=pen)
                     curve.setClipToView(True)
-                    curve.setDownsampling(auto=True, method='peak')
+                    curve.setDownsampling(auto=True, method='subsample')
                     self.curves[trace_id] = curve
 
-                self.curves[trace_id].setData(time_arr, values)
+                # Skip setData when sample count hasn't grown (e.g. paused/stopped)
+                cur_len = len(values)
+                prev_len = self._stats_cache.get(('len', trace_id), -1)
+                data_changed = cur_len != prev_len
+                if data_changed:
+                    self.curves[trace_id].setData(time_arr, values, skipFiniteCheck=True)
+                    self._stats_cache[('len', trace_id)] = cur_len
 
                 # ── Reference (pinned) trace overlay ──
                 if trace.has_ref_data():
@@ -3089,34 +3175,41 @@ class ParameterScopeOscilloscope(QMainWindow):
                         ref_curve = pi.plot(
                             name=f"{param_name} (REF)", pen=ref_pen)
                         ref_curve.setClipToView(True)
-                        ref_curve.setDownsampling(auto=True, method='peak')
+                        ref_curve.setDownsampling(auto=True, method='subsample')
                         self.ref_curves[trace_id] = ref_curve
-                    self.ref_curves[trace_id].setData(
-                        trace.ref_data['time'], trace.ref_data['values'])
+                    ref_key = ('time', id(trace.ref_data))
+                    if self._ref_set.get(trace_id) != ref_key:
+                        self.ref_curves[trace_id].setData(
+                            trace.ref_data['time'], trace.ref_data['values'])
+                        self._ref_set[trace_id] = ref_key
 
-                # Update min/max stats text (throttled — only when display string changes)
-                v_min_s = f"{float(np.min(values)):.4f}"
-                v_max_s = f"{float(np.max(values)):.4f}"
-                prev_stats = self._stats_cache.get(trace_id)
-                if prev_stats != (v_min_s, v_max_s):
-                    self._stats_cache[trace_id] = (v_min_s, v_max_s)
-                    stats_html = (
-                        f'<span style="font-family: Segoe UI; font-size: 8pt;">'
-                        f'<span style="color: #FF9999;">Min: {v_min_s}</span><br>'
-                        f'<span style="color: #99FF99;">Max: {v_max_s}</span>'
-                        f'</span>'
-                    )
-                    if trace_id not in self.stats_texts:
-                        txt = pg.TextItem(anchor=(1, 0))
-                        txt.setHtml(stats_html)
-                        pi.getViewBox().addItem(txt, ignoreBounds=True)
-                        self.stats_texts[trace_id] = txt
-                    else:
-                        self.stats_texts[trace_id].setHtml(stats_html)
+                # Update min/max stats text (only when new data arrived)
+                if data_changed and cur_len > 0:
+                    v_min_s = f"{float(np.min(values)):.4f}"
+                    v_max_s = f"{float(np.max(values)):.4f}"
+                    prev_stats = self._stats_cache.get(trace_id)
+                    if prev_stats != (v_min_s, v_max_s):
+                        self._stats_cache[trace_id] = (v_min_s, v_max_s)
+                        stats_html = (
+                            f'<span style="font-family: Segoe UI; font-size: 8pt;">'
+                            f'<span style="color: #FF9999;">Min: {v_min_s}</span><br>'
+                            f'<span style="color: #99FF99;">Max: {v_max_s}</span>'
+                            f'</span>'
+                        )
+                        if trace_id not in self.stats_texts:
+                            txt = pg.TextItem(anchor=(1, 0))
+                            txt.setHtml(stats_html)
+                            pi.getViewBox().addItem(txt, ignoreBounds=True)
+                            self.stats_texts[trace_id] = txt
+                        else:
+                            self.stats_texts[trace_id].setHtml(stats_html)
                 if trace_id in self.stats_texts:
                     vb = pi.getViewBox()
                     view_range = vb.viewRange()
-                    self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+                    new_pos = (view_range[0][1], view_range[1][1])
+                    if self._stats_pos_cache.get(trace_id) != new_pos:
+                        self.stats_texts[trace_id].setPos(*new_pos)
+                        self._stats_pos_cache[trace_id] = new_pos
 
         # Update cursor readout if cursors are active (time-domain traces only)
         if self._cursors_enabled:
@@ -3181,6 +3274,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.curves = {}
         self.ref_curves = {}
         self.stats_texts = {}
+        self._ref_set = {}
+        self._stats_pos_cache = {}
+        self._stats_cache = {}
         # Unpin all traces and clear their reference data
         for trace in self.traces:
             trace.ref_data = None
@@ -3706,7 +3802,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.window_duration = float(s.value("display/window_duration", 5.0))
         self.lock_x_axis = s.value("display/lock_x_axis", "true") == "true"
         self.chk_lock_x.setChecked(self.lock_x_axis)
-        self.line_width = float(s.value("plot/line_width", 1.8))
+        self.line_width = float(s.value("plot/line_width", 1))
         self.grid_alpha = float(s.value("plot/grid_alpha", 0.3))
         self.plot_bg_color = s.value("plot/bg_color", "#0A0A0A")
 
