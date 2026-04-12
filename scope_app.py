@@ -740,6 +740,201 @@ class TraceControl(QFrame):
 
 
 
+class CompareWindow(QMainWindow):
+    """Fullscreen overlay window for comparing up to 3 live traces on one plot.
+
+    Each trace draws on its own ViewBox stacked on a shared main PlotItem so
+    Y-scales stay independent (traces can have different units). X axis is
+    shared. Data is pushed from the main app on every timer tick.
+    """
+
+    closed = Signal()
+
+    MAX_TRACES = 3
+
+    def __init__(self, traces, fft_mode, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Compare Traces")
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.fft_mode = fft_mode
+        self.traces = list(traces)  # TraceControl refs (up to 3)
+
+        central = QWidget()
+        central.setStyleSheet("background-color: #0A0A0A;")
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # Top bar: title + close hint
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        names = ", ".join(t.get_display_name() for t in self.traces)
+        title_text = f"Comparing {'FFT' if fft_mode else 'time-domain'}: {names}"
+        title = QLabel(title_text)
+        title.setStyleSheet("color: #d4d4d4; font-size: 10pt; font-weight: bold;")
+        top.addWidget(title)
+        top.addStretch()
+        hint = QLabel("Esc to close")
+        hint.setStyleSheet("color: #888888; font-size: 9pt;")
+        top.addWidget(hint)
+        layout.addLayout(top)
+
+        # Graphics layout widget holding the single overlay plot
+        self.glw = pg.GraphicsLayoutWidget()
+        self.glw.setBackground('#0A0A0A')
+        layout.addWidget(self.glw, 1)
+
+        # Main plot (owns the X axis and the first Y axis)
+        self.main_plot = self.glw.addPlot(row=0, col=0)
+        self.main_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.main_plot.setLabel(
+            'bottom',
+            'Frequency (Hz)' if fft_mode else 'Time (seconds)',
+            color='#d4d4d4',
+        )
+
+        # Primary axis config — color-code to first trace
+        first_color = self.traces[0].get_color() if self.traces else '#d4d4d4'
+        self.main_plot.getAxis('left').setPen(pg.mkPen(first_color))
+        self.main_plot.getAxis('left').setTextPen(pg.mkPen(first_color))
+        self.main_plot.setLabel('left', self.traces[0].get_display_name(),
+                                color=first_color)
+
+        # Primary curve goes on main_plot's ViewBox
+        width = 1
+        self.curves = []
+        self.viewboxes = [self.main_plot.vb]
+        self.axes = [self.main_plot.getAxis('left')]
+        pen0 = pg.mkPen(first_color, width=width)
+        curve0 = self.main_plot.plot(pen=pen0)
+        curve0.setClipToView(True)
+        curve0.setDownsampling(auto=True, method='subsample')
+        self.curves.append(curve0)
+
+        # Extra traces: one extra ViewBox + right-side AxisItem per trace
+        # Standard pyqtgraph multi-axis pattern.
+        for i, trace in enumerate(self.traces[1:], start=1):
+            color = trace.get_color()
+            vb = pg.ViewBox()
+            axis = pg.AxisItem('right')
+            axis.setPen(pg.mkPen(color))
+            axis.setTextPen(pg.mkPen(color))
+            axis.setLabel(trace.get_display_name(), color=color)
+            # Append axis into the layout on the right side of the main plot
+            self.glw.addItem(axis, row=0, col=i + 1)
+            self.glw.scene().addItem(vb)
+            axis.linkToView(vb)
+            vb.setXLink(self.main_plot.vb)
+            curve = pg.PlotDataItem(pen=pg.mkPen(color, width=width))
+            curve.setClipToView(True)
+            curve.setDownsampling(auto=True, method='subsample')
+            vb.addItem(curve)
+            self.curves.append(curve)
+            self.viewboxes.append(vb)
+            self.axes.append(axis)
+
+        # Sync the extra ViewBoxes' geometry to the main plot's ViewBox
+        self.main_plot.vb.sigResized.connect(self._sync_viewboxes)
+        self._sync_viewboxes()
+
+    def _sync_viewboxes(self):
+        rect = self.main_plot.vb.sceneBoundingRect()
+        for vb in self.viewboxes[1:]:
+            vb.setGeometry(rect)
+            vb.linkedViewChanged(self.main_plot.vb, vb.XAxis)
+
+    def update_data(self, time_arr, params_by_name, fft_freqs=None,
+                    fft_magnitudes=None):
+        """Push latest data into each curve. For FFT mode, supply freqs+mags."""
+        if self.fft_mode:
+            if fft_freqs is None or not fft_magnitudes:
+                return
+            for curve, trace in zip(self.curves, self.traces):
+                name = trace.get_display_name()
+                mag = fft_magnitudes.get(name)
+                if mag is None or len(mag) == 0:
+                    continue
+                curve.setData(fft_freqs, mag, skipFiniteCheck=True)
+        else:
+            if time_arr is None or len(time_arr) == 0:
+                return
+            for curve, trace in zip(self.curves, self.traces):
+                name = trace.get_display_name()
+                values = params_by_name.get(name)
+                if values is None or len(values) == 0:
+                    continue
+                curve.setData(time_arr, values, skipFiniteCheck=True)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        self.closed.emit()
+        super().closeEvent(event)
+
+
+class _CompareTracePicker(QDialog):
+    """Small modal: pick up to 3 same-type enabled traces to compare."""
+
+    def __init__(self, candidates, fft_mode, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Compare Traces")
+        self.setStyleSheet(
+            "QDialog { background-color: #1a1a1a; color: #d4d4d4; } "
+            "QCheckBox { color: #d4d4d4; padding: 4px; } "
+            "QPushButton { background-color: #2e2e2e; color: #d4d4d4; "
+            "padding: 6px 14px; border: 1px solid #555; } "
+            "QPushButton:hover { background-color: #3a3a3a; }"
+        )
+        self.fft_mode = fft_mode
+        self.candidates = candidates  # list[TraceControl]
+        self.checks = []
+
+        layout = QVBoxLayout(self)
+        kind = "FFT" if fft_mode else "time-domain"
+        header = QLabel(f"Select 2–3 {kind} traces to overlay:")
+        header.setStyleSheet("font-weight: bold;")
+        layout.addWidget(header)
+
+        for t in candidates:
+            cb = QCheckBox(t.get_display_name())
+            cb.setStyleSheet(f"color: {t.get_color()}; font-weight: bold;")
+            cb.toggled.connect(self._enforce_limit)
+            self.checks.append(cb)
+            layout.addWidget(cb)
+
+        btns = QHBoxLayout()
+        btns.addStretch()
+        self.btn_ok = QPushButton("Compare")
+        self.btn_ok.clicked.connect(self.accept)
+        self.btn_ok.setEnabled(False)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(self.btn_ok)
+        btns.addWidget(cancel)
+        layout.addLayout(btns)
+
+    def _enforce_limit(self):
+        selected = [cb for cb in self.checks if cb.isChecked()]
+        if len(selected) > CompareWindow.MAX_TRACES:
+            # Uncheck the most recent (the one that triggered us is the last toggled)
+            sender = self.sender()
+            if sender in selected:
+                sender.blockSignals(True)
+                sender.setChecked(False)
+                sender.blockSignals(False)
+                selected = [cb for cb in self.checks if cb.isChecked()]
+        self.btn_ok.setEnabled(2 <= len(selected) <= CompareWindow.MAX_TRACES)
+
+    def selected_traces(self):
+        return [t for t, cb in zip(self.candidates, self.checks)
+                if cb.isChecked()]
+
+
 class ParameterScopeOscilloscope(QMainWindow):
     """Main application with oscilloscope-style UI — pyqtgraph version"""
 
@@ -839,6 +1034,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._ref_set = {}          # {trace_id: id(ref_data_tuple)} — skip re-setData on static refs
         self._stats_pos_cache = {}  # {trace_id: (x, y)} — skip redundant TextItem.setPos
         self._last_render_data_len = 0  # last length passed to setData; skip if unchanged
+        # Compare overlay (fullscreen) — None when closed
+        self._compare_window = None
+
         # Pan/zoom debounce: sigRangeChanged fires per mouse event × N linked views (O(N²))
         self._stats_reposition_scheduled = False
         self._pending_stats_vbs = set()
@@ -1175,6 +1373,13 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_cursors.toggled.connect(self._toggle_cursors)
         status_layout.addWidget(self.btn_cursors)
 
+        self.btn_compare = QPushButton("\u29c9 Compare")
+        self.btn_compare.setFixedWidth(110)
+        self.btn_compare.setToolTip(
+            "Overlay 2\u20133 enabled traces in a fullscreen compare view")
+        self.btn_compare.clicked.connect(self._open_compare)
+        status_layout.addWidget(self.btn_compare)
+
         status_layout.addStretch()
 
         self.progress_label = QLabel("")
@@ -1448,6 +1653,90 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._xy_auto_range = False
         if not self.is_running and self.accumulated_data is not None:
             self._render_plots()
+
+    # ─── Compare overlay ─────────────────────────────────────────
+
+    def _open_compare(self):
+        """Open fullscreen compare window with 2\u20133 selected live traces."""
+        if self._compare_window is not None:
+            self._compare_window.raise_()
+            self._compare_window.activateWindow()
+            return
+
+        if self.accumulated_data is None or not self.accumulated_data['params']:
+            QMessageBox.information(
+                self, "Compare",
+                "Start a capture first — compare needs live data.")
+            return
+
+        enabled = self.get_enabled_traces()
+        if len(enabled) < 2:
+            QMessageBox.information(
+                self, "Compare",
+                "Enable at least 2 traces before comparing.")
+            return
+
+        # Split by kind — FFT and time-domain can't be mixed in one overlay
+        time_traces = [t for t in enabled if not t.is_fft()]
+        fft_traces = [t for t in enabled if t.is_fft()]
+
+        # If both kinds exist, let the user pick which bucket; otherwise use
+        # the only one that's available.
+        if len(time_traces) >= 2 and len(fft_traces) >= 2:
+            kind = QMessageBox.question(
+                self, "Compare",
+                "Compare time-domain traces? "
+                "(choose No for FFT traces)",
+                QMessageBox.Yes | QMessageBox.No)
+            candidates = time_traces if kind == QMessageBox.Yes else fft_traces
+            fft_mode = kind != QMessageBox.Yes
+        elif len(time_traces) >= 2:
+            candidates, fft_mode = time_traces, False
+        elif len(fft_traces) >= 2:
+            candidates, fft_mode = fft_traces, True
+        else:
+            QMessageBox.information(
+                self, "Compare",
+                "Need at least 2 traces of the same type (time or FFT).")
+            return
+
+        dlg = _CompareTracePicker(candidates, fft_mode, parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        chosen = dlg.selected_traces()
+        if len(chosen) < 2:
+            return
+
+        self._compare_window = CompareWindow(chosen, fft_mode, parent=self)
+        self._compare_window.closed.connect(self._on_compare_closed)
+        self._compare_window.showFullScreen()
+        # Push current data immediately so the view isn't blank until next tick
+        self._push_compare_data()
+
+    def _on_compare_closed(self):
+        self._compare_window = None
+
+    def _push_compare_data(self):
+        """Send latest accumulated data into the compare window."""
+        if self._compare_window is None or self.accumulated_data is None:
+            return
+        data = self.accumulated_data
+        if self._compare_window.fft_mode:
+            # Reuse FFT cache if available; rebuild freqs from first cached mag
+            mags = {}
+            freqs = None
+            for trace in self._compare_window.traces:
+                cached = self._fft_cache.get(id(trace))
+                if cached and 'magnitude' in cached:
+                    mags[trace.get_display_name()] = cached['magnitude']
+                    if freqs is None and len(data['time']) > 1:
+                        sample_dt = float(data['time'][1] - data['time'][0])
+                        n_fft = len(cached['magnitude']) * 2 - 2
+                        freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
+            self._compare_window.update_data(
+                None, None, fft_freqs=freqs, fft_magnitudes=mags)
+        else:
+            self._compare_window.update_data(data['time'], data['params'])
 
     # ─── Cursor / measurement tool ───────────────────────────────
 
@@ -1957,6 +2246,16 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._stats_cache = {}
         self._ref_set = {}
         self._stats_pos_cache = {}
+        # Close compare window if any of its traces got deleted/disabled/retyped
+        if self._compare_window is not None:
+            cw = self._compare_window
+            still_valid = all(
+                t in self.traces and t.is_enabled()
+                and t.is_fft() == cw.fft_mode
+                for t in cw.traces
+            )
+            if not still_valid:
+                cw.close()
         self._update_path_info_label()
         self._recreate_subplots()
 
@@ -2732,6 +3031,10 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Update plots
         self._render_plots()
+
+        # Mirror live data into the compare overlay if it's open
+        if self._compare_window is not None:
+            self._push_compare_data()
 
         # Update trace value labels
         for trace in self.get_enabled_traces():
