@@ -775,8 +775,21 @@ class CompareWindow(QMainWindow):
         title.setStyleSheet("color: #d4d4d4; font-size: 10pt; font-weight: bold;")
         top.addWidget(title)
         top.addStretch()
+        self.btn_link_y = QPushButton("\U0001f517 Unify Y")
+        self.btn_link_y.setCheckable(True)
+        self.btn_link_y.setToolTip(
+            "Link Y axes of all compared traces to a shared range")
+        self.btn_link_y.setStyleSheet(
+            "QPushButton { background-color: #2e2e2e; color: #d4d4d4; "
+            "padding: 4px 10px; border: 1px solid #555; } "
+            "QPushButton:checked { background-color: #03DAC6; color: #000; "
+            "font-weight: bold; } "
+            "QPushButton:hover { background-color: #3a3a3a; }"
+        )
+        self.btn_link_y.toggled.connect(self._on_link_y_toggled)
+        top.addWidget(self.btn_link_y)
         hint = QLabel("Esc to close")
-        hint.setStyleSheet("color: #888888; font-size: 9pt;")
+        hint.setStyleSheet("color: #888888; font-size: 9pt; margin-left: 10px;")
         top.addWidget(hint)
         layout.addLayout(top)
 
@@ -843,6 +856,36 @@ class CompareWindow(QMainWindow):
         for vb in self.viewboxes[1:]:
             vb.setGeometry(rect)
             vb.linkedViewChanged(self.main_plot.vb, vb.XAxis)
+
+    def _on_link_y_toggled(self, checked):
+        """Link/unlink all extra ViewBoxes' Y axes to the main one.
+
+        When linked, all traces share the widest Y range (union of individual
+        ranges), so they scale together. When unlinked, each trace gets back
+        its own auto-ranged Y.
+        """
+        main_vb = self.main_plot.vb
+        if checked:
+            # Compute union of current Y ranges across all ViewBoxes
+            y_mins, y_maxs = [], []
+            for vb in self.viewboxes:
+                y_min, y_max = vb.viewRange()[1]
+                y_mins.append(y_min)
+                y_maxs.append(y_max)
+            y_min = min(y_mins)
+            y_max = max(y_maxs)
+            # Disable auto-range on the driver, fix range to the union, then link
+            main_vb.enableAutoRange(axis='y', enable=False)
+            main_vb.setYRange(y_min, y_max, padding=0)
+            for vb in self.viewboxes[1:]:
+                vb.enableAutoRange(axis='y', enable=False)
+                vb.setYLink(main_vb)
+        else:
+            # Break the link and restore per-trace auto-ranging
+            for vb in self.viewboxes[1:]:
+                vb.setYLink(None)
+                vb.enableAutoRange(axis='y', enable=True)
+            main_vb.enableAutoRange(axis='y', enable=True)
 
     def update_data(self, time_arr, params_by_name, fft_freqs=None,
                     fft_magnitudes=None):
