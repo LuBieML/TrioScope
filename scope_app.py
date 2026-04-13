@@ -1579,6 +1579,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.stats_texts = {}
         self._ref_set = {}
         self._stats_pos_cache = {}
+        self._stats_cache = {}
         self._cursor_lines_c1.clear()
         self._cursor_lines_c2.clear()
         self._xy_auto_range = True
@@ -3774,6 +3775,21 @@ class ParameterScopeOscilloscope(QMainWindow):
             QMessageBox.warning(self, "No Data", "No data to export")
             return
 
+        # Warn if any currently enabled traces have no captured data
+        captured = set(self.accumulated_data['params'].keys())
+        missing = [
+            t.get_display_name()
+            for t in self.get_enabled_traces()
+            if t.get_display_name() not in captured
+        ]
+        if missing:
+            QMessageBox.warning(
+                self, "Missing Channels",
+                "The following enabled traces have no captured data and will not be exported:\n\n"
+                + "\n".join(f"  • {m}" for m in missing)
+                + "\n\nRe-run the capture with all desired traces enabled."
+            )
+
         path, _ = QFileDialog.getSaveFileName(
             self, "Export CSV", f"scope_{datetime.now():%Y%m%d_%H%M%S}.csv",
             "CSV Files (*.csv)"
@@ -3783,14 +3799,14 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         try:
             data = self.accumulated_data
+            param_names = list(data['params'].keys())
             with open(path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                param_names = list(data['params'].keys())
                 writer.writerow(['Time'] + param_names)
                 for i in range(len(data['time'])):
                     row = [round(data['time'][i], 6)] + [data['params'][p][i] for p in param_names]
                     writer.writerow(row)
-            self.status_label.setText(f"Exported to {path}")
+            self.status_label.setText(f"Exported {len(param_names)} channel(s) to {path}")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
