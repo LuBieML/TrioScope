@@ -31,7 +31,7 @@ import pyqtgraph.opengl as gl
 pg.setConfigOptions(
     background='#0A0A0A',
     foreground='#d4d4d4',
-    antialias=False,       # AA + width>1 is a Qt software-path; skip for pan/zoom speed
+    antialias=True,       # AA + width>1 is a Qt software-path; skip for pan/zoom speed
     useOpenGL=True,        # Single shared GraphicsLayoutWidget = 1 GL surface, no context switches
 )
 
@@ -193,6 +193,7 @@ SCOPE_PARAMETERS = [
     "CORNER_STATE", "CREEP",
     "D_GAIN", "D_ZONE_MAX", "D_ZONE_MIN", "DAC", "DAC_OUT", "DAC_SCALE",
     "DATUM_IN", "DECEL", "DECEL_ANGLE", "DEMAND_EDGES", "DEMAND_SPEED",
+    "DEMAND_SPEED_NORMALISED",
     "DISTANCE_TO_SYNC", "DPOS",
     "DRIVE_BRAKE_OUTPUT", "DRIVE_CONTROL", "DRIVE_CONTROLWORD",
     "DRIVE_CURRENT", "DRIVE_CW_MODE", "DRIVE_ENABLE", "DRIVE_FE",
@@ -250,6 +251,12 @@ SCOPE_PARAMETERS = [
 
 # Set for fast lookup of channel-type parameters
 CHANNEL_PARAMETERS_SET = set(CHANNEL_PARAMETERS)
+
+# Virtual (computed) parameters: map display name → underlying Trio SCOPE parameter.
+# These are not real controller parameters; their data is derived post-capture.
+_VIRTUAL_PARAM_MAP = {
+    "DEMAND_SPEED_NORMALISED": "DEMAND_SPEED",  # units/servocycle → units/second
+}
 
 TRACE_COLORS = [
     '#03DAC6',  # Teal
@@ -668,10 +675,12 @@ class TraceControl(QFrame):
 
     def get_parameter_string(self):
         param = self.param_combo.currentText()
+        # Virtual params capture their underlying Trio parameter from the controller
+        trio_param = _VIRTUAL_PARAM_MAP.get(param, param)
         idx = self.axis_spin.value()
-        if param in CHANNEL_PARAMETERS_SET:
-            return f"{param}({idx})"
-        return f"{param} AXIS({idx})"
+        if trio_param in CHANNEL_PARAMETERS_SET:
+            return f"{trio_param}({idx})"
+        return f"{trio_param} AXIS({idx})"
 
     def get_display_name(self):
         if self._drive_mode:
@@ -798,8 +807,12 @@ class CompareWindow(QMainWindow):
         self.glw.setBackground('#0A0A0A')
         layout.addWidget(self.glw, 1)
 
-        # Main plot (owns the X axis and the first Y axis)
-        self.main_plot = self.glw.addPlot(row=0, col=0)
+        # Main plot (owns the X axis and the first Y axis). Uses the
+        # oscilloscope-style ViewBox so right-drag rubber-band zoom,
+        # wheel-zoom and double-click reset work the same as the main window.
+        self._main_vb = ScopeViewBox()
+        self.main_plot = self.glw.addPlot(row=0, col=0, viewBox=self._main_vb)
+        self._main_vb.doubleClicked.connect(self._reset_view)
         self.main_plot.showGrid(x=True, y=True, alpha=0.3)
         self.main_plot.setLabel(
             'bottom',
@@ -851,6 +864,29 @@ class CompareWindow(QMainWindow):
         self.main_plot.vb.sigResized.connect(self._sync_viewboxes)
         self._sync_viewboxes()
 
+        # --- Hover crosshair + coordinate readout ---
+        # Vertical line that follows the mouse; per-trace values are read out
+        # in a translucent label anchored in the top-left of the plot.
+        self._vline = pg.InfiniteLine(
+            angle=90, movable=False,
+            pen=pg.mkPen('#888888', width=1, style=Qt.DashLine),
+        )
+        self._vline.setZValue(1000)
+        self.main_plot.addItem(self._vline, ignoreBounds=True)
+        self._vline.hide()
+
+        self._hover_label = pg.TextItem(anchor=(0, 0), color='#d4d4d4',
+                                        fill=pg.mkBrush(0, 0, 0, 180))
+        self._hover_label.setZValue(1001)
+        self.main_plot.addItem(self._hover_label, ignoreBounds=True)
+        self._hover_label.hide()
+
+        # Cache of latest x-array + per-trace y-array for interpolation
+        self._last_x = None
+        self._last_y = [None] * len(self.traces)
+
+        self.main_plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
     def _sync_viewboxes(self):
         rect = self.main_plot.vb.sceneBoundingRect()
         for vb in self.viewboxes[1:]:
@@ -893,21 +929,75 @@ class CompareWindow(QMainWindow):
         if self.fft_mode:
             if fft_freqs is None or not fft_magnitudes:
                 return
-            for curve, trace in zip(self.curves, self.traces):
+            self._last_x = fft_freqs
+            for i, (curve, trace) in enumerate(zip(self.curves, self.traces)):
                 name = trace.get_display_name()
                 mag = fft_magnitudes.get(name)
                 if mag is None or len(mag) == 0:
                     continue
                 curve.setData(fft_freqs, mag, skipFiniteCheck=True)
+                self._last_y[i] = mag
         else:
             if time_arr is None or len(time_arr) == 0:
                 return
-            for curve, trace in zip(self.curves, self.traces):
+            self._last_x = time_arr
+            for i, (curve, trace) in enumerate(zip(self.curves, self.traces)):
                 name = trace.get_display_name()
                 values = params_by_name.get(name)
                 if values is None or len(values) == 0:
                     continue
                 curve.setData(time_arr, values, skipFiniteCheck=True)
+                self._last_y[i] = values
+
+    def _reset_view(self):
+        """Re-enable auto-range on all ViewBoxes after a double-click reset."""
+        for vb in self.viewboxes:
+            vb.enableAutoRange()
+        if self.btn_link_y.isChecked():
+            self.btn_link_y.setChecked(False)
+
+    def _on_mouse_moved(self, scene_pos):
+        """Update crosshair + coordinate readout from the mouse scene position."""
+        vb = self.main_plot.vb
+        if not self.main_plot.sceneBoundingRect().contains(scene_pos):
+            self._vline.hide()
+            self._hover_label.hide()
+            return
+        mouse_point = vb.mapSceneToView(scene_pos)
+        x = mouse_point.x()
+        self._vline.setPos(x)
+        self._vline.show()
+
+        if self._last_x is None or len(self._last_x) == 0:
+            self._hover_label.hide()
+            return
+
+        xs = self._last_x
+        if x < xs[0] or x > xs[-1]:
+            self._hover_label.hide()
+            return
+
+        x_label = ("f" if self.fft_mode else "t")
+        x_unit = ("Hz" if self.fft_mode else "s")
+        lines = [f"{x_label} = {x:.4g} {x_unit}"]
+        for trace, ys in zip(self.traces, self._last_y):
+            if ys is None or len(ys) != len(xs):
+                continue
+            y = float(np.interp(x, xs, ys))
+            color = trace.get_color()
+            name = trace.get_display_name()
+            lines.append(
+                f"<span style='color:{color};'>{name} = {y:.4g}</span>")
+        self._hover_label.setHtml(
+            "<div style='font-family:monospace;font-size:9pt;'>"
+            + "<br/>".join(lines) + "</div>"
+        )
+        # Anchor the label just right of the cursor, near the top of the view
+        x_range, y_range = vb.viewRange()
+        y_top = y_range[1]
+        x_span = x_range[1] - x_range[0]
+        self._hover_label.setPos(x + x_span * 0.01, y_top)
+        self._hover_label.show()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -2657,9 +2747,22 @@ class ParameterScopeOscilloscope(QMainWindow):
         for t in enabled_traces:
             ps = t.get_parameter_string()
             if ps not in seen:
-                seen[ps] = t.get_display_name()
+                raw_param = t.param_combo.currentText() if not t._drive_mode else None
+                if raw_param in _VIRTUAL_PARAM_MAP:
+                    # Virtual params map to an underlying Trio param.  Store raw data under
+                    # the display-name format of the underlying param (e.g. "DEMAND_SPEED(0)")
+                    # so the post-capture injection step can always find it by that key.
+                    underlying = _VIRTUAL_PARAM_MAP[raw_param]
+                    idx = t.axis_spin.value()
+                    if underlying in CHANNEL_PARAMETERS_SET:
+                        display = f"{underlying} Ch({idx})"
+                    else:
+                        display = f"{underlying}({idx})"
+                else:
+                    display = t.get_display_name()
+                seen[ps] = display
                 unique_params.append(ps)
-                unique_display.append(t.get_display_name())
+                unique_display.append(display)
 
         if len(unique_params) > 8:
             QMessageBox.warning(self, "Too Many Parameters",
@@ -3062,6 +3165,30 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self._time_chunks = [all_time]
                 self._param_chunks = {k: [v] for k, v in all_params.items()}
             seg_breaks = list(self._segment_breaks)
+
+        # Inject virtual derived channels.
+        # For each enabled virtual-param trace, compute its value from the underlying
+        # raw data that was captured under the underlying param's display-name key.
+        # Currently: DEMAND_SPEED_NORMALISED = DEMAND_SPEED / servo_period_sec
+        #            (converts units/servocycle → units/second to match MSPEED units).
+        if self.scope_engine is not None and self.scope_engine.servo_period_sec:
+            sp = self.scope_engine.servo_period_sec
+            for trace in self.get_enabled_traces():
+                if trace._drive_mode:
+                    continue
+                raw_param = trace.param_combo.currentText()
+                if raw_param not in _VIRTUAL_PARAM_MAP:
+                    continue
+                underlying = _VIRTUAL_PARAM_MAP[raw_param]
+                idx = trace.axis_spin.value()
+                # Build the key under which the raw data was stored (display-name format)
+                if underlying in CHANNEL_PARAMETERS_SET:
+                    src_key = f"{underlying} Ch({idx})"
+                else:
+                    src_key = f"{underlying}({idx})"
+                dst_key = trace.get_display_name()  # e.g. "DEMAND_SPEED_NORMALISED(0)"
+                if src_key in all_params:
+                    all_params[dst_key] = all_params[src_key] / sp
 
         self.accumulated_data = {
             'time': all_time,
