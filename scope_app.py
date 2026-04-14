@@ -978,13 +978,17 @@ class CompareWindow(QMainWindow):
             self._hover_label.hide()
             return
 
+        idx = np.searchsorted(xs, x)
+        if idx > 0 and (idx == len(xs) or abs(xs[idx - 1] - x) <= abs(xs[idx] - x)):
+            idx -= 1
+
         x_label = ("f" if self.fft_mode else "t")
         x_unit = ("Hz" if self.fft_mode else "s")
         lines = [f"{x_label} = {x:.4g} {x_unit}"]
         for trace, ys in zip(self.traces, self._last_y):
             if ys is None or len(ys) != len(xs):
                 continue
-            y = float(np.interp(x, xs, ys))
+            y = float(ys[idx])
             color = trace.get_color()
             name = trace.get_display_name()
             lines.append(
@@ -1105,8 +1109,10 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Thread-safe data buffer
         self._data_lock = threading.Lock()
-        self._time_chunks = []
-        self._param_chunks = {}
+        self._buffer_capacity = 100_000
+        self._time_buffer = np.empty(self._buffer_capacity, dtype=np.float64)
+        self._param_buffers = {}
+        self._buffer_len = 0
         self._segment_breaks = []  # sample indices where capture restarted
 
         # Scrolling window settings
@@ -1182,10 +1188,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._create_ui()
         self._load_settings()
 
-        # Update timer — drives plot refresh at ~30fps
+        # Update timer — drives plot refresh at ~60fps
         self._update_timer = QTimer(self)
         self._update_timer.timeout.connect(self._on_update_timer)
-        self._update_timer.setInterval(33)
+        self._update_timer.setInterval(16)
 
     def _create_ui(self):
         """Create main UI"""
@@ -1995,26 +2001,21 @@ class ParameterScopeOscilloscope(QMainWindow):
             if not self._update_timer.isActive() and self.accumulated_data is not None:
                 self._render_plots()
 
-    def _get_value_at_time(self, param_name, t):
-        """Interpolate parameter value at time t from accumulated data."""
+    def _get_nearest_index(self, t):
         if self.accumulated_data is None:
             return None
         time_arr = self.accumulated_data['time']
-        if len(time_arr) == 0 or param_name not in self.accumulated_data['params']:
+        if len(time_arr) == 0:
             return None
-        values = self.accumulated_data['params'][param_name]
-        # Clamp to data range
         if t <= time_arr[0]:
-            return float(values[0])
+            return 0
         if t >= time_arr[-1]:
-            return float(values[-1])
-        # Find nearest sample (use searchsorted for efficiency)
+            return len(time_arr) - 1
         idx = np.searchsorted(time_arr, t)
-        # Pick the closer of the two neighboring samples
         if idx > 0 and (idx >= len(time_arr) or
                         abs(time_arr[idx - 1] - t) <= abs(time_arr[idx] - t)):
-            idx = idx - 1
-        return float(values[idx])
+            idx -= 1
+        return idx
 
     def _update_cursor_readout(self):
         """Update the cursor readout panel with current cursor values."""
@@ -2031,6 +2032,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         t2 = self._cursor_pos['c2']
         dt = t2 - t1
 
+        idx1 = self._get_nearest_index(t1)
+        idx2 = self._get_nearest_index(t2)
+
         # Build HTML table for readout
         param_cells_c1 = []
         param_cells_c2 = []
@@ -2039,8 +2043,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         for trace in enabled_traces:
             pname = trace.get_display_name()
             color = trace.get_color()
-            v1 = self._get_value_at_time(pname, t1)
-            v2 = self._get_value_at_time(pname, t2)
+            if self.accumulated_data is not None and pname in self.accumulated_data['params'] and idx1 is not None and idx2 is not None:
+                v1 = float(self.accumulated_data['params'][pname][idx1])
+                v2 = float(self.accumulated_data['params'][pname][idx2])
+            else:
+                v1 = v2 = None
             v1_str = f"{v1:.4f}" if v1 is not None else "---"
             v2_str = f"{v2:.4f}" if v2 is not None else "---"
             if v1 is not None and v2 is not None:
@@ -2814,8 +2821,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.accumulated_data = None
             self.total_samples = 0
             with self._data_lock:
-                self._time_chunks = []
-                self._param_chunks = {}
+                self._buffer_len = 0
                 self._segment_breaks = []
 
             # Update UI
@@ -2902,8 +2908,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.accumulated_data = None
             self.total_samples = 0
             with self._data_lock:
-                self._time_chunks = []
-                self._param_chunks = {}
+                self._buffer_len = 0
                 self._segment_breaks = []
 
             # Update UI
@@ -3116,19 +3121,39 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._pending_stop_ui = True
 
     def _push_data(self, data):
-        """Thread-safe: push new data chunk from capture thread"""
+        """Thread-safe: push new data chunk from capture thread into pre-allocated buffer"""
+        time_chunk = data['time']
+        n_new = len(time_chunk)
+        if n_new == 0:
+            return
+
         with self._data_lock:
-            self._time_chunks.append(data['time'])
+            while self._buffer_len + n_new > self._buffer_capacity:
+                self._buffer_capacity = max(100_000, self._buffer_capacity * 2)
+                new_time = np.empty(self._buffer_capacity, dtype=np.float64)
+                new_time[:self._buffer_len] = self._time_buffer[:self._buffer_len]
+                self._time_buffer = new_time
+                for k, v in self._param_buffers.items():
+                    new_v = np.empty(self._buffer_capacity, dtype=v.dtype)
+                    new_v[:self._buffer_len] = v[:self._buffer_len]
+                    self._param_buffers[k] = new_v
+
+            start = self._buffer_len
+            end = start + n_new
+            self._time_buffer[start:end] = time_chunk
             for param_name, values in data['params'].items():
-                if param_name not in self._param_chunks:
-                    self._param_chunks[param_name] = []
-                self._param_chunks[param_name].append(values)
+                if param_name not in self._param_buffers:
+                    self._param_buffers[param_name] = np.empty(self._buffer_capacity, dtype=values.dtype)
+                    if start > 0:
+                        self._param_buffers[param_name][:start] = values[0] if len(values) > 0 else 0
+                self._param_buffers[param_name][start:end] = values
+
+            self._buffer_len += n_new
 
     def _push_segment_break(self):
         """Record current sample count as a segment boundary (capture restart)."""
         with self._data_lock:
-            total = sum(len(c) for c in self._time_chunks)
-            self._segment_breaks.append(total)
+            self._segment_breaks.append(self._buffer_len)
 
     _pending_progress = ""
     _pending_status = ""
@@ -3156,20 +3181,11 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Consolidate data chunks under lock
         with self._data_lock:
-            if not self._time_chunks:
+            if self._buffer_len == 0:
                 return
-            # Only concatenate if new chunks arrived (more than the 1 consolidated chunk)
-            if len(self._time_chunks) == 1:
-                all_time = self._time_chunks[0]
-                all_params = {k: v[0] for k, v in self._param_chunks.items()}
-            else:
-                all_time = np.concatenate(self._time_chunks)
-                all_params = {}
-                for param_name, chunks in self._param_chunks.items():
-                    all_params[param_name] = np.concatenate(chunks)
-                # Reset to single consolidated chunk
-                self._time_chunks = [all_time]
-                self._param_chunks = {k: [v] for k, v in all_params.items()}
+            n = self._buffer_len
+            all_time = self._time_buffer[:n]
+            all_params = {k: v[:n] for k, v in self._param_buffers.items()}
             seg_breaks = list(self._segment_breaks)
 
         # Inject virtual derived channels.
@@ -3457,10 +3473,16 @@ class ParameterScopeOscilloscope(QMainWindow):
         if self.auto_scroll and self.is_running:
             max_time = time_arr[-1]
             min_time = max(0, max_time - self.window_duration)
+            slice_min_time = max(0, min_time - self.window_duration * 0.1)
+            slice_idx = np.searchsorted(time_arr, slice_min_time)
+            render_time_arr = time_arr[slice_idx:]
             for trace in enabled_traces:
                 if not trace.is_fft() and id(trace) in self.plot_items:
                     self.plot_items[id(trace)].setXRange(min_time, max_time, padding=0)
                     break
+        else:
+            render_time_arr = time_arr
+            slice_idx = 0
 
         # Precompute FFT shared data if any trace needs it
         has_fft_traces = any(t.is_fft() for t in enabled_traces)
@@ -3629,6 +3651,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                     continue
 
                 values = plot_data['params'][param_name]
+                render_values = values[slice_idx:] if self.auto_scroll and self.is_running else values
 
                 if trace_id not in self.curves:
                     if pi.legend is None:
@@ -3650,7 +3673,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 prev_len = self._stats_cache.get(('len', trace_id), -1)
                 data_changed = cur_len != prev_len
                 if data_changed:
-                    self.curves[trace_id].setData(time_arr, values, skipFiniteCheck=True)
+                    self.curves[trace_id].setData(render_time_arr, render_values, skipFiniteCheck=True)
                     self._stats_cache[('len', trace_id)] = cur_len
 
                 # ── Reference (pinned) trace overlay ──
@@ -3754,8 +3777,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.accumulated_data = None
         self.total_samples = 0
         with self._data_lock:
-            self._time_chunks = []
-            self._param_chunks = {}
+            self._buffer_len = 0
             self._segment_breaks = []
         self.curves = {}
         self.ref_curves = {}
@@ -3890,8 +3912,17 @@ class ParameterScopeOscilloscope(QMainWindow):
 
             # Also populate chunk buffers so further captures can append
             with self._data_lock:
-                self._time_chunks = [time_arr]
-                self._param_chunks = {k: [v] for k, v in params.items()}
+                n_import = len(time_arr)
+                if n_import > self._buffer_capacity:
+                    self._buffer_capacity = max(100_000, n_import * 2)
+                    self._time_buffer = np.empty(self._buffer_capacity, dtype=np.float64)
+                    self._param_buffers = {}
+                self._time_buffer[:n_import] = time_arr
+                for k, v in params.items():
+                    buf = np.empty(self._buffer_capacity, dtype=v.dtype)
+                    buf[:n_import] = v
+                    self._param_buffers[k] = buf
+                self._buffer_len = n_import
                 self._segment_breaks = []
 
             # Ensure we're not in auto-scroll/running state
