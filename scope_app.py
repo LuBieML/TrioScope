@@ -1664,6 +1664,9 @@ class ParameterScopeOscilloscope(QMainWindow):
             plot_item.setLabel('bottom', '')
         plot_item.setLabel('left', '')
 
+        # Fix left-axis width so all plots align regardless of label width
+        plot_item.getAxis('left').setWidth(65)
+
         # Y auto-range follows visible data
         plot_item.enableAutoRange(axis='y', enable=True)
         # NOTE: setAutoVisible(y=True) forces a Y-bounds rescan of visible X data
@@ -1687,6 +1690,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         else:
             plot_item.setLabel('bottom', '')
         plot_item.setLabel('left', 'Magnitude', color='#d4d4d4')
+        plot_item.getAxis('left').setWidth(65)
         plot_item.enableAutoRange(axis='y', enable=True)
         # NOTE: setAutoVisible(y=True) forces a Y-bounds rescan of visible X data
         # on every pan tick — ~100 Hz × N curves × N points. Leave it off;
