@@ -40,6 +40,7 @@ src_path = Path(__file__).parent / 'src'
 sys.path.insert(0, str(src_path))
 
 try:
+    from version import __version__
     import Trio_UnifiedApi as TUA
     from scope.scope_engine import ScopeEngine, ScopeParameterParser
     from scope.drive_scope_engine import (
@@ -1073,7 +1074,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Parameter Scope - Oscilloscope Mode")
+        self.setWindowTitle(f"TrioScope v{__version__} - Parameter Scope")
         self.resize(1400, 900)
 
         # Trio connection
@@ -4071,6 +4072,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             "<h2>TrioScope</h2>"
             "<p>An oscilloscope-style data capture and analysis tool for "
             "Trio Motion Controllers and Trio DX-series servo drives.</p>"
+            f"<p><b>Version: {__version__}</b></p>"
             "<p>Real-time multi-trace plotting, FFT, XY/XYZ/XYZW path views, "
             "AI-powered tuning analysis, and EtherCAT diagnostics.</p>"
             "<p>Built with PySide6, pyqtgraph, and Trio_UnifiedApi.</p>"

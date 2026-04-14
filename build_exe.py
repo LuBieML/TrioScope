@@ -8,6 +8,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent
+
+# Add src to path so we can import the version string
+sys.path.insert(0, str(ROOT / "src"))
+try:
+    from version import __version__
+except ImportError:
+    __version__ = "1.0.0"
+
 VENV_SITE = ROOT / ".venv" / "Lib" / "site-packages"
 
 # Trio .pyd and its companion DLLs
@@ -30,7 +38,7 @@ if help_dir.is_dir():
 
 cmd = [
     sys.executable, "-m", "PyInstaller",
-    "--name", "TrioScope",
+    "--name", f"TrioScope_v{__version__}",
     "--onedir",
     "--windowed",
     # Include local src/ package
@@ -70,4 +78,4 @@ print("Running PyInstaller...")
 print(" ".join(cmd))
 subprocess.run(cmd, check=True)
 
-print("\nBuild complete! Output in dist/TrioScope/")
+print(f"\nBuild complete! Output in dist/TrioScope_v{__version__}/")
