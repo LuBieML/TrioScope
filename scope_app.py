@@ -1177,6 +1177,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Compare overlay (fullscreen) — None when closed
         self._compare_window = None
 
+        # Main scope window hover visuals
+        self._vlines = {}         # {trace_id: pg.InfiniteLine}
+        self._hover_values = {}   # {trace_id: value_str}
+
         # Pan/zoom debounce: sigRangeChanged fires per mouse event × N linked views (O(N²))
         self._stats_reposition_scheduled = False
         self._pending_stats_vbs = set()
@@ -1456,6 +1460,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.plot_splitter = self.plot_layout_widget
         right_layout.addWidget(self.plot_layout_widget, 1)
 
+        # Connect mouse movement for hover readouts
+        self.plot_layout_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
         # 3D Plot area (hidden by default)
         self.gl_widget = gl.GLViewWidget()
         self.gl_widget.setBackgroundColor('#0A0A0A')
@@ -1590,6 +1597,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._cursor_lines_c1.clear()
         self._cursor_lines_c2.clear()
         self._xy_auto_range = True
+        self._vlines.clear()
+        self._hover_values.clear()
 
         enabled_traces = self.get_enabled_traces()
 
@@ -1652,6 +1661,15 @@ class ParameterScopeOscilloscope(QMainWindow):
             pi.getAxis('left').setTextPen(pg.mkPen(color))
 
             self.plot_items[id(trace)] = pi
+
+            # Add vertical line for hover readout
+            if not trace.is_fft():
+                vline = pg.InfiniteLine(angle=90, movable=False,
+                                        pen=pg.mkPen('#888888', width=1, style=Qt.DashLine))
+                vline.setZValue(1000)
+                vline.hide()
+                pi.addItem(vline, ignoreBounds=True)
+                self._vlines[id(trace)] = vline
 
         # Link X-axes for synchronized scrolling (partitioned by time/FFT)
         self._update_x_links()
@@ -3699,12 +3717,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                     prev_stats = self._stats_cache.get(trace_id)
                     if prev_stats != (v_min_s, v_max_s):
                         self._stats_cache[trace_id] = (v_min_s, v_max_s)
-                        stats_html = (
-                            f'<span style="font-family: Segoe UI; font-size: 8pt;">'
-                            f'<span style="color: #FF9999;">Min: {v_min_s}</span><br>'
-                            f'<span style="color: #99FF99;">Max: {v_max_s}</span>'
-                            f'</span>'
-                        )
+                        stats_html = self._get_stats_html(trace_id, v_min_s, v_max_s)
                         if trace_id not in self.stats_texts:
                             txt = pg.TextItem(anchor=(1, 0))
                             txt.setHtml(stats_html)
@@ -3723,6 +3736,90 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Update cursor readout if cursors are active (time-domain traces only)
         if self._cursors_enabled:
             self._update_cursor_readout()
+
+    def _on_mouse_moved(self, scene_pos):
+        """Update hover readouts on mouse move in the main window."""
+        if self.plot_mode != 'time':
+            self._hide_hover_readouts()
+            return
+
+        if not self.plot_layout_widget.sceneBoundingRect().contains(scene_pos):
+            self._hide_hover_readouts()
+            return
+
+        # Find a valid time-domain ViewBox to map the scene position
+        target_vb = None
+        for trace in self.get_enabled_traces():
+            if not trace.is_fft() and id(trace) in self.plot_items:
+                target_vb = self.plot_items[id(trace)].getViewBox()
+                break
+
+        if target_vb is None:
+            self._hide_hover_readouts()
+            return
+
+        x = target_vb.mapSceneToView(scene_pos).x()
+
+        if self.accumulated_data is None or len(self.accumulated_data['time']) == 0:
+            self._hide_hover_readouts()
+            return
+
+        time_arr = self.accumulated_data['time']
+        if x < time_arr[0] or x > time_arr[-1]:
+            self._hide_hover_readouts()
+            return
+
+        idx = np.searchsorted(time_arr, x)
+        if idx > 0 and (idx == len(time_arr) or abs(time_arr[idx - 1] - x) <= abs(time_arr[idx] - x)):
+            idx -= 1
+
+        params = self.accumulated_data['params']
+        self._hover_values.clear()
+
+        for trace in self.get_enabled_traces():
+            tid = id(trace)
+            if trace.is_fft() or tid not in self.plot_items:
+                continue
+
+            name = trace.get_display_name()
+            if name in params and len(params[name]) > idx:
+                val = float(params[name][idx])
+                self._hover_values[tid] = f"{val:.4g}"
+
+                if tid in self._vlines:
+                    self._vlines[tid].setPos(x)
+                    self._vlines[tid].show()
+
+        self._update_all_stats_texts()
+
+    def _hide_hover_readouts(self):
+        """Hide all vertical lines and clear hover values."""
+        for vline in self._vlines.values():
+            vline.hide()
+        self._hover_values.clear()
+        self._update_all_stats_texts()
+
+    def _update_all_stats_texts(self):
+        """Refresh all stats TextItems with cached min/max and current hover values."""
+        if not hasattr(self, 'stats_texts') or not self.stats_texts:
+            return
+        for trace_id, txt in self.stats_texts.items():
+            if trace_id in self._stats_cache:
+                v_min_s, v_max_s = self._stats_cache[trace_id]
+                html = self._get_stats_html(trace_id, v_min_s, v_max_s)
+                txt.setHtml(html)
+
+    def _get_stats_html(self, trace_id, v_min_s, v_max_s):
+        """Helper to combine min, max, and current hover value into an HTML string."""
+        html = (
+            f'<span style="font-family: Segoe UI; font-size: 8pt;">'
+            f'<span style="color: #FF9999;">Min: {v_min_s}</span><br>'
+            f'<span style="color: #99FF99;">Max: {v_max_s}</span>'
+        )
+        if trace_id in self._hover_values:
+            html += f'<br><span style="color: #d4d4d4;">Cur: {self._hover_values[trace_id]}</span>'
+        html += '</span>'
+        return html
 
     # ─── Controls ───────────────────────────────────────────────────
 
