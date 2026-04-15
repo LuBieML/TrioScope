@@ -1192,7 +1192,6 @@ class TunerPanel(QDockWidget):
         from .signal_metrics import _find_channel
 
         ch_dpos = _find_channel(params, "dpos", "demandposition", "targetposition")
-        ch_mpos = _find_channel(params, "mpos", "measuredposition", "actualposition")
         ch_mvel = _find_channel(
             params, "mspeed", "measuredvel", "actualvel", "vactual",
         )
@@ -1200,43 +1199,40 @@ class TunerPanel(QDockWidget):
         ch_fe = _find_channel(params, "drivefe", "fe", "followingerror")
 
         dpos = params.get(ch_dpos) if ch_dpos else None
-        mpos = params.get(ch_mpos) if ch_mpos else None
         mvel = params.get(ch_mvel) if ch_mvel else None
         dvel_raw = params.get(ch_dvel) if ch_dvel else None
         drive_fe_raw = params.get(ch_fe) if ch_fe else None
 
-        if dpos is None or mpos is None:
+        if dpos is None:
             self._status_label.setText(
-                "Need DPOS and MPOS channels for analysis. "
-                "Capture demand position and measured position."
+                "Need DPOS channel for analysis. "
+                "Capture demand position."
             )
             self._status_label.setStyleSheet(f"color: {_AMBER}; font-size: 8pt;")
             return
 
-        if dvel_raw is None:
+        if drive_fe_raw is None:
             self._status_label.setText(
-                "DEMAND_SPEED not captured \u2014 velocity-loop analysis skipped. "
-                "Add DEMAND_SPEED to the scope channel list and re-capture."
-            )
-            self._status_label.setStyleSheet(f"color: {_AMBER}; font-size: 8pt;")
-            return
-
-        if not servo_period_sec or servo_period_sec <= 0:
-            self._status_label.setText(
-                "Servo period unknown \u2014 cannot scale DEMAND_SPEED. "
-                "Reconnect to the controller and re-capture."
+                "Need DRIVE_FE channel for analysis. "
+                "Capture drive following error."
             )
             self._status_label.setStyleSheet(f"color: {_AMBER}; font-size: 8pt;")
             return
 
         command = np.asarray(dpos, dtype=np.float64)
-        response = np.asarray(mpos, dtype=np.float64)
         velocity = np.asarray(mvel, dtype=np.float64) if mvel is not None else None
-        demand_velocity = np.asarray(dvel_raw, dtype=np.float64) / float(servo_period_sec)
-        drive_fe = (
-            np.asarray(drive_fe_raw, dtype=np.float64)
-            if drive_fe_raw is not None else None
-        )
+        
+        demand_velocity = None
+        if dvel_raw is not None:
+            if not servo_period_sec or servo_period_sec <= 0:
+                self._status_label.setText(
+                    "Servo period unknown \u2014 cannot scale DEMAND_SPEED. "
+                    "Reconnect to the controller and re-capture."
+                )
+                self._status_label.setStyleSheet(f"color: {_AMBER}; font-size: 8pt;")
+                return
+            demand_velocity = np.asarray(dvel_raw, dtype=np.float64) / float(servo_period_sec)
+        drive_fe = np.asarray(drive_fe_raw, dtype=np.float64)
         time_np = np.asarray(time_arr, dtype=np.float64)
 
         self._status_label.setText("Analyzing\u2026")
@@ -1244,8 +1240,7 @@ class TunerPanel(QDockWidget):
 
         try:
             pos_m, vel_m = ClassicalTuner.analyze_step_response(
-                time_np, response, command, velocity, demand_velocity,
-                drive_fe=drive_fe,
+                time_np, command, drive_fe, velocity, demand_velocity,
             )
         except Exception as exc:
             logger.exception("Step response analysis failed")
@@ -1261,11 +1256,7 @@ class TunerPanel(QDockWidget):
 
         n_samples = len(time_np)
         dur_s = float(time_np[-1] - time_np[0])
-        channels_used = []
-        if ch_dpos:
-            channels_used.append("DPOS")
-        if ch_mpos:
-            channels_used.append("MPOS")
+        channels_used = ["DPOS", "DRIVE_FE"]
         if ch_mvel:
             channels_used.append("MSPEED")
         if ch_dvel:

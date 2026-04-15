@@ -1185,6 +1185,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._pending_detail_vbs = set()
         self._pending_detail_vb_refs = {}
 
+        self._hover_vlines = {}
+        self._hover_labels = {}
+        self._last_freqs = None
+
         self._create_ui()
         self._load_settings()
 
@@ -1450,6 +1454,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # full paintEvent per widget per pan tick (N-linked axes = N repaints).
         self.plot_layout_widget = pg.GraphicsLayoutWidget()
         self.plot_layout_widget.setBackground('#0A0A0A')
+        self.plot_layout_widget.scene().sigMouseMoved.connect(self._on_main_plot_mouse_moved)
         self.plot_layout_widget.ci.setSpacing(4)
         self.plot_layout_widget.ci.setContentsMargins(0, 0, 0, 0)
         # Kept for backward compat with show/hide and layout code paths
@@ -1586,6 +1591,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.stats_texts = {}
         self._ref_set = {}
         self._stats_pos_cache = {}
+        self._hover_vlines.clear()
+        self._hover_labels.clear()
         self._stats_cache = {}
         self._cursor_lines_c1.clear()
         self._cursor_lines_c2.clear()
@@ -1597,6 +1604,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             pi = self._create_scope_plot()
             self._configure_plot(pi, show_xlabel=True)
             self.plot_items['empty'] = pi
+            self._add_hover_elements_to_plot(pi, 'empty')
             return
 
         # XY mode: single 2D plot with first two traces as X and Y
@@ -1606,6 +1614,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 pi = self._create_scope_plot()
                 self._configure_plot(pi, show_xlabel=True)
                 self.plot_items['empty'] = pi
+                self._add_hover_elements_to_plot(pi, 'empty')
                 return
 
             pi = self._create_scope_plot()
@@ -1628,6 +1637,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             vb.sigRangeChangedManually.connect(self._on_manual_range_change)
             vb.sigRangeChangedManually.connect(self._on_xy_manual_zoom)
             self.plot_items['xy'] = pi
+            self._add_hover_elements_to_plot(pi, 'xy')
             return
 
         # XYZ/XYZW mode: 3D OpenGL view
@@ -1652,6 +1662,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             pi.getAxis('left').setTextPen(pg.mkPen(color))
 
             self.plot_items[id(trace)] = pi
+            self._add_hover_elements_to_plot(pi, id(trace))
 
         # Link X-axes for synchronized scrolling (partitioned by time/FFT)
         self._update_x_links()
@@ -1724,17 +1735,17 @@ class ParameterScopeOscilloscope(QMainWindow):
                if i in self._pending_stats_vb_refs]
         self._pending_stats_vbs.clear()
         self._pending_stats_vb_refs.clear()
-        if not self.stats_texts:
-            return
         for vb in vbs:
             for trace_id, pi in self.plot_items.items():
-                if trace_id in self.stats_texts and pi.getViewBox() is vb:
+                if pi.getViewBox() is vb:
                     view_range = vb.viewRange()
                     new_pos = (view_range[0][1], view_range[1][1])
-                    if self._stats_pos_cache.get(trace_id) != new_pos:
-                        self.stats_texts[trace_id].setPos(*new_pos)
-                        self._stats_pos_cache[trace_id] = new_pos
-                    break
+                    if trace_id in self.stats_texts:
+                        if self._stats_pos_cache.get(trace_id) != new_pos:
+                            self.stats_texts[trace_id].setPos(*new_pos)
+                            self._stats_pos_cache[trace_id] = new_pos
+                    if trace_id in self._hover_labels:
+                        self._hover_labels[trace_id].setPos(*new_pos)
 
     def _update_curve_detail(self, vb):
         """Debounced: coalesce dot-detail updates to end of pan burst."""
@@ -1798,6 +1809,104 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._xy_auto_range = False
         if not self.is_running and self.accumulated_data is not None:
             self._render_plots()
+
+    def _add_hover_elements_to_plot(self, plot_item, plot_key):
+        """Add hover crosshair and label to a plot item."""
+        vline = pg.InfiniteLine(
+            angle=90, movable=False,
+            pen=pg.mkPen('#888888', width=1, style=Qt.DashLine),
+        )
+        vline.setZValue(1000)
+        plot_item.addItem(vline, ignoreBounds=True)
+        vline.hide()
+        self._hover_vlines[plot_key] = vline
+
+        label = pg.TextItem(anchor=(1, 0), color='#d4d4d4', fill=None)
+        label.setZValue(1001)
+        plot_item.addItem(label, ignoreBounds=True)
+        label.hide()
+        self._hover_labels[plot_key] = label
+
+    def _on_main_plot_mouse_moved(self, scene_pos):
+        """Update crosshair and value readout on all main window plots."""
+        if self.plot_mode in ('xyz', 'xyzw') or not self.plot_layout_widget.isVisible():
+            return
+
+        active_plot_key = None
+        active_pi = None
+        for key, pi in self.plot_items.items():
+            if pi.sceneBoundingRect().contains(scene_pos):
+                active_plot_key = key
+                active_pi = pi
+                break
+
+        if active_pi is None:
+            for vline in self._hover_vlines.values(): vline.hide()
+            for label in self._hover_labels.values(): label.hide()
+            return
+
+        vb_active = active_pi.getViewBox()
+        mouse_point = vb_active.mapSceneToView(scene_pos)
+        x = mouse_point.x()
+
+        for key, pi in self.plot_items.items():
+            vline = self._hover_vlines.get(key)
+            label = self._hover_labels.get(key)
+            if not vline or not label:
+                continue
+
+            # Update crosshair and value readout on all plots natively
+            vb = pi.getViewBox()
+            vline.setPos(x)
+            vline.show()
+
+            if self.accumulated_data is None or len(self.accumulated_data['time']) == 0:
+                label.hide()
+                continue
+
+            html_lines = []
+            if self.plot_mode == 'xy':
+                enabled = self.get_enabled_traces()
+                if len(enabled) >= 2:
+                    if key == active_plot_key:
+                        html_lines.append(f"<span style='color:{enabled[0].get_color()}'>{enabled[0].get_display_name()} = {mouse_point.x():.4g}</span>")
+                        html_lines.append(f"<span style='color:{enabled[1].get_color()}'>{enabled[1].get_display_name()} = {mouse_point.y():.4g}</span>")
+            else:  # time mode
+                trace = next((t for t in self.traces if id(t) == key), None)
+                if not trace:
+                    continue
+
+                if trace.is_fft():
+                    freqs = self._last_freqs
+                    cached = self._fft_cache.get(key)
+                    if freqs is None or not cached or 'magnitude' not in cached:
+                        continue
+                    mags = cached['magnitude']
+                    if x < freqs[0] or x > freqs[-1]: continue
+                    idx = np.searchsorted(freqs, x)
+                    html_lines.append(f"f = {freqs[idx]:.4g} Hz")
+                    html_lines.append(f"<span style='color:{trace.get_color()};'>Mag: {mags[idx]:.4g}</span>")
+                else:
+                    time_arr = self.accumulated_data['time']
+                    pname = trace.get_display_name()
+                    values = self.accumulated_data['params'].get(pname)
+                    if values is None or x < time_arr[0] or x > time_arr[-1]: continue
+                    idx = np.searchsorted(time_arr, x)
+                    html_lines.append(f"t = {time_arr[idx]:.4g} s")
+                    html_lines.append(f"<span style='color:{trace.get_color()};'>Cur: {values[idx]:.4f}</span>")
+
+            if html_lines:
+                label.setHtml(
+                    "<div style='font-family: Segoe UI; font-size: 8pt; text-align: right;'>"
+                    "<br><br>" + "<br/>".join(html_lines) + "</div>"
+                )
+                x_range, y_range = vb.viewRange()
+                x_right = x_range[1]
+                y_top = y_range[1]
+                label.setPos(x_right, y_top)
+                label.show()
+            else:
+                label.hide()
 
     # ─── Compare overlay ─────────────────────────────────────────
 
@@ -3544,6 +3653,9 @@ class ParameterScopeOscilloscope(QMainWindow):
                 fft_cursor_key = (round(self._cursor_pos['c1'], 6),
                                   round(self._cursor_pos['c2'], 6)) if self._cursors_enabled else None
         self._fft_dirty = False
+        if has_fft_traces:
+            self._last_freqs = freqs
+
 
         for trace in enabled_traces:
             trace_id = id(trace)
@@ -3645,6 +3757,8 @@ class ParameterScopeOscilloscope(QMainWindow):
                         if self._stats_pos_cache.get(trace_id) != new_pos:
                             self.stats_texts[trace_id].setPos(*new_pos)
                             self._stats_pos_cache[trace_id] = new_pos
+                        if trace_id in self._hover_labels:
+                            self._hover_labels[trace_id].setPos(*new_pos)
             else:
                 # ── Time-domain rendering for this trace ──
                 if param_name not in plot_data['params']:
@@ -3719,6 +3833,8 @@ class ParameterScopeOscilloscope(QMainWindow):
                     if self._stats_pos_cache.get(trace_id) != new_pos:
                         self.stats_texts[trace_id].setPos(*new_pos)
                         self._stats_pos_cache[trace_id] = new_pos
+                    if trace_id in self._hover_labels:
+                        self._hover_labels[trace_id].setPos(*new_pos)
 
         # Update cursor readout if cursors are active (time-domain traces only)
         if self._cursors_enabled:

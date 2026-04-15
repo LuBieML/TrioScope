@@ -5,9 +5,13 @@ Two-level analysis:
   1. Velocity loop — compares MSPEED against demand velocity derived from the
      command profile.  Detects overshoot, ringing, and tracking errors during
      accel/cruise phases.
-  2. Position loop — analyses following-error (FE = command − response) during
-     and after the profiled move.  Measures overshoot, oscillation, settling
+  2. Position loop — analyses DRIVE_FE (drive following error) during and after
+     the profiled move.  DPOS provides the motion-profile structure (boundaries,
+     step size, phase segmentation).  Measures overshoot, oscillation, settling
      time, steady-state error, damping, and following error during motion.
+
+     MPOS is NOT required — DRIVE_FE is the single source of error information,
+     giving the most accurate view of what the drive itself sees.
 
 All analysis is designed for real profiled moves (trapezoidal / S-curve ramps),
 NOT ideal step inputs.
@@ -191,13 +195,16 @@ class ClassicalTuner:
     @staticmethod
     def analyze_step_response(
         time_arr: np.ndarray,
-        response: np.ndarray,
         command: np.ndarray,
+        drive_fe: np.ndarray,
         velocity: np.ndarray | None = None,
         demand_velocity: np.ndarray | None = None,
-        drive_fe: np.ndarray | None = None,
     ) -> tuple[StepResponseMetrics, VelocityLoopMetrics | None]:
         """Analyse a profiled-move capture for position-loop behaviour.
+
+        Uses DRIVE_FE (drive following error) as the sole error source and
+        DPOS (command) for profile structure: boundaries, step size, and
+        phase segmentation.  MPOS is not required.
 
         Returns (position_metrics, velocity_metrics_or_None).
         """
@@ -205,13 +212,7 @@ class ClassicalTuner:
             return (StepResponseMetrics(), None)
 
         dt = float(np.median(np.diff(time_arr)))
-        # Prefer drive-reported FE when available — matches what the drive
-        # itself sees (accounts for feedback ratio, sampling offsets, and
-        # any internal compensation).  Fall back to command − response.
-        if drive_fe is not None and len(drive_fe) == len(time_arr):
-            fe = np.asarray(drive_fe, dtype=np.float64)
-        else:
-            fe = command - response
+        fe = np.asarray(drive_fe, dtype=np.float64)
         dvel = np.gradient(command, time_arr)
         v_peak = float(np.max(np.abs(dvel)))
 
@@ -268,49 +269,51 @@ class ClassicalTuner:
         zero_crossings = int(np.sum(sign_changes != 0))
         oscillation_count = zero_crossings // 2
 
-        # Settling time — time from move-end until MPOS stops changing for
-        # N consecutive samples (mechanical settle, not FE-band).  MPOS is
-        # considered "stable" when |diff(MPOS)| stays below a small fraction
-        # of step_size.  This captures true mechanical settling including
-        # ringdown / low-frequency oscillation that FE-band would miss.
-        mpos_settle = response[settle_mask]
-        dpos_settle = command[settle_mask]
+        # Steady-state error — mean FE in last 10% of settle window
+        ss_tail_len = max(1, len(fe_settle) // 10)
+        fe_steady = float(np.mean(fe_settle[-ss_tail_len:]))
+        steady_state_error = abs(fe_steady) / step_size
+
+        # Settling time — when the peak-to-peak ringing envelope decays to a steady state.
         settling_time_ms = 0.0
-        if len(mpos_settle) >= 2:
-            # Thresholds: 0.05% of step size, floored to encoder-noise level.
-            stable_thresh = max(5e-4 * step_size, 1e-9)
-            # Position error threshold — MPOS must also be near DPOS.
-            pos_err_thresh = max(2e-3 * step_size, stable_thresh)
-            # Window length: 100 samples minimum (or ~100 ms worth).
-            win_samples = max(100, int(round(0.100 / dt))) if dt > 0 else 100
-            mpos_diff = np.abs(np.diff(mpos_settle))
-            fe_settle_abs = np.abs(dpos_settle - mpos_settle)[1:]
-            unstable = (mpos_diff > stable_thresh) | (fe_settle_abs > pos_err_thresh)
-            # Find the LAST unstable sample.  Settling time is the first
-            # sample after it that stays stable for the remainder of the
-            # capture (or at least win_samples, whichever is shorter).
-            unstable_idx = np.where(unstable)[0]
-            if len(unstable_idx) == 0:
-                # Already settled at move-end.
-                settling_time_ms = 0.0
+        if len(fe_settle) >= 2:
+            # You suggested checking if it reaches a steady value for 10 ms.
+            win_samples = max(10, int(round(0.010 / dt))) if dt > 0 else 10
+            
+            if len(fe_settle) <= win_samples:
+                # Not enough data for a full window, fallback to end of capture
+                settling_time_ms = float(t_settle[-1]) * 1000.0
             else:
-                last_unstable = int(unstable_idx[-1])
-                # Require at least win_samples of stability after last unstable.
-                tail_len = len(unstable) - (last_unstable + 1)
-                if tail_len >= win_samples:
-                    # +1 because `unstable` was computed on diff (index offset).
-                    settle_idx = last_unstable + 2
+                from numpy.lib.stride_tricks import sliding_window_view
+                
+                # Calculate rolling peak-to-peak variation (high-pass filter to ignore slow drift)
+                # By looking at the difference between the max and min over a 10ms sliding window,
+                # we precisely isolate the high-frequency ringing and completely ignore slow baseline drift.
+                windows = sliding_window_view(fe_settle, win_samples)
+                rolling_envelope = np.max(windows, axis=1) - np.min(windows, axis=1)
+                
+                # We declare it "steady" when the ringing stops. 
+                # Ringing has stopped when the peak-to-peak variation drops to 5% of peak overshoot.
+                peak_fe = float(np.max(np.abs(fe_settle)))
+                envelope_band = max(0.05 * peak_fe, 1e-6)
+                
+                unstable = rolling_envelope > envelope_band
+                unstable_idx = np.where(unstable)[0]
+                
+                if len(unstable_idx) == 0:
+                    # Already settled at move-end
+                    settling_time_ms = 0.0
+                else:
+                    # last_unstable is the start index of the last sliding window that was ringing.
+                    # The signal is mathematically considered "settled for 10ms" at the exact sample
+                    # where this final unstable 10ms window ends.
+                    last_unstable = int(unstable_idx[-1])
+                    settle_idx = last_unstable + win_samples
+                    
                     if settle_idx < len(t_settle):
                         settling_time_ms = float(t_settle[settle_idx]) * 1000.0
                     else:
                         settling_time_ms = float(t_settle[-1]) * 1000.0
-                else:
-                    # Unstable right up to end of capture — never settled.
-                    settling_time_ms = float(t_settle[-1]) * 1000.0
-
-        # Steady-state error — mean FE in last 10% of settle window
-        tail_len = max(1, len(fe_settle) // 10)
-        steady_state_error = abs(float(np.mean(fe_settle[-tail_len:]))) / step_size
 
         # Damping ratio from overshoot
         damping_ratio = 0.0
