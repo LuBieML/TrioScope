@@ -675,6 +675,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._fft_peak_cache = {}   # {trace_id: (peak_freq, peak_mag)}
         self._fft_max_samples = 16384  # cap FFT size when cursors disabled
         self._last_data_len = 0     # track data growth to skip redundant setData
+        self._stats_values_cache = {} # {trace_id: (min_val, max_val, processed_len)}
         self._stats_cache = {}      # {trace_id: (v_min_str, v_max_str)}
 
         self._create_ui()
@@ -1570,6 +1571,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._fft_cache = {}
         self._fft_peak_cache = {}
         self._stats_cache = {}
+        self._stats_values_cache = {}
         self._update_path_info_label()
         self._recreate_subplots()
 
@@ -1923,6 +1925,8 @@ class ParameterScopeOscilloscope(QMainWindow):
             # Clear data
             self.accumulated_data = None
             self.total_samples = 0
+            self._last_data_len = 0
+            self._stats_values_cache = {}
             with self._data_lock:
                 self._time_chunks = []
                 self._param_chunks = {}
@@ -2120,10 +2124,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._render_plots()
 
         # Update trace value labels
-        for trace in self.get_enabled_traces():
-            param_name = trace.get_display_name()
-            if param_name in all_params and len(all_params[param_name]) > 0:
-                trace.update_value(all_params[param_name][-1])
+        if len(all_time) > getattr(self, '_last_data_len', 0):
+            for trace in self.get_enabled_traces():
+                param_name = trace.get_display_name()
+                if param_name in all_params and len(all_params[param_name]) > 0:
+                    trace.update_value(all_params[param_name][-1])
+            self._last_data_len = len(all_time)
 
     def _render_plots(self):
         """Update all plot curves with current accumulated data"""
@@ -2136,6 +2142,9 @@ class ParameterScopeOscilloscope(QMainWindow):
             return
 
         enabled_traces = self.get_enabled_traces()
+
+        data_len = len(time_arr)
+        data_changed = data_len != getattr(self, '_last_data_len', 0)
 
         # ── XY Mode ──
         if self.plot_mode == 'xy' and len(enabled_traces) >= 2 and 'xy' in self.plot_items:
@@ -2164,7 +2173,9 @@ class ParameterScopeOscilloscope(QMainWindow):
                 x_plot = x_vals
                 y_plot = y_vals
 
+            is_new_curve = False
             if 'xy_path' not in self.curves:
+                is_new_curve = True
                 pen = pg.mkPen('#03DAC6', width=self.line_width)
                 self.curves['xy_path'] = pi.plot(pen=pen)
             if 'xy_cursor' not in self.curves:
@@ -2173,31 +2184,32 @@ class ParameterScopeOscilloscope(QMainWindow):
                     symbolBrush='#FF5555', symbolPen=None, pen=None)
 
             vb = pi.getViewBox()
-            if self._xy_auto_range:
-                # Update data then fit view to all data
-                self.curves['xy_path'].setData(x_plot, y_plot)
-                self.curves['xy_cursor'].setData([x_vals[-1]], [y_vals[-1]])
-                margin = 0.05
-                x_min, x_max = float(np.min(x_vals)), float(np.max(x_vals))
-                y_min, y_max = float(np.min(y_vals)), float(np.max(y_vals))
-                # Make X and Y spans equal so the view is symmetric
-                x_span = x_max - x_min
-                y_span = y_max - y_min
-                max_span = max(x_span, y_span, 1.0)
-                x_center = (x_min + x_max) / 2
-                y_center = (y_min + y_max) / 2
-                half = max_span / 2 * (1 + margin)
-                pi.setXRange(x_center - half, x_center + half, padding=0)
-                pi.setYRange(y_center - half, y_center + half, padding=0)
-            else:
-                # User has zoomed/panned — update data without touching the range
-                # Block ViewBox auto-range signals so setData cannot move the view
-                vb.blockSignals(True)
-                try:
+            if data_changed or is_new_curve:
+                if self._xy_auto_range:
+                    # Update data then fit view to all data
                     self.curves['xy_path'].setData(x_plot, y_plot)
                     self.curves['xy_cursor'].setData([x_vals[-1]], [y_vals[-1]])
-                finally:
-                    vb.blockSignals(False)
+                    margin = 0.05
+                    x_min, x_max = float(np.min(x_vals)), float(np.max(x_vals))
+                    y_min, y_max = float(np.min(y_vals)), float(np.max(y_vals))
+                    # Make X and Y spans equal so the view is symmetric
+                    x_span = x_max - x_min
+                    y_span = y_max - y_min
+                    max_span = max(x_span, y_span, 1.0)
+                    x_center = (x_min + x_max) / 2
+                    y_center = (y_min + y_max) / 2
+                    half = max_span / 2 * (1 + margin)
+                    pi.setXRange(x_center - half, x_center + half, padding=0)
+                    pi.setYRange(y_center - half, y_center + half, padding=0)
+                else:
+                    # User has zoomed/panned — update data without touching the range
+                    # Block ViewBox auto-range signals so setData cannot move the view
+                    vb.blockSignals(True)
+                    try:
+                        self.curves['xy_path'].setData(x_plot, y_plot)
+                        self.curves['xy_cursor'].setData([x_vals[-1]], [y_vals[-1]])
+                    finally:
+                        vb.blockSignals(False)
             return
 
         # ── XYZ Mode ──
@@ -2231,7 +2243,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                     pos=pts, color=(0.012, 0.855, 0.776, 1.0),
                     width=self.line_width, antialias=True)
                 self.gl_widget.addItem(self.gl_line_item)
-            else:
+            elif data_changed:
                 self.gl_line_item.setData(pos=pts)
 
             # Dynamically resize grid to cover data + origin (0,0,0), with margin
@@ -2317,7 +2329,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                     self._gl_line_segments = gl.GLLinePlotItem(
                         pos=pts, color=seg_colors, width=self.line_width, antialias=True)
                     self.gl_widget.addItem(self._gl_line_segments)
-            else:
+            elif data_changed:
                 self.gl_line_item.setData(pos=pts, color=colors, size=2.5)
                 if hasattr(self, '_gl_line_segments') and self._gl_line_segments is not None and len(pts) > 1:
                     seg_colors = (colors[:-1] + colors[1:]) / 2.0
@@ -2430,6 +2442,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 # Check FFT cache — skip recompute if data unchanged
                 cache_key = (n_fft, len(time_arr), fft_cursor_key)
                 cached = self._fft_cache.get(trace_id)
+                fft_updated = False
                 if cached and cached['key'] == cache_key:
                     magnitude = cached['magnitude']
                 else:
@@ -2445,8 +2458,11 @@ class ParameterScopeOscilloscope(QMainWindow):
                         'key': cache_key,
                         'magnitude': magnitude,
                     }
+                    fft_updated = True
 
+                is_new_curve = False
                 if trace_id not in self.curves:
+                    is_new_curve = True
                     if pi.legend is None:
                         pi.addLegend(
                             offset=(10, 5),
@@ -2461,10 +2477,11 @@ class ParameterScopeOscilloscope(QMainWindow):
                     curve.setDownsampling(auto=True, method='peak')
                     self.curves[trace_id] = curve
 
-                self.curves[trace_id].setData(freqs, magnitude)
+                if fft_updated or is_new_curve:
+                    self.curves[trace_id].setData(freqs, magnitude)
 
                 # Peak frequency annotation (throttled — only update when values change)
-                if len(magnitude) > 1:
+                if len(magnitude) > 1 and fft_updated:
                     peak_idx = np.argmax(magnitude[1:]) + 1
                     peak_freq = round(float(freqs[peak_idx]), 2)
                     peak_mag = round(float(magnitude[peak_idx]), 4)
@@ -2495,7 +2512,9 @@ class ParameterScopeOscilloscope(QMainWindow):
 
                 values = plot_data['params'][param_name]
 
+                is_new_curve = False
                 if trace_id not in self.curves:
+                    is_new_curve = True
                     if pi.legend is None:
                         pi.addLegend(
                             offset=(10, 5),
@@ -2510,11 +2529,26 @@ class ParameterScopeOscilloscope(QMainWindow):
                     curve.setDownsampling(auto=True, method='peak')
                     self.curves[trace_id] = curve
 
-                self.curves[trace_id].setData(time_arr, values)
+                if data_changed or is_new_curve:
+                    self.curves[trace_id].setData(time_arr, values)
+
+                # Incremental min/max statistics
+                if trace_id in self._stats_values_cache:
+                    min_val, max_val, processed_len = self._stats_values_cache[trace_id]
+                else:
+                    min_val, max_val, processed_len = float('inf'), float('-inf'), 0
+
+                if len(values) > processed_len:
+                    new_slice = values[processed_len:]
+                    slice_min = float(np.min(new_slice))
+                    slice_max = float(np.max(new_slice))
+                    min_val = min(min_val, slice_min)
+                    max_val = max(max_val, slice_max)
+                    self._stats_values_cache[trace_id] = (min_val, max_val, len(values))
 
                 # Update min/max stats text (throttled — only when display string changes)
-                v_min_s = f"{float(np.min(values)):.4f}"
-                v_max_s = f"{float(np.max(values)):.4f}"
+                v_min_s = f"{min_val:.4f}"
+                v_max_s = f"{max_val:.4f}"
                 prev_stats = self._stats_cache.get(trace_id)
                 if prev_stats != (v_min_s, v_max_s):
                     self._stats_cache[trace_id] = (v_min_s, v_max_s)
@@ -2585,6 +2619,8 @@ class ParameterScopeOscilloscope(QMainWindow):
     def clear_data(self):
         self.accumulated_data = None
         self.total_samples = 0
+        self._last_data_len = 0
+        self._stats_values_cache = {}
         with self._data_lock:
             self._time_chunks = []
             self._param_chunks = {}
@@ -2695,6 +2731,8 @@ class ParameterScopeOscilloscope(QMainWindow):
                 'segment_breaks': [],
             }
             self.total_samples = len(time_arr)
+            self._last_data_len = 0
+            self._stats_values_cache = {}
             self.sample_counter_label.setText(f"Samples: {self.total_samples}")
 
             # Also populate chunk buffers so further captures can append
