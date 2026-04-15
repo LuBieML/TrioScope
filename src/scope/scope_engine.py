@@ -24,6 +24,13 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+# Channel-type parameters that use CHANNEL(n) instead of AXIS(n)
+CHANNEL_PARAMETERS = {
+    "AIN", "AINBI", "AOUT",
+    "DV_CONTROLWORD", "DV_IN", "DV_OUT", "DV_STATUSWORD",
+    "IN", "OUT",
+}
+
 # Complete set of axis parameters that require AXIS(n) suffix
 # Based on Trio Motion Perfect v4 and the prompt specification
 AXIS_PARAMETERS = {
@@ -144,25 +151,29 @@ class ScopeParameterParser:
             index = table_match.group(1)
             return f"TABLE({index})", f"TABLE({index})"
 
-        # Pattern 3: PARAM(axis) - axis parameter with explicit axis
-        axis_param_match = re.match(r'^(\w+)\s*\(\s*(\d+)\s*\)$', param_str, re.IGNORECASE)
-        if axis_param_match:
-            param_name = axis_param_match.group(1).upper()
-            axis_num = axis_param_match.group(2)
+        # Pattern 3: PARAM(index) - axis or channel parameter with explicit index
+        indexed_param_match = re.match(r'^(\w+)\s*\(\s*(\d+)\s*\)$', param_str, re.IGNORECASE)
+        if indexed_param_match:
+            param_name = indexed_param_match.group(1).upper()
+            index_num = indexed_param_match.group(2)
 
-            if param_name in AXIS_PARAMETERS:
-                return f"{param_name} AXIS({axis_num})", f"{param_name}({axis_num})"
+            if param_name in CHANNEL_PARAMETERS:
+                return f"{param_name}({index_num})", f"{param_name} Ch({index_num})"
+            elif param_name in AXIS_PARAMETERS:
+                return f"{param_name} AXIS({index_num})", f"{param_name}({index_num})"
             else:
                 # Unknown parameter - might be valid on controller
-                logger.warning(f"Unknown axis parameter: {param_name}")
-                return f"{param_name} AXIS({axis_num})", f"{param_name}({axis_num})"
+                logger.warning(f"Unknown parameter: {param_name}")
+                return f"{param_name} AXIS({index_num})", f"{param_name}({index_num})"
 
-        # Pattern 4: PARAM - axis parameter without explicit axis (default to axis 0)
+        # Pattern 4: PARAM - axis/channel parameter without explicit index (default to 0)
         param_only_match = re.match(r'^(\w+)$', param_str, re.IGNORECASE)
         if param_only_match:
             param_name = param_only_match.group(1).upper()
 
-            if param_name in AXIS_PARAMETERS:
+            if param_name in CHANNEL_PARAMETERS:
+                return f"{param_name}(0)", f"{param_name} Ch(0)"
+            elif param_name in AXIS_PARAMETERS:
                 return f"{param_name} AXIS(0)", f"{param_name}(0)"
             else:
                 # Might be a system parameter (no axis needed)

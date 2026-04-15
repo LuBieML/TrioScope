@@ -18,11 +18,11 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFrame,
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
-    QDialog, QFileDialog, QMessageBox, QGridLayout,
+    QDialog, QFileDialog, QMessageBox, QGridLayout, QColorDialog,
     QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QSettings, Slot
-from PySide6.QtGui import QFont, QColor, QPen, QBrush
+from PySide6.QtGui import QFont, QColor, QPen, QBrush, QAction, QKeySequence
 
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
@@ -31,8 +31,8 @@ import pyqtgraph.opengl as gl
 pg.setConfigOptions(
     background='#0A0A0A',
     foreground='#d4d4d4',
-    antialias=True,         # Smooth lines
-    useOpenGL=True,         # GPU acceleration
+    antialias=True,       # AA + width>1 is a Qt software-path; skip for pan/zoom speed
+    useOpenGL=True,        # Single shared GraphicsLayoutWidget = 1 GL surface, no context switches
 )
 
 # Add src to path for scope engine
@@ -40,16 +40,31 @@ src_path = Path(__file__).parent / 'src'
 sys.path.insert(0, str(src_path))
 
 try:
+    from version import __version__
     import Trio_UnifiedApi as TUA
     from scope.scope_engine import ScopeEngine, ScopeParameterParser
+    from scope.drive_scope_engine import (
+        DriveScopeEngine, COMMON_DRIVE_VARIABLES, TRIGGER_MODES,
+        DRIVE_VARIABLES, NUM_CHANNELS as DRIVE_NUM_CHANNELS,
+    )
 except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure Trio_UnifiedApi is installed and scope_engine.py is in src/scope/")
 
 try:
-    from ai.analysis_panel import AIAnalysisPanel
+    from ai.tuner_panel import TunerPanel
 except ImportError:
-    AIAnalysisPanel = None
+    TunerPanel = None
+
+try:
+    from ai.ethercat_map_window import EthercatMapWindow
+except ImportError:
+    EthercatMapWindow = None
+
+try:
+    from help_window import HelpWindow
+except ImportError:
+    HelpWindow = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -157,6 +172,13 @@ def _int_or_none(value) -> int | None:
         return None
 
 
+# Channel-type parameters that use CHANNEL(n) instead of AXIS(n)
+CHANNEL_PARAMETERS = [
+    "AIN", "AINBI", "AOUT",
+    "DV_CONTROLWORD", "DV_IN", "DV_OUT", "DV_STATUSWORD",
+    "IN", "OUT",
+]
+
 SCOPE_PARAMETERS = [
     "ACCEL", "ACCEL_FACTOR", "ADDAX_AXIS", "AFF_GAIN", "ATYPE",
     "AXIS_A_OUTPUT", "AXIS_ACCEL", "AXIS_B_OUTPUT", "AXIS_BLENDING",
@@ -172,6 +194,7 @@ SCOPE_PARAMETERS = [
     "CORNER_STATE", "CREEP",
     "D_GAIN", "D_ZONE_MAX", "D_ZONE_MIN", "DAC", "DAC_OUT", "DAC_SCALE",
     "DATUM_IN", "DECEL", "DECEL_ANGLE", "DEMAND_EDGES", "DEMAND_SPEED",
+    "DEMAND_SPEED_NORMALISED",
     "DISTANCE_TO_SYNC", "DPOS",
     "DRIVE_BRAKE_OUTPUT", "DRIVE_CONTROL", "DRIVE_CONTROLWORD",
     "DRIVE_CURRENT", "DRIVE_CW_MODE", "DRIVE_ENABLE", "DRIVE_FE",
@@ -225,7 +248,16 @@ SCOPE_PARAMETERS = [
     "WORLD_ACCEL", "WORLD_DECEL", "WORLD_DPOS", "WORLD_FASTDEC",
     "WORLD_FS_LIMIT", "WORLD_JERK", "WORLD_JOGSPEED", "WORLD_RS_LIMIT",
     "WORLD_SPEED", "WORLD_UNITS",
-]
+] + CHANNEL_PARAMETERS
+
+# Set for fast lookup of channel-type parameters
+CHANNEL_PARAMETERS_SET = set(CHANNEL_PARAMETERS)
+
+# Virtual (computed) parameters: map display name → underlying Trio SCOPE parameter.
+# These are not real controller parameters; their data is derived post-capture.
+_VIRTUAL_PARAM_MAP = {
+    "DEMAND_SPEED_NORMALISED": "DEMAND_SPEED",  # units/servocycle → units/second
+}
 
 TRACE_COLORS = [
     '#03DAC6',  # Teal
@@ -483,8 +515,20 @@ class TraceControl(QFrame):
         self.param_combo.setCurrentText("MPOS")
         self.param_combo.setMaxVisibleItems(20)
         self.param_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.param_combo.currentTextChanged.connect(lambda: self.changed.emit())
+        self.param_combo.currentTextChanged.connect(self._on_param_changed)
         row0.addWidget(self.param_combo, 1)
+
+        # Drive variable combo (hidden by default)
+        self.drive_var_combo = QComboBox()
+        for addr, label in COMMON_DRIVE_VARIABLES:
+            self.drive_var_combo.addItem(label, addr)
+        self.drive_var_combo.setMaxVisibleItems(20)
+        self.drive_var_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.drive_var_combo.currentIndexChanged.connect(lambda: self.changed.emit())
+        self.drive_var_combo.setVisible(False)
+        row0.addWidget(self.drive_var_combo, 1)
+
+        self._drive_mode = False
 
         self.btn_delete = QPushButton("\u2715")
         self.btn_delete.setFixedWidth(24)
@@ -497,7 +541,8 @@ class TraceControl(QFrame):
         row1 = QHBoxLayout()
         row1.setSpacing(4)
 
-        row1.addWidget(QLabel("Axis"))
+        self.axis_label = QLabel("Axis")
+        row1.addWidget(self.axis_label)
         self.axis_spin = QSpinBox()
         self.axis_spin.setRange(0, 15)
         self.axis_spin.setFixedWidth(28)
@@ -514,11 +559,13 @@ class TraceControl(QFrame):
         btn_ax_down = QPushButton("\u25bc")
         btn_ax_down.setFixedSize(18, 12)
         btn_ax_down.setStyleSheet(_arrow_style)
-        btn_ax_down.clicked.connect(lambda: self.axis_spin.setValue(max(0, self.axis_spin.value() - 1)))
+        btn_ax_down.clicked.connect(lambda: self.axis_spin.setValue(
+            max(self.axis_spin.minimum(), self.axis_spin.value() - 1)))
         btn_ax_up = QPushButton("\u25b2")
         btn_ax_up.setFixedSize(18, 12)
         btn_ax_up.setStyleSheet(_arrow_style)
-        btn_ax_up.clicked.connect(lambda: self.axis_spin.setValue(min(15, self.axis_spin.value() + 1)))
+        btn_ax_up.clicked.connect(lambda: self.axis_spin.setValue(
+            min(self.axis_spin.maximum(), self.axis_spin.value() + 1)))
 
         ax_arrows = QVBoxLayout()
         ax_arrows.setSpacing(1)
@@ -560,7 +607,64 @@ class TraceControl(QFrame):
         self.btn_fft.toggled.connect(lambda: self.changed.emit())
         row1.addWidget(self.btn_fft)
 
+        self.btn_pin = QPushButton("PIN")
+        self.btn_pin.setCheckable(True)
+        self.btn_pin.setFixedSize(36, 22)
+        self.btn_pin.setToolTip("Pin current trace as reference for comparison")
+        self.btn_pin.setStyleSheet("""
+            QPushButton {
+                background-color: #4b4a4a;
+                color: #888;
+                border: 1px solid #606060;
+                border-radius: 2px;
+                font-size: 8pt;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QPushButton:checked {
+                background-color: #1a4a1a;
+                color: #66FF66;
+                border: 1px solid #66FF66;
+            }
+        """)
+        row1.addWidget(self.btn_pin)
+
+        # Default reference color — dimmed version of trace color
+        qc = QColor(self.color)
+        self.ref_color = QColor(
+            (qc.red() + 128) // 2,
+            (qc.green() + 128) // 2,
+            (qc.blue() + 128) // 2,
+        ).name()
+
+        self.btn_ref_color = QPushButton()
+        self.btn_ref_color.setFixedSize(22, 22)
+        self.btn_ref_color.setToolTip("Choose reference trace color")
+        self._update_ref_color_swatch()
+        self.btn_ref_color.clicked.connect(self._pick_ref_color)
+        row1.addWidget(self.btn_ref_color)
+
+        # Reference (pinned) data: {'time': np.array, 'values': np.array} or None
+        self.ref_data = None
+
         vbox.addLayout(row1)
+
+    def _on_param_changed(self):
+        """Update axis/channel label and range based on selected parameter."""
+        is_ch = self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
+        if is_ch:
+            self.axis_label.setText("Ch")
+            self.axis_spin.setRange(0, 1024)
+            self.axis_spin.setFixedWidth(40)
+        else:
+            self.axis_label.setText("Axis")
+            self.axis_spin.setRange(0, 15)
+            self.axis_spin.setFixedWidth(28)
+        self.changed.emit()
+
+    def is_channel_parameter(self):
+        """Return True if the currently selected parameter is a channel-type."""
+        return self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
 
     def _on_delete(self):
         self.setParent(None)
@@ -571,10 +675,22 @@ class TraceControl(QFrame):
         return self.chk_enable.isChecked()
 
     def get_parameter_string(self):
-        return f"{self.param_combo.currentText()} AXIS({self.axis_spin.value()})"
+        param = self.param_combo.currentText()
+        # Virtual params capture their underlying Trio parameter from the controller
+        trio_param = _VIRTUAL_PARAM_MAP.get(param, param)
+        idx = self.axis_spin.value()
+        if trio_param in CHANNEL_PARAMETERS_SET:
+            return f"{trio_param}({idx})"
+        return f"{trio_param} AXIS({idx})"
 
     def get_display_name(self):
-        return f"{self.param_combo.currentText()}({self.axis_spin.value()})"
+        if self._drive_mode:
+            return self.get_drive_display_name()
+        param = self.param_combo.currentText()
+        idx = self.axis_spin.value()
+        if param in CHANNEL_PARAMETERS_SET:
+            return f"{param} Ch({idx})"
+        return f"{param}({idx})"
 
     def update_value(self, value):
         self.value_label.setText(f"{value:>10.4f}")
@@ -588,6 +704,373 @@ class TraceControl(QFrame):
     def get_color(self):
         return self.color
 
+    def is_pinned(self):
+        return self.btn_pin.isChecked()
+
+    def has_ref_data(self):
+        return self.ref_data is not None
+
+    def _update_ref_color_swatch(self):
+        self.btn_ref_color.setStyleSheet(
+            f"QPushButton {{ background-color: {self.ref_color};"
+            f" border: 1px solid #606060; border-radius: 2px; }}"
+            f"QPushButton:hover {{ border: 1px solid #ffffff; }}"
+        )
+
+    def _pick_ref_color(self):
+        color = QColorDialog.getColor(
+            QColor(self.ref_color), self, "Reference Trace Color")
+        if color.isValid():
+            self.ref_color = color.name()
+            self._update_ref_color_swatch()
+            self.changed.emit()
+
+    def set_drive_mode(self, enabled: bool):
+        """Switch between controller parameter and drive variable selection."""
+        self._drive_mode = enabled
+        self.param_combo.setVisible(not enabled)
+        self.drive_var_combo.setVisible(enabled)
+        # Hide axis selector in drive mode (axis set globally)
+        self.axis_spin.setVisible(not enabled)
+
+    def is_drive_mode(self):
+        return self._drive_mode
+
+    def get_drive_variable_address(self) -> int:
+        """Return the selected drive variable address (0x0F10, etc.)."""
+        return self.drive_var_combo.currentData()
+
+    def get_drive_display_name(self) -> str:
+        """Return display name for the drive variable."""
+        addr = self.get_drive_variable_address()
+        if addr and addr in DRIVE_VARIABLES:
+            name = DRIVE_VARIABLES[addr][0]
+            return f"{name} (0x{addr:04X})"
+        return self.drive_var_combo.currentText()
+
+
+
+class CompareWindow(QMainWindow):
+    """Fullscreen overlay window for comparing up to 3 live traces on one plot.
+
+    Each trace draws on its own ViewBox stacked on a shared main PlotItem so
+    Y-scales stay independent (traces can have different units). X axis is
+    shared. Data is pushed from the main app on every timer tick.
+    """
+
+    closed = Signal()
+
+    MAX_TRACES = 3
+
+    def __init__(self, traces, fft_mode, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Compare Traces")
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.fft_mode = fft_mode
+        self.traces = list(traces)  # TraceControl refs (up to 3)
+
+        central = QWidget()
+        central.setStyleSheet("background-color: #0A0A0A;")
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # Top bar: title + close hint
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        names = ", ".join(t.get_display_name() for t in self.traces)
+        title_text = f"Comparing {'FFT' if fft_mode else 'time-domain'}: {names}"
+        title = QLabel(title_text)
+        title.setStyleSheet("color: #d4d4d4; font-size: 10pt; font-weight: bold;")
+        top.addWidget(title)
+        top.addStretch()
+        self.btn_link_y = QPushButton("\U0001f517 Unify Y")
+        self.btn_link_y.setCheckable(True)
+        self.btn_link_y.setToolTip(
+            "Link Y axes of all compared traces to a shared range")
+        self.btn_link_y.setStyleSheet(
+            "QPushButton { background-color: #2e2e2e; color: #d4d4d4; "
+            "padding: 4px 10px; border: 1px solid #555; } "
+            "QPushButton:checked { background-color: #03DAC6; color: #000; "
+            "font-weight: bold; } "
+            "QPushButton:hover { background-color: #3a3a3a; }"
+        )
+        self.btn_link_y.toggled.connect(self._on_link_y_toggled)
+        top.addWidget(self.btn_link_y)
+        hint = QLabel("Esc to close")
+        hint.setStyleSheet("color: #888888; font-size: 9pt; margin-left: 10px;")
+        top.addWidget(hint)
+        layout.addLayout(top)
+
+        # Graphics layout widget holding the single overlay plot
+        self.glw = pg.GraphicsLayoutWidget()
+        self.glw.setBackground('#0A0A0A')
+        layout.addWidget(self.glw, 1)
+
+        # Main plot (owns the X axis and the first Y axis). Uses the
+        # oscilloscope-style ViewBox so right-drag rubber-band zoom,
+        # wheel-zoom and double-click reset work the same as the main window.
+        self._main_vb = ScopeViewBox()
+        self.main_plot = self.glw.addPlot(row=0, col=0, viewBox=self._main_vb)
+        self._main_vb.doubleClicked.connect(self._reset_view)
+        self.main_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.main_plot.setLabel(
+            'bottom',
+            'Frequency (Hz)' if fft_mode else 'Time (seconds)',
+            color='#d4d4d4',
+        )
+
+        # Primary axis config — color-code to first trace
+        first_color = self.traces[0].get_color() if self.traces else '#d4d4d4'
+        self.main_plot.getAxis('left').setPen(pg.mkPen(first_color))
+        self.main_plot.getAxis('left').setTextPen(pg.mkPen(first_color))
+        self.main_plot.setLabel('left', self.traces[0].get_display_name(),
+                                color=first_color)
+
+        # Primary curve goes on main_plot's ViewBox
+        width = 1
+        self.curves = []
+        self.viewboxes = [self.main_plot.vb]
+        self.axes = [self.main_plot.getAxis('left')]
+        pen0 = pg.mkPen(first_color, width=width)
+        curve0 = self.main_plot.plot(pen=pen0)
+        curve0.setClipToView(True)
+        curve0.setDownsampling(auto=True, method='subsample')
+        self.curves.append(curve0)
+
+        # Extra traces: one extra ViewBox + right-side AxisItem per trace
+        # Standard pyqtgraph multi-axis pattern.
+        for i, trace in enumerate(self.traces[1:], start=1):
+            color = trace.get_color()
+            vb = pg.ViewBox()
+            axis = pg.AxisItem('right')
+            axis.setPen(pg.mkPen(color))
+            axis.setTextPen(pg.mkPen(color))
+            axis.setLabel(trace.get_display_name(), color=color)
+            # Append axis into the layout on the right side of the main plot
+            self.glw.addItem(axis, row=0, col=i + 1)
+            self.glw.scene().addItem(vb)
+            axis.linkToView(vb)
+            vb.setXLink(self.main_plot.vb)
+            curve = pg.PlotDataItem(pen=pg.mkPen(color, width=width))
+            curve.setClipToView(True)
+            curve.setDownsampling(auto=True, method='subsample')
+            vb.addItem(curve)
+            self.curves.append(curve)
+            self.viewboxes.append(vb)
+            self.axes.append(axis)
+
+        # Sync the extra ViewBoxes' geometry to the main plot's ViewBox
+        self.main_plot.vb.sigResized.connect(self._sync_viewboxes)
+        self._sync_viewboxes()
+
+        # --- Hover crosshair + coordinate readout ---
+        # Vertical line that follows the mouse; per-trace values are read out
+        # in a translucent label anchored in the top-left of the plot.
+        self._vline = pg.InfiniteLine(
+            angle=90, movable=False,
+            pen=pg.mkPen('#888888', width=1, style=Qt.DashLine),
+        )
+        self._vline.setZValue(1000)
+        self.main_plot.addItem(self._vline, ignoreBounds=True)
+        self._vline.hide()
+
+        self._hover_label = pg.TextItem(anchor=(0, 0), color='#d4d4d4',
+                                        fill=pg.mkBrush(0, 0, 0, 180))
+        self._hover_label.setZValue(1001)
+        self.main_plot.addItem(self._hover_label, ignoreBounds=True)
+        self._hover_label.hide()
+
+        # Cache of latest x-array + per-trace y-array for interpolation
+        self._last_x = None
+        self._last_y = [None] * len(self.traces)
+
+        self.main_plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
+    def _sync_viewboxes(self):
+        rect = self.main_plot.vb.sceneBoundingRect()
+        for vb in self.viewboxes[1:]:
+            vb.setGeometry(rect)
+            vb.linkedViewChanged(self.main_plot.vb, vb.XAxis)
+
+    def _on_link_y_toggled(self, checked):
+        """Link/unlink all extra ViewBoxes' Y axes to the main one.
+
+        When linked, all traces share the widest Y range (union of individual
+        ranges), so they scale together. When unlinked, each trace gets back
+        its own auto-ranged Y.
+        """
+        main_vb = self.main_plot.vb
+        if checked:
+            # Compute union of current Y ranges across all ViewBoxes
+            y_mins, y_maxs = [], []
+            for vb in self.viewboxes:
+                y_min, y_max = vb.viewRange()[1]
+                y_mins.append(y_min)
+                y_maxs.append(y_max)
+            y_min = min(y_mins)
+            y_max = max(y_maxs)
+            # Disable auto-range on the driver, fix range to the union, then link
+            main_vb.enableAutoRange(axis='y', enable=False)
+            main_vb.setYRange(y_min, y_max, padding=0)
+            for vb in self.viewboxes[1:]:
+                vb.enableAutoRange(axis='y', enable=False)
+                vb.setYLink(main_vb)
+        else:
+            # Break the link and restore per-trace auto-ranging
+            for vb in self.viewboxes[1:]:
+                vb.setYLink(None)
+                vb.enableAutoRange(axis='y', enable=True)
+            main_vb.enableAutoRange(axis='y', enable=True)
+
+    def update_data(self, time_arr, params_by_name, fft_freqs=None,
+                    fft_magnitudes=None):
+        """Push latest data into each curve. For FFT mode, supply freqs+mags."""
+        if self.fft_mode:
+            if fft_freqs is None or not fft_magnitudes:
+                return
+            self._last_x = fft_freqs
+            for i, (curve, trace) in enumerate(zip(self.curves, self.traces)):
+                name = trace.get_display_name()
+                mag = fft_magnitudes.get(name)
+                if mag is None or len(mag) == 0:
+                    continue
+                curve.setData(fft_freqs, mag, skipFiniteCheck=True)
+                self._last_y[i] = mag
+        else:
+            if time_arr is None or len(time_arr) == 0:
+                return
+            self._last_x = time_arr
+            for i, (curve, trace) in enumerate(zip(self.curves, self.traces)):
+                name = trace.get_display_name()
+                values = params_by_name.get(name)
+                if values is None or len(values) == 0:
+                    continue
+                curve.setData(time_arr, values, skipFiniteCheck=True)
+                self._last_y[i] = values
+
+    def _reset_view(self):
+        """Re-enable auto-range on all ViewBoxes after a double-click reset."""
+        for vb in self.viewboxes:
+            vb.enableAutoRange()
+        if self.btn_link_y.isChecked():
+            self.btn_link_y.setChecked(False)
+
+    def _on_mouse_moved(self, scene_pos):
+        """Update crosshair + coordinate readout from the mouse scene position."""
+        vb = self.main_plot.vb
+        if not self.main_plot.sceneBoundingRect().contains(scene_pos):
+            self._vline.hide()
+            self._hover_label.hide()
+            return
+        mouse_point = vb.mapSceneToView(scene_pos)
+        x = mouse_point.x()
+        self._vline.setPos(x)
+        self._vline.show()
+
+        if self._last_x is None or len(self._last_x) == 0:
+            self._hover_label.hide()
+            return
+
+        xs = self._last_x
+        if x < xs[0] or x > xs[-1]:
+            self._hover_label.hide()
+            return
+
+        idx = np.searchsorted(xs, x)
+        if idx > 0 and (idx == len(xs) or abs(xs[idx - 1] - x) <= abs(xs[idx] - x)):
+            idx -= 1
+
+        x_label = ("f" if self.fft_mode else "t")
+        x_unit = ("Hz" if self.fft_mode else "s")
+        lines = [f"{x_label} = {x:.4g} {x_unit}"]
+        for trace, ys in zip(self.traces, self._last_y):
+            if ys is None or len(ys) != len(xs):
+                continue
+            y = float(ys[idx])
+            color = trace.get_color()
+            name = trace.get_display_name()
+            lines.append(
+                f"<span style='color:{color};'>{name} = {y:.4g}</span>")
+        self._hover_label.setHtml(
+            "<div style='font-family:monospace;font-size:9pt;'>"
+            + "<br/>".join(lines) + "</div>"
+        )
+        # Anchor the label just right of the cursor, near the top of the view
+        x_range, y_range = vb.viewRange()
+        y_top = y_range[1]
+        x_span = x_range[1] - x_range[0]
+        self._hover_label.setPos(x + x_span * 0.01, y_top)
+        self._hover_label.show()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        self.closed.emit()
+        super().closeEvent(event)
+
+
+class _CompareTracePicker(QDialog):
+    """Small modal: pick up to 3 same-type enabled traces to compare."""
+
+    def __init__(self, candidates, fft_mode, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Compare Traces")
+        self.setStyleSheet(
+            "QDialog { background-color: #1a1a1a; color: #d4d4d4; } "
+            "QCheckBox { color: #d4d4d4; padding: 4px; } "
+            "QPushButton { background-color: #2e2e2e; color: #d4d4d4; "
+            "padding: 6px 14px; border: 1px solid #555; } "
+            "QPushButton:hover { background-color: #3a3a3a; }"
+        )
+        self.fft_mode = fft_mode
+        self.candidates = candidates  # list[TraceControl]
+        self.checks = []
+
+        layout = QVBoxLayout(self)
+        kind = "FFT" if fft_mode else "time-domain"
+        header = QLabel(f"Select 2–3 {kind} traces to overlay:")
+        header.setStyleSheet("font-weight: bold;")
+        layout.addWidget(header)
+
+        for t in candidates:
+            cb = QCheckBox(t.get_display_name())
+            cb.setStyleSheet(f"color: {t.get_color()}; font-weight: bold;")
+            cb.toggled.connect(self._enforce_limit)
+            self.checks.append(cb)
+            layout.addWidget(cb)
+
+        btns = QHBoxLayout()
+        btns.addStretch()
+        self.btn_ok = QPushButton("Compare")
+        self.btn_ok.clicked.connect(self.accept)
+        self.btn_ok.setEnabled(False)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(self.btn_ok)
+        btns.addWidget(cancel)
+        layout.addLayout(btns)
+
+    def _enforce_limit(self):
+        selected = [cb for cb in self.checks if cb.isChecked()]
+        if len(selected) > CompareWindow.MAX_TRACES:
+            # Uncheck the most recent (the one that triggered us is the last toggled)
+            sender = self.sender()
+            if sender in selected:
+                sender.blockSignals(True)
+                sender.setChecked(False)
+                sender.blockSignals(False)
+                selected = [cb for cb in self.checks if cb.isChecked()]
+        self.btn_ok.setEnabled(2 <= len(selected) <= CompareWindow.MAX_TRACES)
+
+    def selected_traces(self):
+        return [t for t, cb in zip(self.candidates, self.checks)
+                if cb.isChecked()]
 
 
 class ParameterScopeOscilloscope(QMainWindow):
@@ -595,13 +1078,15 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Parameter Scope - Oscilloscope Mode")
+        self.setWindowTitle(f"TrioScope v{__version__} - Parameter Scope")
         self.resize(1400, 900)
 
         # Trio connection
         self.trio_connection = None
         self.trio_connected = False
         self.scope_engine = None
+        self.drive_scope_engine = None
+        self.capture_source = 'controller'  # 'controller' or 'drive'
 
         # Connection management (matching gcode parser pattern)
         self._max_connection_attempts = 3
@@ -609,6 +1094,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._disconnect_cooldown_seconds = 1.0
         self._disconnect_cooldown_end = 0.0
         self._state_lock = threading.Lock()
+        self._conn_lock = threading.Lock()  # serialize all Trio API calls across threads
         self._watchdog_stop = threading.Event()
         self._watchdog_thread = None
 
@@ -623,8 +1109,10 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Thread-safe data buffer
         self._data_lock = threading.Lock()
-        self._time_chunks = []
-        self._param_chunks = {}
+        self._buffer_capacity = 100_000
+        self._time_buffer = np.empty(self._buffer_capacity, dtype=np.float64)
+        self._param_buffers = {}
+        self._buffer_len = 0
         self._segment_breaks = []  # sample indices where capture restarted
 
         # Scrolling window settings
@@ -635,7 +1123,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Plot settings
         self.grid_alpha = 0.3
-        self.line_width = 1.8
+        self.line_width = 1  # int width uses Qt's fast cosmetic pen path
         self.plot_bg_color = '#0A0A0A'
         self.plot_mode = 'time'  # 'time', 'xy', 'xyz', 'xyzw'
 
@@ -653,6 +1141,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Plot items and curves
         self.plot_items = {}    # {key: PlotItem}
         self.curves = {}        # {display_name: PlotDataItem}
+        self.ref_curves = {}    # {trace_id: PlotDataItem} — pinned reference traces
         self.stats_texts = {}   # {trace_id: pg.TextItem}
 
         # Cursor / measurement tool
@@ -665,8 +1154,14 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Settings window
         self._settings_window = None
 
-        # AI Analysis
-        self._ai_panel = None
+        # Classical Tuner
+        self._tuner_panel = None
+
+        # EtherCAT map window
+        self._ethercat_map = None
+
+        # Help window (lazy)
+        self._help_window = None
 
         # FFT performance caches
         self._fft_cache = {}        # {trace_id: {'key': tuple, 'magnitude': array}}
@@ -676,17 +1171,33 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._fft_max_samples = 16384  # cap FFT size when cursors disabled
         self._last_data_len = 0     # track data growth to skip redundant setData
         self._stats_cache = {}      # {trace_id: (v_min_str, v_max_str)}
+        self._ref_set = {}          # {trace_id: id(ref_data_tuple)} — skip re-setData on static refs
+        self._stats_pos_cache = {}  # {trace_id: (x, y)} — skip redundant TextItem.setPos
+        self._last_render_data_len = 0  # last length passed to setData; skip if unchanged
+        # Compare overlay (fullscreen) — None when closed
+        self._compare_window = None
+
+        # Pan/zoom debounce: sigRangeChanged fires per mouse event × N linked views (O(N²))
+        self._stats_reposition_scheduled = False
+        self._pending_stats_vbs = set()
+        self._pending_stats_vb_refs = {}
+        self._detail_update_scheduled = False
+        self._pending_detail_vbs = set()
+        self._pending_detail_vb_refs = {}
 
         self._create_ui()
         self._load_settings()
 
-        # Update timer — drives plot refresh at ~30fps
+        # Update timer — drives plot refresh at ~60fps
         self._update_timer = QTimer(self)
         self._update_timer.timeout.connect(self._on_update_timer)
-        self._update_timer.setInterval(33)
+        self._update_timer.setInterval(16)
 
     def _create_ui(self):
         """Create main UI"""
+        # Top menu bar (File / View / Help)
+        self._create_menu_bar()
+
         central = QWidget()
         self.setCentralWidget(central)
         outer_layout = QVBoxLayout(central)
@@ -727,19 +1238,36 @@ class ParameterScopeOscilloscope(QMainWindow):
         config_group = QGroupBox("Configuration")
         config_layout = QGridLayout(config_group)
 
-        config_layout.addWidget(QLabel("Sample Period:"), 0, 0)
+        # Capture source selector
+        config_layout.addWidget(QLabel("Source:"), 0, 0)
+        self.source_combo = QComboBox()
+        self.source_combo.addItems(["Controller SCOPE", "Drive Scope (SDO)"])
+        self.source_combo.setToolTip(
+            "Controller SCOPE: captures Trio axis parameters at servo rate\n"
+            "Drive Scope (SDO): captures internal drive variables at 125μs rate"
+        )
+        self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        config_layout.addWidget(self.source_combo, 0, 1, 1, 2)
+
+        # -- Controller SCOPE config widgets --
+        self.ctrl_period_label = QLabel("Sample Period:")
+        config_layout.addWidget(self.ctrl_period_label, 1, 0)
         self.period_edit = QLineEdit("1")
         self.period_edit.setFixedWidth(60)
-        config_layout.addWidget(self.period_edit, 0, 1)
-        config_layout.addWidget(QLabel("servocycles"), 0, 2)
+        config_layout.addWidget(self.period_edit, 1, 1)
+        self.ctrl_period_unit = QLabel("servocycles")
+        config_layout.addWidget(self.ctrl_period_unit, 1, 2)
 
-        config_layout.addWidget(QLabel("Duration:"), 1, 0)
+        self.ctrl_duration_label = QLabel("Duration:")
+        config_layout.addWidget(self.ctrl_duration_label, 2, 0)
         self.duration_edit = QLineEdit("5.0")
         self.duration_edit.setFixedWidth(60)
-        config_layout.addWidget(self.duration_edit, 1, 1)
-        config_layout.addWidget(QLabel("seconds"), 1, 2)
+        config_layout.addWidget(self.duration_edit, 2, 1)
+        self.ctrl_duration_unit = QLabel("seconds")
+        config_layout.addWidget(self.ctrl_duration_unit, 2, 2)
 
-        config_layout.addWidget(QLabel("Capture Mode:"), 2, 0)
+        self.ctrl_mode_label = QLabel("Capture Mode:")
+        config_layout.addWidget(self.ctrl_mode_label, 3, 0)
         mode_widget = QWidget()
         mode_layout = QHBoxLayout(mode_widget)
         mode_layout.setContentsMargins(0, 0, 0, 0)
@@ -751,10 +1279,67 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.mode_group.addButton(self.radio_continuous)
         mode_layout.addWidget(self.radio_single)
         mode_layout.addWidget(self.radio_continuous)
-        config_layout.addWidget(mode_widget, 2, 1, 1, 2)
+        self.ctrl_mode_widget = mode_widget
+        config_layout.addWidget(mode_widget, 3, 1, 1, 2)
 
-        # Plot mode selector
-        config_layout.addWidget(QLabel("Plot Mode:"), 3, 0)
+        # -- Drive Scope config widgets (hidden by default) --
+        self.drv_sample_label = QLabel("Capture Duration:")
+        self.drv_sample_label.setVisible(False)
+        config_layout.addWidget(self.drv_sample_label, 1, 0)
+        self.drv_sample_edit = QLineEdit("1.0")
+        self.drv_sample_edit.setFixedWidth(80)
+        self.drv_sample_edit.setToolTip(
+            "Total capture duration in seconds.\n"
+            "Sample period = duration / 1000 samples\n"
+            "(rounded to nearest 125 μs, min 125 μs)")
+        self.drv_sample_edit.textChanged.connect(lambda: self._update_drive_info_label())
+        self.drv_sample_edit.setVisible(False)
+        config_layout.addWidget(self.drv_sample_edit, 1, 1)
+        self.drv_sample_unit = QLabel("s  (res: 1.00 ms)")
+        self.drv_sample_unit.setVisible(False)
+        config_layout.addWidget(self.drv_sample_unit, 1, 2)
+
+        self.drv_trigger_label = QLabel("Trigger:")
+        self.drv_trigger_label.setVisible(False)
+        config_layout.addWidget(self.drv_trigger_label, 2, 0)
+        self.drv_trigger_combo = QComboBox()
+        for mode_id, mode_name in sorted(TRIGGER_MODES.items()):
+            self.drv_trigger_combo.addItem(mode_name, mode_id)
+        self.drv_trigger_combo.currentIndexChanged.connect(self._on_drive_trigger_changed)
+        self.drv_trigger_combo.setVisible(False)
+        config_layout.addWidget(self.drv_trigger_combo, 2, 1, 1, 2)
+
+        # Trigger value inputs (shown only for modes that need them)
+        self.drv_trig_val_label = QLabel("Trigger Value:")
+        self.drv_trig_val_label.setVisible(False)
+        config_layout.addWidget(self.drv_trig_val_label, 3, 0)
+        self.drv_trig_val1_edit = QLineEdit("0")
+        self.drv_trig_val1_edit.setFixedWidth(80)
+        self.drv_trig_val1_edit.setToolTip("Trigger threshold value")
+        self.drv_trig_val1_edit.setVisible(False)
+        config_layout.addWidget(self.drv_trig_val1_edit, 3, 1)
+        self.drv_trig_val2_edit = QLineEdit("0")
+        self.drv_trig_val2_edit.setFixedWidth(80)
+        self.drv_trig_val2_edit.setToolTip("Second threshold (for window trigger)")
+        self.drv_trig_val2_edit.setVisible(False)
+        config_layout.addWidget(self.drv_trig_val2_edit, 3, 2)
+
+        self.drv_axis_label = QLabel("Drive Axis:")
+        self.drv_axis_label.setVisible(False)
+        config_layout.addWidget(self.drv_axis_label, 4, 0)
+        self.drv_axis_spin = QSpinBox()
+        self.drv_axis_spin.setRange(0, 15)
+        self.drv_axis_spin.setFixedWidth(60)
+        self.drv_axis_spin.setVisible(False)
+        config_layout.addWidget(self.drv_axis_spin, 4, 1)
+
+        self.drv_info_label = QLabel("")
+        self.drv_info_label.setStyleSheet("color: #03DAC6; font-size: 8pt;")
+        self.drv_info_label.setVisible(False)
+        config_layout.addWidget(self.drv_info_label, 5, 0, 1, 3)
+
+        # Plot mode selector (shared)
+        config_layout.addWidget(QLabel("Plot Mode:"), 5, 0)
         self.plot_mode_combo = QComboBox()
         self.plot_mode_combo.addItems(["Time", "XY (2D path)", "XYZ (3D path)", "XYZW (4D path)"])
         self.plot_mode_combo.setToolTip(
@@ -765,11 +1350,11 @@ class ParameterScopeOscilloscope(QMainWindow):
             "Use the FFT button on each trace for per-trace spectrum analysis"
         )
         self.plot_mode_combo.currentIndexChanged.connect(self._on_plot_mode_changed)
-        config_layout.addWidget(self.plot_mode_combo, 3, 1, 1, 2)
+        config_layout.addWidget(self.plot_mode_combo, 5, 1, 1, 2)
 
         self.path_info_label = QLabel("")
         self.path_info_label.setStyleSheet("color: #FFA500; font-size: 8pt;")
-        config_layout.addWidget(self.path_info_label, 4, 0, 1, 3)
+        config_layout.addWidget(self.path_info_label, 6, 0, 1, 3)
 
         # Table start (hidden, managed via settings dialog)
         self.table_start_edit = QLineEdit("0")
@@ -840,10 +1425,15 @@ class ParameterScopeOscilloscope(QMainWindow):
         btn_import.clicked.connect(self.import_from_csv)
         ctrl_grid.addWidget(btn_import, 2, 1)
 
-        # Row 3: AI Analysis
-        btn_ai = QPushButton("\u2728 AI Analysis")
-        btn_ai.clicked.connect(self._toggle_ai_panel)
-        ctrl_grid.addWidget(btn_ai, 3, 0, 1, 2)
+        # Row 3: Servo Tuner
+        btn_tuner = QPushButton("\u2699 Servo Tuner")
+        btn_tuner.clicked.connect(self._toggle_tuner_panel)
+        ctrl_grid.addWidget(btn_tuner, 3, 0, 1, 2)
+
+        # Row 4: EtherCAT Map
+        btn_ecat = QPushButton("\u26a1 EtherCAT Map")
+        btn_ecat.clicked.connect(self._open_ethercat_map)
+        ctrl_grid.addWidget(btn_ecat, 4, 0, 1, 2)
 
         left_layout.addLayout(ctrl_grid)
 
@@ -855,13 +1445,16 @@ class ParameterScopeOscilloscope(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
 
-        # 2D Plot area — vertical splitter so scope heights are draggable
-        self.plot_splitter = QSplitter(Qt.Vertical)
-        self.plot_splitter.setHandleWidth(5)
-        self.plot_splitter.setStyleSheet(
-            "QSplitter::handle { background-color: #353536; }"
-        )
-        right_layout.addWidget(self.plot_splitter, 1)
+        # 2D Plot area — single shared GraphicsLayoutWidget (1 scene, 1 view).
+        # Previously each plot was its own widget in a QSplitter; that cost a
+        # full paintEvent per widget per pan tick (N-linked axes = N repaints).
+        self.plot_layout_widget = pg.GraphicsLayoutWidget()
+        self.plot_layout_widget.setBackground('#0A0A0A')
+        self.plot_layout_widget.ci.setSpacing(4)
+        self.plot_layout_widget.ci.setContentsMargins(0, 0, 0, 0)
+        # Kept for backward compat with show/hide and layout code paths
+        self.plot_splitter = self.plot_layout_widget
+        right_layout.addWidget(self.plot_layout_widget, 1)
 
         # 3D Plot area (hidden by default)
         self.gl_widget = gl.GLViewWidget()
@@ -920,6 +1513,13 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_cursors.toggled.connect(self._toggle_cursors)
         status_layout.addWidget(self.btn_cursors)
 
+        self.btn_compare = QPushButton("\u29c9 Compare")
+        self.btn_compare.setFixedWidth(110)
+        self.btn_compare.setToolTip(
+            "Overlay 2\u20133 enabled traces in a fullscreen compare view")
+        self.btn_compare.clicked.connect(self._open_compare)
+        status_layout.addWidget(self.btn_compare)
+
         status_layout.addStretch()
 
         self.progress_label = QLabel("")
@@ -954,14 +1554,13 @@ class ParameterScopeOscilloscope(QMainWindow):
     # ─── Plot management ────────────────────────────────────────────
 
     def _create_scope_plot(self):
-        """Create a PlotItem inside its own GraphicsLayoutWidget and add to the splitter."""
+        """Add a PlotItem as a new row in the shared GraphicsLayoutWidget."""
         vb = ScopeViewBox()
         vb.doubleClicked.connect(self._on_plot_double_click)
         pi = pg.PlotItem(viewBox=vb)
-        pw = pg.GraphicsLayoutWidget()
-        pw.setBackground('#0A0A0A')
-        pw.addItem(pi, row=0, col=0)
-        self.plot_splitter.addWidget(pw)
+        # Append as next row in the shared layout (single scene → single repaint)
+        self.plot_layout_widget.addItem(pi)
+        self.plot_layout_widget.nextRow()
         return pi
 
     def _on_plot_double_click(self):
@@ -975,14 +1574,19 @@ class ParameterScopeOscilloscope(QMainWindow):
         """Recreate subplots — one row per enabled trace for independent Y-scales.
         Each trace gets its own left Y-axis, color-coded. X-axes are linked.
         In XY mode, a single plot shows trace1 vs trace2."""
-        # Remove all plot widgets from the splitter
-        while self.plot_splitter.count():
-            w = self.plot_splitter.widget(0)
-            w.setParent(None)
-            w.deleteLater()
+        # Clear all PlotItems from the shared layout (keeps the widget itself).
+        # clear() removes items but doesn't reset the row/col cursor — reset manually
+        # so the next addItem() starts at (0, 0) instead of after the old positions.
+        self.plot_layout_widget.clear()
+        self.plot_layout_widget.ci.currentRow = 0
+        self.plot_layout_widget.ci.currentCol = 0
         self.plot_items = {}
         self.curves = {}
+        self.ref_curves = {}
         self.stats_texts = {}
+        self._ref_set = {}
+        self._stats_pos_cache = {}
+        self._stats_cache = {}
         self._cursor_lines_c1.clear()
         self._cursor_lines_c2.clear()
         self._xy_auto_range = True
@@ -1067,9 +1671,14 @@ class ParameterScopeOscilloscope(QMainWindow):
             plot_item.setLabel('bottom', '')
         plot_item.setLabel('left', '')
 
+        # Fix left-axis width so all plots align regardless of label width
+        plot_item.getAxis('left').setWidth(65)
+
         # Y auto-range follows visible data
         plot_item.enableAutoRange(axis='y', enable=True)
-        plot_item.setAutoVisible(y=True)
+        # NOTE: setAutoVisible(y=True) forces a Y-bounds rescan of visible X data
+        # on every pan tick — ~100 Hz × N curves × N points. Leave it off;
+        # Y still autoranges on data updates via enableAutoRange.
 
         # Disable auto-scroll when user manually interacts
         vb.sigRangeChangedManually.connect(self._on_manual_range_change)
@@ -1088,8 +1697,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         else:
             plot_item.setLabel('bottom', '')
         plot_item.setLabel('left', 'Magnitude', color='#d4d4d4')
+        plot_item.getAxis('left').setWidth(65)
         plot_item.enableAutoRange(axis='y', enable=True)
-        plot_item.setAutoVisible(y=True)
+        # NOTE: setAutoVisible(y=True) forces a Y-bounds rescan of visible X data
+        # on every pan tick — ~100 Hz × N curves × N points. Leave it off;
+        # Y still autoranges on data updates via enableAutoRange.
         vb.sigRangeChanged.connect(self._reposition_stats_texts)
 
     def _on_manual_range_change(self, _changes):
@@ -1099,17 +1711,55 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._update_auto_scroll_button()
 
     def _reposition_stats_texts(self, vb):
-        """Reposition stats text items to top-right of the visible area."""
-        for trace_id, pi in self.plot_items.items():
-            if trace_id in self.stats_texts and pi.getViewBox() is vb:
-                view_range = vb.viewRange()
-                self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
-                break
+        """Debounced: coalesce pan events via a 0ms timer, then reposition."""
+        self._pending_stats_vbs.add(id(vb))
+        self._pending_stats_vb_refs[id(vb)] = vb
+        if not self._stats_reposition_scheduled:
+            self._stats_reposition_scheduled = True
+            QTimer.singleShot(16, self._flush_stats_reposition)
+
+    def _flush_stats_reposition(self):
+        self._stats_reposition_scheduled = False
+        vbs = [self._pending_stats_vb_refs[i] for i in self._pending_stats_vbs
+               if i in self._pending_stats_vb_refs]
+        self._pending_stats_vbs.clear()
+        self._pending_stats_vb_refs.clear()
+        if not self.stats_texts:
+            return
+        for vb in vbs:
+            for trace_id, pi in self.plot_items.items():
+                if trace_id in self.stats_texts and pi.getViewBox() is vb:
+                    view_range = vb.viewRange()
+                    new_pos = (view_range[0][1], view_range[1][1])
+                    if self._stats_pos_cache.get(trace_id) != new_pos:
+                        self.stats_texts[trace_id].setPos(*new_pos)
+                        self._stats_pos_cache[trace_id] = new_pos
+                    break
 
     def _update_curve_detail(self, vb):
-        """Show/hide sample dots and adjust downsampling based on zoom level."""
+        """Debounced: coalesce dot-detail updates to end of pan burst."""
         if self.plot_mode in ('xy', 'xyz'):
             return
+        if not self.curves:
+            return
+        self._pending_detail_vbs.add(id(vb))
+        self._pending_detail_vb_refs[id(vb)] = vb
+        if not self._detail_update_scheduled:
+            self._detail_update_scheduled = True
+            QTimer.singleShot(50, self._flush_curve_detail)
+
+    def _flush_curve_detail(self):
+        self._detail_update_scheduled = False
+        vbs = [self._pending_detail_vb_refs[i] for i in self._pending_detail_vbs
+               if i in self._pending_detail_vb_refs]
+        self._pending_detail_vbs.clear()
+        self._pending_detail_vb_refs.clear()
+        if self.plot_mode in ('xy', 'xyz') or not self.curves:
+            return
+        for vb in vbs:
+            self._do_update_curve_detail(vb)
+
+    def _do_update_curve_detail(self, vb):
         view_range = vb.viewRange()
         visible_span = view_range[0][1] - view_range[0][0]
         for trace_id, pi in self.plot_items.items():
@@ -1140,7 +1790,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 curve._has_dots = True
             elif not want_dots and had_dots:
                 curve.setSymbol(None)
-                curve.setDownsampling(auto=True, method='peak')
+                curve.setDownsampling(auto=True, method='subsample')
                 curve._has_dots = False
 
     def _on_xy_manual_zoom(self, _changes):
@@ -1148,6 +1798,90 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._xy_auto_range = False
         if not self.is_running and self.accumulated_data is not None:
             self._render_plots()
+
+    # ─── Compare overlay ─────────────────────────────────────────
+
+    def _open_compare(self):
+        """Open fullscreen compare window with 2\u20133 selected live traces."""
+        if self._compare_window is not None:
+            self._compare_window.raise_()
+            self._compare_window.activateWindow()
+            return
+
+        if self.accumulated_data is None or not self.accumulated_data['params']:
+            QMessageBox.information(
+                self, "Compare",
+                "Start a capture first — compare needs live data.")
+            return
+
+        enabled = self.get_enabled_traces()
+        if len(enabled) < 2:
+            QMessageBox.information(
+                self, "Compare",
+                "Enable at least 2 traces before comparing.")
+            return
+
+        # Split by kind — FFT and time-domain can't be mixed in one overlay
+        time_traces = [t for t in enabled if not t.is_fft()]
+        fft_traces = [t for t in enabled if t.is_fft()]
+
+        # If both kinds exist, let the user pick which bucket; otherwise use
+        # the only one that's available.
+        if len(time_traces) >= 2 and len(fft_traces) >= 2:
+            kind = QMessageBox.question(
+                self, "Compare",
+                "Compare time-domain traces? "
+                "(choose No for FFT traces)",
+                QMessageBox.Yes | QMessageBox.No)
+            candidates = time_traces if kind == QMessageBox.Yes else fft_traces
+            fft_mode = kind != QMessageBox.Yes
+        elif len(time_traces) >= 2:
+            candidates, fft_mode = time_traces, False
+        elif len(fft_traces) >= 2:
+            candidates, fft_mode = fft_traces, True
+        else:
+            QMessageBox.information(
+                self, "Compare",
+                "Need at least 2 traces of the same type (time or FFT).")
+            return
+
+        dlg = _CompareTracePicker(candidates, fft_mode, parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        chosen = dlg.selected_traces()
+        if len(chosen) < 2:
+            return
+
+        self._compare_window = CompareWindow(chosen, fft_mode, parent=self)
+        self._compare_window.closed.connect(self._on_compare_closed)
+        self._compare_window.showFullScreen()
+        # Push current data immediately so the view isn't blank until next tick
+        self._push_compare_data()
+
+    def _on_compare_closed(self):
+        self._compare_window = None
+
+    def _push_compare_data(self):
+        """Send latest accumulated data into the compare window."""
+        if self._compare_window is None or self.accumulated_data is None:
+            return
+        data = self.accumulated_data
+        if self._compare_window.fft_mode:
+            # Reuse FFT cache if available; rebuild freqs from first cached mag
+            mags = {}
+            freqs = None
+            for trace in self._compare_window.traces:
+                cached = self._fft_cache.get(id(trace))
+                if cached and 'magnitude' in cached:
+                    mags[trace.get_display_name()] = cached['magnitude']
+                    if freqs is None and len(data['time']) > 1:
+                        sample_dt = float(data['time'][1] - data['time'][0])
+                        n_fft = len(cached['magnitude']) * 2 - 2
+                        freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
+            self._compare_window.update_data(
+                None, None, fft_freqs=freqs, fft_magnitudes=mags)
+        else:
+            self._compare_window.update_data(data['time'], data['params'])
 
     # ─── Cursor / measurement tool ───────────────────────────────
 
@@ -1267,26 +2001,21 @@ class ParameterScopeOscilloscope(QMainWindow):
             if not self._update_timer.isActive() and self.accumulated_data is not None:
                 self._render_plots()
 
-    def _get_value_at_time(self, param_name, t):
-        """Interpolate parameter value at time t from accumulated data."""
+    def _get_nearest_index(self, t):
         if self.accumulated_data is None:
             return None
         time_arr = self.accumulated_data['time']
-        if len(time_arr) == 0 or param_name not in self.accumulated_data['params']:
+        if len(time_arr) == 0:
             return None
-        values = self.accumulated_data['params'][param_name]
-        # Clamp to data range
         if t <= time_arr[0]:
-            return float(values[0])
+            return 0
         if t >= time_arr[-1]:
-            return float(values[-1])
-        # Find nearest sample (use searchsorted for efficiency)
+            return len(time_arr) - 1
         idx = np.searchsorted(time_arr, t)
-        # Pick the closer of the two neighboring samples
         if idx > 0 and (idx >= len(time_arr) or
                         abs(time_arr[idx - 1] - t) <= abs(time_arr[idx] - t)):
-            idx = idx - 1
-        return float(values[idx])
+            idx -= 1
+        return idx
 
     def _update_cursor_readout(self):
         """Update the cursor readout panel with current cursor values."""
@@ -1303,6 +2032,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         t2 = self._cursor_pos['c2']
         dt = t2 - t1
 
+        idx1 = self._get_nearest_index(t1)
+        idx2 = self._get_nearest_index(t2)
+
         # Build HTML table for readout
         param_cells_c1 = []
         param_cells_c2 = []
@@ -1311,8 +2043,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         for trace in enabled_traces:
             pname = trace.get_display_name()
             color = trace.get_color()
-            v1 = self._get_value_at_time(pname, t1)
-            v2 = self._get_value_at_time(pname, t2)
+            if self.accumulated_data is not None and pname in self.accumulated_data['params'] and idx1 is not None and idx2 is not None:
+                v1 = float(self.accumulated_data['params'][pname][idx1])
+                v2 = float(self.accumulated_data['params'][pname][idx2])
+            else:
+                v1 = v2 = None
             v1_str = f"{v1:.4f}" if v1 is not None else "---"
             v2_str = f"{v2:.4f}" if v2 is not None else "---"
             if v1 is not None and v2 is not None:
@@ -1484,6 +2219,77 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.lock_x_axis = checked
         self._update_x_links()
 
+    def _on_source_changed(self, index):
+        """Toggle between Controller SCOPE and Drive Scope UI."""
+        is_drive = (index == 1)
+        self.capture_source = 'drive' if is_drive else 'controller'
+
+        # Controller SCOPE widgets
+        for w in (self.ctrl_period_label, self.period_edit, self.ctrl_period_unit,
+                  self.ctrl_duration_label, self.duration_edit, self.ctrl_duration_unit,
+                  self.ctrl_mode_label, self.ctrl_mode_widget):
+            w.setVisible(not is_drive)
+
+        # Drive Scope widgets
+        for w in (self.drv_sample_label, self.drv_sample_edit, self.drv_sample_unit,
+                  self.drv_trigger_label, self.drv_trigger_combo,
+                  self.drv_axis_label, self.drv_axis_spin, self.drv_info_label):
+            w.setVisible(is_drive)
+
+        if is_drive:
+            self._update_drive_info_label()
+            self._on_drive_trigger_changed()  # show/hide trigger value inputs
+            # Switch trace controls to drive variable mode
+            for trace in self.traces:
+                trace.set_drive_mode(True)
+        else:
+            self.drv_info_label.setText("")
+            # Hide trigger value inputs when switching away from drive mode
+            self.drv_trig_val_label.setVisible(False)
+            self.drv_trig_val1_edit.setVisible(False)
+            self.drv_trig_val2_edit.setVisible(False)
+            for trace in self.traces:
+                trace.set_drive_mode(False)
+
+    def _get_drive_sample_time_units(self) -> int:
+        """Convert capture duration (seconds) to drive sample_time units (×125 μs).
+
+        sample_time_units = duration_s / (1000 × 125 μs)
+        e.g. 1.0 s → 1.0 / 0.125 = 8 units → 8 × 125 μs = 1 ms per sample
+        """
+        try:
+            duration_s = float(self.drv_sample_edit.text())
+        except ValueError:
+            return 8  # default → 1 ms/sample → 1 s capture
+        # duration_s = 1000_samples × sample_time_units × 125e-6
+        # sample_time_units = duration_s / (1000 × 125e-6) = duration_s / 0.125
+        units = max(1, round(duration_s / 0.125))
+        return units
+
+    def _update_drive_info_label(self):
+        """Update the drive scope info label and resolution display."""
+        units = self._get_drive_sample_time_units()
+        period_us = units * 125
+        # Update resolution next to the "s" unit label
+        if period_us >= 1000:
+            res_str = f"{period_us / 1000:.2f} ms"
+        else:
+            res_str = f"{period_us} μs"
+        self.drv_sample_unit.setText(f"s  (res: {res_str})")
+
+    def _on_drive_trigger_changed(self):
+        """Show/hide trigger value inputs based on selected trigger mode."""
+        mode = self.drv_trigger_combo.currentData()
+        # Modes needing a threshold: 1=Rising, 2=Falling, 3=Greater, 4=Less
+        needs_value1 = mode in (1, 2, 3, 4, 5, 6)
+        # Window modes need two thresholds: 5=Inside, 6=Outside
+        needs_value2 = mode in (5, 6)
+
+        is_drive = (self.capture_source == 'drive')
+        self.drv_trig_val_label.setVisible(is_drive and needs_value1)
+        self.drv_trig_val1_edit.setVisible(is_drive and needs_value1)
+        self.drv_trig_val2_edit.setVisible(is_drive and needs_value2)
+
     def _on_plot_mode_changed(self, index):
         modes = ['time', 'xy', 'xyz', 'xyzw']
         self.plot_mode = modes[index]
@@ -1554,8 +2360,17 @@ class ParameterScopeOscilloscope(QMainWindow):
             QMessageBox.warning(self, "Maximum Traces", f"Maximum {self.max_traces} traces allowed")
             return
 
-        trace = TraceControl(len(self.traces), parent=self.traces_container)
+        trace_idx = len(self.traces)
+        trace = TraceControl(trace_idx, parent=self.traces_container)
         trace.changed.connect(self.on_trace_changed)
+        trace.btn_pin.toggled.connect(lambda checked, t=trace: self._on_pin_toggled(t, checked))
+        # Set drive mode if currently in drive scope source
+        if self.capture_source == 'drive':
+            trace.set_drive_mode(True)
+            # Auto-select different drive variables for each trace
+            n_vars = trace.drive_var_combo.count()
+            if trace_idx < n_vars:
+                trace.drive_var_combo.setCurrentIndex(trace_idx)
         self.traces_layout.addWidget(trace)
         self.traces.append(trace)
 
@@ -1563,17 +2378,74 @@ class ParameterScopeOscilloscope(QMainWindow):
             trace.chk_enable.setChecked(True)
 
     def on_trace_changed(self):
-        # Remove destroyed traces
-        self.traces = [t for t in self.traces if t.parent() is not None]
+        # Remove destroyed traces — clear ref data for deleted ones
+        alive_traces = [t for t in self.traces if t.parent() is not None]
+        deleted_ids = {id(t) for t in self.traces} - {id(t) for t in alive_traces}
+        for tid in deleted_ids:
+            self.ref_curves.pop(tid, None)
+            self._ref_set.pop(tid, None)
+        self.traces = alive_traces
         self.curves = {}
         self.stats_texts = {}
         self._fft_cache = {}
         self._fft_peak_cache = {}
         self._stats_cache = {}
+        self._ref_set = {}
+        self._stats_pos_cache = {}
+        # Close compare window if any of its traces got deleted/disabled/retyped
+        if self._compare_window is not None:
+            cw = self._compare_window
+            still_valid = all(
+                t in self.traces and t.is_enabled()
+                and t.is_fft() == cw.fft_mode
+                for t in cw.traces
+            )
+            if not still_valid:
+                cw.close()
         self._update_path_info_label()
         self._recreate_subplots()
 
         # Re-render captured data when scope is stopped (e.g. toggling FFT)
+        if not self.is_running and self.accumulated_data is not None:
+            self._render_plots()
+
+    def _on_pin_toggled(self, trace, checked):
+        """Pin or unpin the current trace data as a reference."""
+        trace_id = id(trace)
+        if checked:
+            # Snapshot current accumulated data for this trace
+            if self.accumulated_data is None:
+                trace.btn_pin.setChecked(False)
+                return
+            param_name = trace.get_display_name()
+            if param_name not in self.accumulated_data['params']:
+                trace.btn_pin.setChecked(False)
+                return
+            trace.ref_data = {
+                'time': self.accumulated_data['time'].copy(),
+                'values': self.accumulated_data['params'][param_name].copy(),
+            }
+            # If FFT mode, also snapshot the computed FFT spectrum
+            if trace.is_fft():
+                cached = self._fft_cache.get(trace_id)
+                if cached and 'magnitude' in cached:
+                    sample_dt = float(
+                        self.accumulated_data['time'][1]
+                        - self.accumulated_data['time'][0]
+                    ) if len(self.accumulated_data['time']) > 1 else 1.0
+                    n_fft = len(cached['magnitude']) * 2 - 2  # inverse of rfftfreq
+                    trace.ref_data['fft_freqs'] = np.fft.rfftfreq(
+                        n_fft, d=sample_dt).copy()
+                    trace.ref_data['fft_magnitude'] = cached['magnitude'].copy()
+        else:
+            trace.ref_data = None
+            # Remove the reference curve from the plot
+            if trace_id in self.ref_curves:
+                ref_curve = self.ref_curves.pop(trace_id)
+                if trace_id in self.plot_items:
+                    self.plot_items[trace_id].removeItem(ref_curve)
+            self._ref_set.pop(trace_id, None)
+        # Re-render to show/hide reference
         if not self.is_running and self.accumulated_data is not None:
             self._render_plots()
 
@@ -1584,9 +2456,9 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _on_connect_clicked(self):
         if self.trio_connected:
-            self.disconnect()
+            self.do_disconnect()
         else:
-            self.connect()
+            self.do_connect()
 
     def _event_handler(self, et, ival, sval):
         """Handle Trio API events — ignore during shutdown."""
@@ -1607,7 +2479,8 @@ class ParameterScopeOscilloscope(QMainWindow):
 
                 def _heartbeat():
                     try:
-                        self.trio_connection.SetVrValue(66, 1)
+                        with self._conn_lock:
+                            self.trio_connection.SetVrValue(66, 1)
                     except Exception as e:
                         heartbeat_error.append(e)
                     finally:
@@ -1660,6 +2533,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connected = False
         self.trio_connection = None
         self.scope_engine = None
+        self.drive_scope_engine = None
+        if self._tuner_panel is not None:
+            self._tuner_panel.set_connection(None)
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
         self.status_label.setText("Connection lost")
         self.btn_connect.setText("Connect")
@@ -1707,7 +2583,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 pass
         threading.Thread(target=_close, name="ScopeCloseCleanup", daemon=True).start()
 
-    def connect(self):
+    def do_connect(self):
         ip = self.ip_edit.text()
 
         # Check disconnect cooldown
@@ -1804,18 +2680,20 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.trio_connection = conn
                 self.trio_connected = True
                 self.scope_engine = engine
-                if self._ai_panel is not None:
-                    self._ai_panel.set_connection(conn)
+                self.drive_scope_engine = DriveScopeEngine(conn, axis=0)
+                if self._tuner_panel is not None:
+                    self._tuner_panel.set_connection(conn, self._conn_lock)
                 self._start_watchdog()
                 self.status_dot.setStyleSheet("color: #00cc00; font-size: 16pt;")
-                self.status_label.setText(f"Connected to {ip_addr} (Servo: {servo_period*1000:.1f}ms)")
+                sp_ms = servo_period * 1000 if servo_period else 0
+                self.status_label.setText(f"Connected to {ip_addr} (Servo: {sp_ms:.1f}ms)")
                 self.table_usage_label.setText(f"TABLE size: {engine.tsize}")
                 self.btn_connect.setText("Disconnect")
                 self.btn_connect.setEnabled(True)
 
         QTimer.singleShot(100, _check_connect)
 
-    def disconnect(self):
+    def do_disconnect(self):
         """Disconnect with proper cleanup — matching gcode parser pattern."""
         self.btn_connect.setEnabled(False)
         self.status_label.setText("Disconnecting...")
@@ -1846,9 +2724,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.trio_connection = None
         self.trio_connected = False
         self.scope_engine = None
+        self.drive_scope_engine = None
         self._shutting_down = False
-        if self._ai_panel is not None:
-            self._ai_panel.set_connection(None)
+        if self._tuner_panel is not None:
+            self._tuner_panel.set_connection(None)
         self._disconnect_cooldown_end = time.monotonic() + self._disconnect_cooldown_seconds
 
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
@@ -1864,6 +2743,11 @@ class ParameterScopeOscilloscope(QMainWindow):
             QMessageBox.critical(self, "Error", "Not connected")
             return
 
+        # Route to drive scope or controller scope
+        if self.capture_source == 'drive':
+            self._start_drive_scope_capture()
+            return
+
         enabled_traces = self.get_enabled_traces()
         if not enabled_traces:
             QMessageBox.warning(self, "No Traces", "Enable at least one trace")
@@ -1876,9 +2760,22 @@ class ParameterScopeOscilloscope(QMainWindow):
         for t in enabled_traces:
             ps = t.get_parameter_string()
             if ps not in seen:
-                seen[ps] = t.get_display_name()
+                raw_param = t.param_combo.currentText() if not t._drive_mode else None
+                if raw_param in _VIRTUAL_PARAM_MAP:
+                    # Virtual params map to an underlying Trio param.  Store raw data under
+                    # the display-name format of the underlying param (e.g. "DEMAND_SPEED(0)")
+                    # so the post-capture injection step can always find it by that key.
+                    underlying = _VIRTUAL_PARAM_MAP[raw_param]
+                    idx = t.axis_spin.value()
+                    if underlying in CHANNEL_PARAMETERS_SET:
+                        display = f"{underlying} Ch({idx})"
+                    else:
+                        display = f"{underlying}({idx})"
+                else:
+                    display = t.get_display_name()
+                seen[ps] = display
                 unique_params.append(ps)
-                unique_display.append(t.get_display_name())
+                unique_display.append(display)
 
         if len(unique_params) > 8:
             QMessageBox.warning(self, "Too Many Parameters",
@@ -1924,8 +2821,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.accumulated_data = None
             self.total_samples = 0
             with self._data_lock:
-                self._time_chunks = []
-                self._param_chunks = {}
+                self._buffer_len = 0
                 self._segment_breaks = []
 
             # Update UI
@@ -1948,6 +2844,180 @@ class ParameterScopeOscilloscope(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Start Error", str(e))
             logger.exception("Start capture failed")
+
+    # ─── Drive Scope capture ───────────────────────────────────────────
+
+    def _start_drive_scope_capture(self):
+        """Start drive-based scope capture via SDO protocol."""
+        enabled_traces = self.get_enabled_traces()
+        if not enabled_traces:
+            QMessageBox.warning(self, "No Traces", "Enable at least one trace")
+            return
+
+        # Collect channel addresses from enabled traces
+        channels = []
+        for t in enabled_traces:
+            addr = t.get_drive_variable_address()
+            if addr and addr != 0:
+                channels.append(addr)
+
+        if not channels:
+            QMessageBox.warning(self, "No Variables",
+                                "Select at least one drive variable (not '(Disabled)')")
+            return
+
+        if len(channels) > DRIVE_NUM_CHANNELS:
+            QMessageBox.warning(self, "Too Many Channels",
+                                f"Drive scope supports max {DRIVE_NUM_CHANNELS} channels.\n"
+                                f"You have {len(channels)} channels enabled.")
+            return
+
+        # Rebuild subplots
+        self.curves = {}
+        self.stats_texts = {}
+        self._recreate_subplots()
+
+        try:
+            sample_time = self._get_drive_sample_time_units()
+            trigger_mode = self.drv_trigger_combo.currentData()
+            axis = self.drv_axis_spin.value()
+
+            # Parse trigger values
+            try:
+                trigger_value1 = int(self.drv_trig_val1_edit.text())
+            except ValueError:
+                trigger_value1 = 0
+            try:
+                trigger_value2 = int(self.drv_trig_val2_edit.text())
+            except ValueError:
+                trigger_value2 = 0
+
+            # Update drive scope engine axis
+            self.drive_scope_engine.axis = axis
+
+            # Configure
+            config = self.drive_scope_engine.configure(
+                channels=channels,
+                sample_time=sample_time,
+                trigger_mode=trigger_mode,
+                trigger_value1=trigger_value1,
+                trigger_value2=trigger_value2,
+            )
+
+            # Clear data
+            self.accumulated_data = None
+            self.total_samples = 0
+            with self._data_lock:
+                self._buffer_len = 0
+                self._segment_breaks = []
+
+            # Update UI
+            self.btn_run.setEnabled(False)
+            self.btn_stop.setEnabled(True)
+            self.is_running = True
+            self.auto_scroll = True
+            self._update_auto_scroll_button()
+
+            # Start update timer
+            self._update_timer.start()
+
+            logger.info("Drive scope: %s", config)
+            self._pending_status = (
+                f"Drive scope: {config['active_channels']} ch, "
+                f"{config['sample_period_ms']:.2f} ms/sample, "
+                f"{config['capture_duration_sec']*1000:.1f} ms capture"
+            )
+
+            # Start capture thread (always single-shot for drive scope)
+            self.scope_thread = threading.Thread(
+                target=self._drive_scope_capture_thread, daemon=True)
+            self.scope_thread.start()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Drive Scope Error", str(e))
+            logger.exception("Drive scope start failed")
+
+    def _drive_scope_capture_thread(self):
+        """Background thread for drive scope: start → wait → download.
+
+        NOTE: We must NOT hold _conn_lock for long periods — the watchdog
+        needs it every 0.5s.  Acquire/release per-operation instead.
+        """
+        try:
+            engine = self.drive_scope_engine
+
+            # Step 1: Start capture on the drive
+            self._pending_status = "Drive scope: starting capture..."
+            with self._conn_lock:
+                engine.start_capture()
+
+            # Step 2: Wait for capture to complete (poll with short lock holds)
+            self._pending_status = "Drive scope: sampling..."
+            capture_timeout = max(30.0, engine.capture_duration_sec * 3)
+            wait_start = time.monotonic()
+            completed = False
+
+            while (time.monotonic() - wait_start) < capture_timeout:
+                if not self.is_running:
+                    with self._conn_lock:
+                        engine.stop_capture()
+                    return
+
+                with self._conn_lock:
+                    status = engine.get_status()
+
+                if status == 2:
+                    completed = True
+                    break
+
+                elapsed = time.monotonic() - wait_start
+                if engine.capture_duration_sec > 0:
+                    pct = min(0.99, elapsed / engine.capture_duration_sec)
+                    self._pending_progress = f"Sampling: {pct*100:.0f}%"
+
+                time.sleep(0.05)
+
+            if not completed:
+                self._pending_status = "Drive scope: capture timed out"
+                logger.warning("Drive scope capture timed out")
+                return
+
+            self._pending_progress = "Sampling: 100%"
+
+            # Step 3: Download data from drive via TABLE relay
+            # This takes ~20s for 8000 words — stop the watchdog so it
+            # doesn't kill the connection while we hold _conn_lock.
+            self._stop_watchdog()
+            self._pending_status = "Drive scope: downloading data..."
+
+            def _download_cb(pct, msg):
+                self._pending_progress = msg
+
+            with self._conn_lock:
+                data = engine.read_data(progress_callback=_download_cb)
+
+            # Restart the watchdog now that the long operation is done
+            self._start_watchdog()
+
+            if not self.is_running:
+                return
+
+            # Step 4: Push data into the display pipeline
+            if data and data['num_samples'] > 0:
+                self._push_data(data)
+                self._pending_status = (
+                    f"Drive scope: captured {data['num_samples']} samples "
+                    f"({data['num_samples'] * data['sample_period'] * 1000:.1f} ms)"
+                )
+            else:
+                self._pending_status = "Drive scope: no data captured"
+
+        except Exception as e:
+            self._pending_status = f"Drive scope error: {e}"
+            logger.exception("Drive scope capture error")
+        finally:
+            self.is_running = False
+            self._pending_stop_ui = True
 
     def _scope_single_shot_thread(self):
         """Single-shot capture — background thread"""
@@ -2051,19 +3121,39 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._pending_stop_ui = True
 
     def _push_data(self, data):
-        """Thread-safe: push new data chunk from capture thread"""
+        """Thread-safe: push new data chunk from capture thread into pre-allocated buffer"""
+        time_chunk = data['time']
+        n_new = len(time_chunk)
+        if n_new == 0:
+            return
+
         with self._data_lock:
-            self._time_chunks.append(data['time'])
+            while self._buffer_len + n_new > self._buffer_capacity:
+                self._buffer_capacity = max(100_000, self._buffer_capacity * 2)
+                new_time = np.empty(self._buffer_capacity, dtype=np.float64)
+                new_time[:self._buffer_len] = self._time_buffer[:self._buffer_len]
+                self._time_buffer = new_time
+                for k, v in self._param_buffers.items():
+                    new_v = np.empty(self._buffer_capacity, dtype=v.dtype)
+                    new_v[:self._buffer_len] = v[:self._buffer_len]
+                    self._param_buffers[k] = new_v
+
+            start = self._buffer_len
+            end = start + n_new
+            self._time_buffer[start:end] = time_chunk
             for param_name, values in data['params'].items():
-                if param_name not in self._param_chunks:
-                    self._param_chunks[param_name] = []
-                self._param_chunks[param_name].append(values)
+                if param_name not in self._param_buffers:
+                    self._param_buffers[param_name] = np.empty(self._buffer_capacity, dtype=values.dtype)
+                    if start > 0:
+                        self._param_buffers[param_name][:start] = values[0] if len(values) > 0 else 0
+                self._param_buffers[param_name][start:end] = values
+
+            self._buffer_len += n_new
 
     def _push_segment_break(self):
         """Record current sample count as a segment boundary (capture restart)."""
         with self._data_lock:
-            total = sum(len(c) for c in self._time_chunks)
-            self._segment_breaks.append(total)
+            self._segment_breaks.append(self._buffer_len)
 
     _pending_progress = ""
     _pending_status = ""
@@ -2091,21 +3181,36 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Consolidate data chunks under lock
         with self._data_lock:
-            if not self._time_chunks:
+            if self._buffer_len == 0:
                 return
-            # Only concatenate if new chunks arrived (more than the 1 consolidated chunk)
-            if len(self._time_chunks) == 1:
-                all_time = self._time_chunks[0]
-                all_params = {k: v[0] for k, v in self._param_chunks.items()}
-            else:
-                all_time = np.concatenate(self._time_chunks)
-                all_params = {}
-                for param_name, chunks in self._param_chunks.items():
-                    all_params[param_name] = np.concatenate(chunks)
-                # Reset to single consolidated chunk
-                self._time_chunks = [all_time]
-                self._param_chunks = {k: [v] for k, v in all_params.items()}
+            n = self._buffer_len
+            all_time = self._time_buffer[:n]
+            all_params = {k: v[:n] for k, v in self._param_buffers.items()}
             seg_breaks = list(self._segment_breaks)
+
+        # Inject virtual derived channels.
+        # For each enabled virtual-param trace, compute its value from the underlying
+        # raw data that was captured under the underlying param's display-name key.
+        # Currently: DEMAND_SPEED_NORMALISED = DEMAND_SPEED / servo_period_sec
+        #            (converts units/servocycle → units/second to match MSPEED units).
+        if self.scope_engine is not None and self.scope_engine.servo_period_sec:
+            sp = self.scope_engine.servo_period_sec
+            for trace in self.get_enabled_traces():
+                if trace._drive_mode:
+                    continue
+                raw_param = trace.param_combo.currentText()
+                if raw_param not in _VIRTUAL_PARAM_MAP:
+                    continue
+                underlying = _VIRTUAL_PARAM_MAP[raw_param]
+                idx = trace.axis_spin.value()
+                # Build the key under which the raw data was stored (display-name format)
+                if underlying in CHANNEL_PARAMETERS_SET:
+                    src_key = f"{underlying} Ch({idx})"
+                else:
+                    src_key = f"{underlying}({idx})"
+                dst_key = trace.get_display_name()  # e.g. "DEMAND_SPEED_NORMALISED(0)"
+                if src_key in all_params:
+                    all_params[dst_key] = all_params[src_key] / sp
 
         self.accumulated_data = {
             'time': all_time,
@@ -2118,6 +3223,10 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Update plots
         self._render_plots()
+
+        # Mirror live data into the compare overlay if it's open
+        if self._compare_window is not None:
+            self._push_compare_data()
 
         # Update trace value labels
         for trace in self.get_enabled_traces():
@@ -2364,10 +3473,16 @@ class ParameterScopeOscilloscope(QMainWindow):
         if self.auto_scroll and self.is_running:
             max_time = time_arr[-1]
             min_time = max(0, max_time - self.window_duration)
+            slice_min_time = max(0, min_time - self.window_duration * 0.1)
+            slice_idx = np.searchsorted(time_arr, slice_min_time)
+            render_time_arr = time_arr[slice_idx:]
             for trace in enabled_traces:
                 if not trace.is_fft() and id(trace) in self.plot_items:
                     self.plot_items[id(trace)].setXRange(min_time, max_time, padding=0)
                     break
+        else:
+            render_time_arr = time_arr
+            slice_idx = 0
 
         # Precompute FFT shared data if any trace needs it
         has_fft_traces = any(t.is_fft() for t in enabled_traces)
@@ -2375,6 +3490,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         fft_time = time_arr
         fft_params = plot_data['params']
         fft_cursor_key = None
+        # Only slice params for traces that actually need FFT (avoid O(N_traces) copies)
+        fft_needed_names = (
+            {t.get_display_name() for t in enabled_traces if t.is_fft()}
+            if has_fft_traces else set()
+        )
         if has_fft_traces and len(time_arr) >= 2:
             sample_dt = float(time_arr[1] - time_arr[0])
             if sample_dt > 0:
@@ -2385,7 +3505,11 @@ class ParameterScopeOscilloscope(QMainWindow):
                     mask = (time_arr >= t1) & (time_arr <= t2)
                     if np.sum(mask) >= 2:
                         fft_time = time_arr[mask]
-                        fft_params = {k: v[mask] for k, v in plot_data['params'].items()}
+                        fft_params = {
+                            k: plot_data['params'][k][mask]
+                            for k in fft_needed_names
+                            if k in plot_data['params']
+                        }
                         duration = float(fft_time[-1] - fft_time[0])
                         freq_res = 1.0 / duration if duration > 0 else 0
                         self.path_info_label.setText(
@@ -2399,7 +3523,17 @@ class ParameterScopeOscilloscope(QMainWindow):
                     # Cap FFT size to last N samples for performance
                     if len(fft_time) > self._fft_max_samples:
                         fft_time = fft_time[-self._fft_max_samples:]
-                        fft_params = {k: v[-self._fft_max_samples:] for k, v in plot_data['params'].items()}
+                        fft_params = {
+                            k: plot_data['params'][k][-self._fft_max_samples:]
+                            for k in fft_needed_names
+                            if k in plot_data['params']
+                        }
+                    else:
+                        fft_params = {
+                            k: plot_data['params'][k]
+                            for k in fft_needed_names
+                            if k in plot_data['params']
+                        }
                     self.path_info_label.setText(
                         f"FFT: last {len(fft_time)} pts (enable cursors to window)")
                 n_fft = len(fft_time)
@@ -2427,8 +3561,9 @@ class ParameterScopeOscilloscope(QMainWindow):
                 values = fft_params[param_name]
                 n_fft = len(fft_time)
 
-                # Check FFT cache — skip recompute if data unchanged
-                cache_key = (n_fft, len(time_arr), fft_cursor_key)
+                # Check FFT cache — throttle recompute to ~10Hz by bucketing last-sample time
+                last_t_bucket = int(float(time_arr[-1]) * 10) if len(time_arr) else 0
+                cache_key = (n_fft, last_t_bucket, fft_cursor_key)
                 cached = self._fft_cache.get(trace_id)
                 if cached and cached['key'] == cache_key:
                     magnitude = cached['magnitude']
@@ -2458,10 +3593,29 @@ class ParameterScopeOscilloscope(QMainWindow):
                     pen = pg.mkPen(color, width=self.line_width)
                     curve = pi.plot(name=param_name, pen=pen)
                     curve.setClipToView(True)
-                    curve.setDownsampling(auto=True, method='peak')
+                    curve.setDownsampling(auto=True, method='subsample')
                     self.curves[trace_id] = curve
 
-                self.curves[trace_id].setData(freqs, magnitude)
+                self.curves[trace_id].setData(freqs, magnitude, skipFiniteCheck=True)
+
+                # ── Reference (pinned) FFT overlay ──
+                if (trace.has_ref_data()
+                        and 'fft_freqs' in trace.ref_data
+                        and 'fft_magnitude' in trace.ref_data):
+                    if trace_id not in self.ref_curves:
+                        ref_pen = pg.mkPen(trace.ref_color,
+                                           width=self.line_width)
+                        ref_curve = pi.plot(
+                            name=f"{param_name} (REF)", pen=ref_pen)
+                        ref_curve.setClipToView(True)
+                        ref_curve.setDownsampling(auto=True, method='subsample')
+                        self.ref_curves[trace_id] = ref_curve
+                    ref_key = ('fft', id(trace.ref_data))
+                    if self._ref_set.get(trace_id) != ref_key:
+                        self.ref_curves[trace_id].setData(
+                            trace.ref_data['fft_freqs'],
+                            trace.ref_data['fft_magnitude'])
+                        self._ref_set[trace_id] = ref_key
 
                 # Peak frequency annotation (throttled — only update when values change)
                 if len(magnitude) > 1:
@@ -2487,13 +3641,17 @@ class ParameterScopeOscilloscope(QMainWindow):
                     if trace_id in self.stats_texts:
                         vb = pi.getViewBox()
                         view_range = vb.viewRange()
-                        self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+                        new_pos = (view_range[0][1], view_range[1][1])
+                        if self._stats_pos_cache.get(trace_id) != new_pos:
+                            self.stats_texts[trace_id].setPos(*new_pos)
+                            self._stats_pos_cache[trace_id] = new_pos
             else:
                 # ── Time-domain rendering for this trace ──
                 if param_name not in plot_data['params']:
                     continue
 
                 values = plot_data['params'][param_name]
+                render_values = values[slice_idx:] if self.auto_scroll and self.is_running else values
 
                 if trace_id not in self.curves:
                     if pi.legend is None:
@@ -2507,34 +3665,60 @@ class ParameterScopeOscilloscope(QMainWindow):
                     pen = pg.mkPen(color, width=self.line_width)
                     curve = pi.plot(name=param_name, pen=pen)
                     curve.setClipToView(True)
-                    curve.setDownsampling(auto=True, method='peak')
+                    curve.setDownsampling(auto=True, method='subsample')
                     self.curves[trace_id] = curve
 
-                self.curves[trace_id].setData(time_arr, values)
+                # Skip setData when sample count hasn't grown (e.g. paused/stopped)
+                cur_len = len(values)
+                prev_len = self._stats_cache.get(('len', trace_id), -1)
+                data_changed = cur_len != prev_len
+                if data_changed:
+                    self.curves[trace_id].setData(render_time_arr, render_values, skipFiniteCheck=True)
+                    self._stats_cache[('len', trace_id)] = cur_len
 
-                # Update min/max stats text (throttled — only when display string changes)
-                v_min_s = f"{float(np.min(values)):.4f}"
-                v_max_s = f"{float(np.max(values)):.4f}"
-                prev_stats = self._stats_cache.get(trace_id)
-                if prev_stats != (v_min_s, v_max_s):
-                    self._stats_cache[trace_id] = (v_min_s, v_max_s)
-                    stats_html = (
-                        f'<span style="font-family: Segoe UI; font-size: 8pt;">'
-                        f'<span style="color: #FF9999;">Min: {v_min_s}</span><br>'
-                        f'<span style="color: #99FF99;">Max: {v_max_s}</span>'
-                        f'</span>'
-                    )
-                    if trace_id not in self.stats_texts:
-                        txt = pg.TextItem(anchor=(1, 0))
-                        txt.setHtml(stats_html)
-                        pi.getViewBox().addItem(txt, ignoreBounds=True)
-                        self.stats_texts[trace_id] = txt
-                    else:
-                        self.stats_texts[trace_id].setHtml(stats_html)
+                # ── Reference (pinned) trace overlay ──
+                if trace.has_ref_data():
+                    if trace_id not in self.ref_curves:
+                        ref_pen = pg.mkPen(trace.ref_color,
+                                           width=self.line_width)
+                        ref_curve = pi.plot(
+                            name=f"{param_name} (REF)", pen=ref_pen)
+                        ref_curve.setClipToView(True)
+                        ref_curve.setDownsampling(auto=True, method='subsample')
+                        self.ref_curves[trace_id] = ref_curve
+                    ref_key = ('time', id(trace.ref_data))
+                    if self._ref_set.get(trace_id) != ref_key:
+                        self.ref_curves[trace_id].setData(
+                            trace.ref_data['time'], trace.ref_data['values'])
+                        self._ref_set[trace_id] = ref_key
+
+                # Update min/max stats text (only when new data arrived)
+                if data_changed and cur_len > 0:
+                    v_min_s = f"{float(np.min(values)):.4f}"
+                    v_max_s = f"{float(np.max(values)):.4f}"
+                    prev_stats = self._stats_cache.get(trace_id)
+                    if prev_stats != (v_min_s, v_max_s):
+                        self._stats_cache[trace_id] = (v_min_s, v_max_s)
+                        stats_html = (
+                            f'<span style="font-family: Segoe UI; font-size: 8pt;">'
+                            f'<span style="color: #FF9999;">Min: {v_min_s}</span><br>'
+                            f'<span style="color: #99FF99;">Max: {v_max_s}</span>'
+                            f'</span>'
+                        )
+                        if trace_id not in self.stats_texts:
+                            txt = pg.TextItem(anchor=(1, 0))
+                            txt.setHtml(stats_html)
+                            pi.getViewBox().addItem(txt, ignoreBounds=True)
+                            self.stats_texts[trace_id] = txt
+                        else:
+                            self.stats_texts[trace_id].setHtml(stats_html)
                 if trace_id in self.stats_texts:
                     vb = pi.getViewBox()
                     view_range = vb.viewRange()
-                    self.stats_texts[trace_id].setPos(view_range[0][1], view_range[1][1])
+                    new_pos = (view_range[0][1], view_range[1][1])
+                    if self._stats_pos_cache.get(trace_id) != new_pos:
+                        self.stats_texts[trace_id].setPos(*new_pos)
+                        self._stats_pos_cache[trace_id] = new_pos
 
         # Update cursor readout if cursors are active (time-domain traces only)
         if self._cursors_enabled:
@@ -2544,11 +3728,18 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def stop_capture(self):
         self.is_running = False
-        if self.scope_engine:
-            try:
-                self.scope_engine.stop_capture()
-            except Exception:
-                pass
+        if self.capture_source == 'drive':
+            if self.drive_scope_engine:
+                try:
+                    self.drive_scope_engine.stop_capture()
+                except Exception:
+                    pass
+        else:
+            if self.scope_engine:
+                try:
+                    self.scope_engine.stop_capture()
+                except Exception:
+                    pass
         self.status_label.setText("Stopped")
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
@@ -2586,11 +3777,18 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.accumulated_data = None
         self.total_samples = 0
         with self._data_lock:
-            self._time_chunks = []
-            self._param_chunks = {}
+            self._buffer_len = 0
             self._segment_breaks = []
         self.curves = {}
+        self.ref_curves = {}
         self.stats_texts = {}
+        self._ref_set = {}
+        self._stats_pos_cache = {}
+        self._stats_cache = {}
+        # Unpin all traces and clear their reference data
+        for trace in self.traces:
+            trace.ref_data = None
+            trace.btn_pin.setChecked(False)
         self.gl_line_item = None
         self.gl_cursor_item = None
         self._recreate_subplots()
@@ -2604,6 +3802,21 @@ class ParameterScopeOscilloscope(QMainWindow):
             QMessageBox.warning(self, "No Data", "No data to export")
             return
 
+        # Warn if any currently enabled traces have no captured data
+        captured = set(self.accumulated_data['params'].keys())
+        missing = [
+            t.get_display_name()
+            for t in self.get_enabled_traces()
+            if t.get_display_name() not in captured
+        ]
+        if missing:
+            QMessageBox.warning(
+                self, "Missing Channels",
+                "The following enabled traces have no captured data and will not be exported:\n\n"
+                + "\n".join(f"  • {m}" for m in missing)
+                + "\n\nRe-run the capture with all desired traces enabled."
+            )
+
         path, _ = QFileDialog.getSaveFileName(
             self, "Export CSV", f"scope_{datetime.now():%Y%m%d_%H%M%S}.csv",
             "CSV Files (*.csv)"
@@ -2613,14 +3826,14 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         try:
             data = self.accumulated_data
+            param_names = list(data['params'].keys())
             with open(path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                param_names = list(data['params'].keys())
                 writer.writerow(['Time'] + param_names)
                 for i in range(len(data['time'])):
                     row = [round(data['time'][i], 6)] + [data['params'][p][i] for p in param_names]
                     writer.writerow(row)
-            self.status_label.setText(f"Exported to {path}")
+            self.status_label.setText(f"Exported {len(param_names)} channel(s) to {path}")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
@@ -2699,8 +3912,17 @@ class ParameterScopeOscilloscope(QMainWindow):
 
             # Also populate chunk buffers so further captures can append
             with self._data_lock:
-                self._time_chunks = [time_arr]
-                self._param_chunks = {k: [v] for k, v in params.items()}
+                n_import = len(time_arr)
+                if n_import > self._buffer_capacity:
+                    self._buffer_capacity = max(100_000, n_import * 2)
+                    self._time_buffer = np.empty(self._buffer_capacity, dtype=np.float64)
+                    self._param_buffers = {}
+                self._time_buffer[:n_import] = time_arr
+                for k, v in params.items():
+                    buf = np.empty(self._buffer_capacity, dtype=v.dtype)
+                    buf[:n_import] = v
+                    self._param_buffers[k] = buf
+                self._buffer_len = n_import
                 self._segment_breaks = []
 
             # Ensure we're not in auto-scroll/running state
@@ -2725,25 +3947,185 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     # ─── AI Analysis ──────────────────────────────────────────────
 
-    def _toggle_ai_panel(self):
-        """Show/hide the AI analysis dock panel."""
-        if AIAnalysisPanel is None:
-            QMessageBox.warning(self, "AI Analysis",
-                                "AI module not available. Check src/ai/ is present.")
+    # ─── Menu bar ───────────────────────────────────────────────────
+
+    def _create_menu_bar(self):
+        """Create the top menu bar with File / View / Help menus."""
+        menubar = self.menuBar()
+        menubar.setStyleSheet("""
+            QMenuBar {
+                background-color: #353536;
+                color: #d4d4d4;
+                border-bottom: 1px solid #4b4a4a;
+                padding: 2px;
+            }
+            QMenuBar::item {
+                background: transparent;
+                padding: 4px 10px;
+                border-radius: 3px;
+            }
+            QMenuBar::item:selected {
+                background-color: #FFA500;
+                color: #000000;
+            }
+            QMenu {
+                background-color: #353536;
+                color: #d4d4d4;
+                border: 1px solid #4b4a4a;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 5px 22px 5px 16px;
+                border-radius: 3px;
+            }
+            QMenu::item:selected {
+                background-color: #FFA500;
+                color: #000000;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #4b4a4a;
+                margin: 4px 6px;
+            }
+        """)
+
+        # ── File menu ──────────────────────────────────────────────
+        file_menu = menubar.addMenu("&File")
+
+        act_export = QAction("&Export CSV...", self)
+        act_export.setShortcut(QKeySequence("Ctrl+E"))
+        act_export.triggered.connect(self.export_to_csv)
+        file_menu.addAction(act_export)
+
+        act_import = QAction("&Import CSV...", self)
+        act_import.setShortcut(QKeySequence("Ctrl+O"))
+        act_import.triggered.connect(self.import_from_csv)
+        file_menu.addAction(act_import)
+
+        file_menu.addSeparator()
+
+        act_settings = QAction("&Settings...", self)
+        act_settings.setShortcut(QKeySequence("Ctrl+,"))
+        act_settings.triggered.connect(self.open_settings)
+        file_menu.addAction(act_settings)
+
+        file_menu.addSeparator()
+
+        act_quit = QAction("&Quit", self)
+        act_quit.setShortcut(QKeySequence("Ctrl+Q"))
+        act_quit.triggered.connect(self.close)
+        file_menu.addAction(act_quit)
+
+        # ── View menu ──────────────────────────────────────────────
+        view_menu = menubar.addMenu("&View")
+
+        act_tuner = QAction("&Servo Tuner", self)
+        act_tuner.setShortcut(QKeySequence("Ctrl+T"))
+        act_tuner.triggered.connect(self._toggle_tuner_panel)
+        view_menu.addAction(act_tuner)
+
+        act_ecat = QAction("&EtherCAT Map", self)
+        act_ecat.setShortcut(QKeySequence("Ctrl+M"))
+        act_ecat.triggered.connect(self._open_ethercat_map)
+        view_menu.addAction(act_ecat)
+
+        # ── Help menu ──────────────────────────────────────────────
+        help_menu = menubar.addMenu("&Help")
+
+        act_manual = QAction("&User Manual", self)
+        act_manual.setShortcut(QKeySequence.HelpContents)  # F1
+        act_manual.triggered.connect(lambda: self._show_help("index.md"))
+        help_menu.addAction(act_manual)
+
+        act_started = QAction("&Getting Started", self)
+        act_started.triggered.connect(lambda: self._show_help("01_getting_started.md"))
+        help_menu.addAction(act_started)
+
+        act_capture = QAction("Capture &Modes", self)
+        act_capture.triggered.connect(lambda: self._show_help("02_capture_modes.md"))
+        help_menu.addAction(act_capture)
+
+        act_traces = QAction("&Traces && Parameters", self)
+        act_traces.triggered.connect(lambda: self._show_help("03_traces.md"))
+        help_menu.addAction(act_traces)
+
+        act_plotmodes = QAction("&Plot Modes", self)
+        act_plotmodes.triggered.connect(lambda: self._show_help("04_plot_modes.md"))
+        help_menu.addAction(act_plotmodes)
+
+        act_nav = QAction("&Navigation && Cursors", self)
+        act_nav.triggered.connect(lambda: self._show_help("05_navigation.md"))
+        help_menu.addAction(act_nav)
+
+        act_fft = QAction("&FFT Analysis", self)
+        act_fft.triggered.connect(lambda: self._show_help("06_fft.md"))
+        help_menu.addAction(act_fft)
+
+        help_menu.addSeparator()
+
+        act_shortcuts = QAction("&Keyboard && Mouse Reference", self)
+        act_shortcuts.triggered.connect(lambda: self._show_help("11_shortcuts.md"))
+        help_menu.addAction(act_shortcuts)
+
+        act_trouble = QAction("Trou&bleshooting", self)
+        act_trouble.triggered.connect(lambda: self._show_help("12_troubleshooting.md"))
+        help_menu.addAction(act_trouble)
+
+        help_menu.addSeparator()
+
+        act_about = QAction("&About TrioScope", self)
+        act_about.triggered.connect(self._show_about)
+        help_menu.addAction(act_about)
+
+    def _show_help(self, page: str = "index.md"):
+        """Open the help window at the given markdown page."""
+        if HelpWindow is None:
+            QMessageBox.warning(
+                self, "Help",
+                "Help module not available. Reinstall the application or check that "
+                "src/help_window.py and docs/help/ are present.")
             return
 
-        if self._ai_panel is None:
-            self._ai_panel = AIAnalysisPanel(self)
-            self._ai_panel.set_data_provider(self._get_scope_data_for_ai)
-            self._ai_panel.set_connection(self.trio_connection)
-            # Restore saved API key, model, and per-axis drive profiles
+        if self._help_window is None:
+            self._help_window = HelpWindow(self, start_page=page)
+            self._help_window.setAttribute(Qt.WA_DeleteOnClose)
+            self._help_window.destroyed.connect(lambda: setattr(self, "_help_window", None))
+            self._help_window.show()
+        else:
+            self._help_window.show_page(page, push_history=True)
+            self._help_window.raise_()
+            self._help_window.activateWindow()
+
+    def _show_about(self):
+        """Show the About dialog."""
+        QMessageBox.about(
+            self, "About TrioScope",
+            "<h2>TrioScope</h2>"
+            "<p>An oscilloscope-style data capture and analysis tool for "
+            "Trio Motion Controllers and Trio DX-series servo drives.</p>"
+            f"<p><b>Version: {__version__}</b></p>"
+            "<p>Real-time multi-trace plotting, FFT, XY/XYZ/XYZW path views, "
+            "AI-powered tuning analysis, and EtherCAT diagnostics.</p>"
+            "<p>Built with PySide6, pyqtgraph, and Trio_UnifiedApi.</p>"
+            "<p><a href='#'>Help → User Manual</a> for full documentation.</p>"
+        )
+
+    # ─── Servo Tuner ──────────────────────────────────────────────
+
+    def _toggle_tuner_panel(self):
+        """Show/hide the servo tuner dock panel."""
+        if TunerPanel is None:
+            QMessageBox.warning(self, "Servo Tuner",
+                                "Tuner module not available. Check src/ai/ is present.")
+            return
+
+        if self._tuner_panel is None:
+            self._tuner_panel = TunerPanel(self)
+            self._tuner_panel.set_data_provider(self._get_scope_data_for_ai)
+            if self.trio_connected and self.trio_connection:
+                self._tuner_panel.set_connection(self.trio_connection, self._conn_lock)
+            # Restore saved per-axis drive profiles
             s = QSettings("TrioScope", "ParameterScope")
-            api_key = s.value("ai/api_key", "")
-            model = s.value("ai/model", "openai/gpt-4.1-mini")
-            if api_key:
-                self._ai_panel.set_api_key(api_key)
-            self._ai_panel.set_model(model)
-            # Restore drive profiles saved per axis
             num_profiles = int(s.value("ai/drive_profiles/count", 0))
             saved_profiles = {}
             for i in range(num_profiles):
@@ -2751,7 +4133,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 if axis is None:
                     continue
                 axis = int(axis)
-                profile_dict = {
+                saved_profiles[axis] = {
                     "drive_type": s.value(f"ai/drive_profiles/{i}/drive_type", "None"),
                     "pn100": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn100")),
                     "pn101": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn101")),
@@ -2762,22 +4144,56 @@ class ParameterScopeOscilloscope(QMainWindow):
                     "pn106": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn106")),
                     "pn112": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn112")),
                 }
-                saved_profiles[axis] = profile_dict
             if saved_profiles:
-                self._ai_panel.set_all_profiles(saved_profiles)
-            self.addDockWidget(Qt.RightDockWidgetArea, self._ai_panel)
+                self._tuner_panel.set_all_profiles(saved_profiles)
+            # Preserve window geometry — adding the dock triggers a deferred
+            # layout pass that inflates the main window's minimumSizeHint.
+            saved_size = self.size()
+            self.setFixedWidth(saved_size.width())
+            self.addDockWidget(Qt.RightDockWidgetArea, self._tuner_panel)
+            # Release the width lock after the layout settles
+            QTimer.singleShot(0, lambda: self.setMaximumWidth(16777215))
         else:
-            self._ai_panel.setVisible(not self._ai_panel.isVisible())
+            self._tuner_panel.setVisible(not self._tuner_panel.isVisible())
+
+    # ─── EtherCAT Map ───────────────────────────────────────────────
+
+    def _open_ethercat_map(self):
+        """Open the EtherCAT network map window."""
+        if EthercatMapWindow is None:
+            QMessageBox.warning(self, "EtherCAT Map",
+                                "EtherCAT map module not available. Check src/ai/ is present.")
+            return
+
+        if not self.trio_connected or not self.trio_connection:
+            QMessageBox.warning(self, "EtherCAT Map",
+                                "Connect to a Trio controller first.")
+            return
+
+        if self._ethercat_map is None or not self._ethercat_map.isVisible():
+            self._ethercat_map = EthercatMapWindow(self.trio_connection, parent=self, conn_lock=self._conn_lock)
+            self._ethercat_map.show()
+        else:
+            self._ethercat_map.raise_()
+            self._ethercat_map.activateWindow()
 
     def _get_scope_data_for_ai(self):
-        """Data provider callback for AI panel. Returns (time_arr, params_dict)."""
+        """Data provider callback for AI panel.
+
+        Returns (time_arr, params_dict, servo_period_sec). servo_period_sec
+        is needed to scale DEMAND_SPEED (captured as units/servocycle) into
+        units/second for velocity-loop analysis.
+        """
         if self.accumulated_data is None:
-            return None, None
+            return None, None, None
         time_arr = self.accumulated_data.get('time')
         params = self.accumulated_data.get('params')
         if time_arr is None or len(time_arr) == 0:
-            return None, None
-        return time_arr, params
+            return None, None, None
+        servo_period_sec = None
+        if self.scope_engine is not None:
+            servo_period_sec = self.scope_engine.servo_period_sec
+        return time_arr, params, servo_period_sec
 
     def open_settings(self):
         if self._settings_window is not None:
@@ -2790,7 +4206,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.setFixedSize(300, 520)
+        dlg.setMinimumSize(340, 700)
         dlg.setStyleSheet(DARK_STYLESHEET)
         dlg.setAttribute(Qt.WA_DeleteOnClose)
         dlg.destroyed.connect(lambda: setattr(self, '_settings_window', None))
@@ -2838,25 +4254,6 @@ class ParameterScopeOscilloscope(QMainWindow):
         style_layout.addRow("Plot background:", plot_bg_edit)
         main_layout.addWidget(style_group)
 
-        # AI Analysis section
-        ai_group = QGroupBox("AI Analysis (NanoGPT)")
-        ai_layout = QFormLayout(ai_group)
-
-        s_ai = QSettings("TrioScope", "ParameterScope")
-        ai_key_edit = QLineEdit(s_ai.value("ai/api_key", ""))
-        ai_key_edit.setEchoMode(QLineEdit.Password)
-        ai_key_edit.setPlaceholderText("Enter NanoGPT API key")
-        ai_layout.addRow("API Key:", ai_key_edit)
-
-        ai_model_edit = QComboBox()
-        if AIAnalysisPanel is not None:
-            from ai.nanogpt_client import NanoGPTClient
-            ai_model_edit.addItems(NanoGPTClient.AVAILABLE_MODELS)
-        ai_model_edit.setCurrentText(s_ai.value("ai/model", "openai/gpt-4.1-mini"))
-        ai_model_edit.setEditable(True)
-        ai_layout.addRow("Model:", ai_model_edit)
-        main_layout.addWidget(ai_group)
-
         # Buttons
         btn_layout = QHBoxLayout()
 
@@ -2871,13 +4268,6 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.grid_alpha = max(0.0, min(1.0, float(grid_a_edit.text())))
                 self.plot_bg_color = plot_bg_edit.text()
                 self._apply_plot_settings()
-                # AI settings
-                s_save = QSettings("TrioScope", "ParameterScope")
-                s_save.setValue("ai/api_key", ai_key_edit.text().strip())
-                s_save.setValue("ai/model", ai_model_edit.currentText().strip())
-                if self._ai_panel is not None:
-                    self._ai_panel.set_api_key(ai_key_edit.text().strip())
-                    self._ai_panel.set_model(ai_model_edit.currentText().strip())
                 self.status_label.setText("Settings applied")
             except ValueError as e:
                 QMessageBox.critical(dlg, "Invalid value", str(e))
@@ -2909,6 +4299,10 @@ class ParameterScopeOscilloscope(QMainWindow):
             if pen:
                 color = pen.color()
                 curve.setPen(pg.mkPen(color, width=self.line_width))
+        for ref_curve in self.ref_curves.values():
+            pen = ref_curve.opts.get('pen')
+            if pen:
+                ref_curve.setPen(pg.mkPen(pen.color(), width=self.line_width))
         self._update_x_links()
 
     # ─── Settings persistence ──────────────────────────────────────
@@ -2918,12 +4312,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         s = QSettings("TrioScope", "ParameterScope")
 
         # Connection
-        self.ip_edit.setText(s.value("connection/ip", "192.168.0.245"))
+        self.ip_edit.setText(str(s.value("connection/ip", "192.168.0.245")))
 
         # Configuration
-        self.period_edit.setText(s.value("config/sample_period", "1"))
-        self.duration_edit.setText(s.value("config/duration", "5.0"))
-        self.table_start_edit.setText(s.value("config/table_start", "0"))
+        self.period_edit.setText(str(s.value("config/sample_period", "1")))
+        self.duration_edit.setText(str(s.value("config/duration", "5.0")))
+        self.table_start_edit.setText(str(s.value("config/table_start", "0")))
         self.use_end_of_table = s.value("config/use_end_of_table", "true") == "true"
         if s.value("config/capture_mode", "continuous") == "single":
             self.radio_single.setChecked(True)
@@ -2931,17 +4325,17 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.radio_continuous.setChecked(True)
 
         # Display / plot settings
-        self.plot_mode = s.value("display/plot_mode", "time")
+        self.plot_mode = str(s.value("display/plot_mode", "time"))
         # Migration: old 'fft' global mode → 'time' with per-trace FFT
         migrate_global_fft = (self.plot_mode == 'fft')
         if migrate_global_fft:
             self.plot_mode = 'time'
-        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(self.plot_mode, 0)
+        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(str(self.plot_mode), 0)
         self.plot_mode_combo.setCurrentIndex(mode_index)
         self.window_duration = float(s.value("display/window_duration", 5.0))
         self.lock_x_axis = s.value("display/lock_x_axis", "true") == "true"
         self.chk_lock_x.setChecked(self.lock_x_axis)
-        self.line_width = float(s.value("plot/line_width", 1.8))
+        self.line_width = float(s.value("plot/line_width", 1))
         self.grid_alpha = float(s.value("plot/grid_alpha", 0.3))
         self.plot_bg_color = s.value("plot/bg_color", "#0A0A0A")
 
@@ -2951,7 +4345,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             if i >= len(self.traces):
                 self.add_trace()
             t = self.traces[i]
-            param = s.value(f"traces/{i}/param", "MPOS")
+            param = str(s.value(f"traces/{i}/param", "MPOS"))
             axis = int(s.value(f"traces/{i}/axis", 0))
             enabled = s.value(f"traces/{i}/enabled", "true") == "true"
             t.param_combo.setCurrentText(param)
@@ -2997,9 +4391,9 @@ class ParameterScopeOscilloscope(QMainWindow):
             s.setValue(f"traces/{i}/fft",
                        "true" if t.is_fft() else "false")
 
-        # Per-axis drive profiles (from AI panel if open)
-        if self._ai_panel is not None:
-            profiles = self._ai_panel.get_all_profiles()
+        # Per-axis drive profiles (from tuner panel if open)
+        if self._tuner_panel is not None:
+            profiles = self._tuner_panel.get_all_profiles()
             s.setValue("ai/drive_profiles/count", len(profiles))
             for i, (axis, profile_dict) in enumerate(profiles.items()):
                 s.setValue(f"ai/drive_profiles/{i}/axis", axis)

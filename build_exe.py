@@ -8,6 +8,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent
+
+# Add src to path so we can import the version string
+sys.path.insert(0, str(ROOT / "src"))
+try:
+    from version import __version__
+except ImportError:
+    __version__ = "1.0.0"
+
 VENV_SITE = ROOT / ".venv" / "Lib" / "site-packages"
 
 # Trio .pyd and its companion DLLs
@@ -21,18 +29,28 @@ add_binary_args = []
 for src, dst in trio_binaries:
     add_binary_args += ["--add-binary", f"{src};{dst}"]
 
+# Bundle the docs/help markdown manual so the in-app Help menu works in
+# the frozen build. PyInstaller --add-data syntax: "src;dest" on Windows.
+help_dir = ROOT / "docs" / "help"
+add_data_args = []
+if help_dir.is_dir():
+    add_data_args += ["--add-data", f"{help_dir};docs/help"]
+
 cmd = [
     sys.executable, "-m", "PyInstaller",
-    "--name", "TrioScope",
+    "--name", f"TrioScope_v{__version__}",
     "--onedir",
     "--windowed",
     # Include local src/ package
     "--paths", str(ROOT / "src"),
     # Include Trio native binaries
     *add_binary_args,
+    # Include user manual markdown files
+    *add_data_args,
     # Hidden imports that PyInstaller may miss
     "--hidden-import", "Trio_UnifiedApi",
     "--hidden-import", "scope.scope_engine",
+    "--hidden-import", "help_window",
     "--hidden-import", "pyqtgraph.opengl",
     "--hidden-import", "OpenGL",
     "--hidden-import", "OpenGL.platform.win32",
@@ -60,4 +78,4 @@ print("Running PyInstaller...")
 print(" ".join(cmd))
 subprocess.run(cmd, check=True)
 
-print("\nBuild complete! Output in dist/TrioScope/")
+print(f"\nBuild complete! Output in dist/TrioScope_v{__version__}/")
