@@ -3743,7 +3743,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._hide_hover_readouts()
             return
 
-        if not self.plot_layout_widget.sceneBoundingRect().contains(scene_pos):
+        if not self.plot_layout_widget.scene().sceneRect().contains(scene_pos):
             self._hide_hover_readouts()
             return
 
