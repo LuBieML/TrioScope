@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFrame,
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
     QDialog, QFileDialog, QMessageBox, QGridLayout, QColorDialog,
+    QListWidget, QListWidgetItem, QInputDialog, QAbstractItemView,
     QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QSettings, Slot
@@ -749,6 +750,172 @@ class TraceControl(QFrame):
         return self.drive_var_combo.currentText()
 
 
+class _ProfileManagerDialog(QDialog):
+    """Dialog for managing saved trace profiles: load, rename, delete."""
+
+    def __init__(self, app, parent=None):
+        super().__init__(parent or app)
+        self._app = app
+        self.setWindowTitle("Manage Profiles")
+        self.setMinimumSize(460, 380)
+        self.setStyleSheet(DARK_STYLESHEET)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        title = QLabel("Saved Profiles")
+        title.setStyleSheet("font-size: 12pt; font-weight: bold;")
+        layout.addWidget(title)
+
+        body = QHBoxLayout()
+        body.setSpacing(8)
+
+        # Profile list
+        self._list = QListWidget()
+        self._list.setStyleSheet(
+            "QListWidget { background-color: #2e2e2e; border: 1px solid #4b4a4a;"
+            " border-radius: 3px; font-size: 10pt; }"
+            "QListWidget::item { padding: 5px 8px; }"
+            "QListWidget::item:selected { background-color: #FFA500; color: #000; }"
+        )
+        self._list.currentRowChanged.connect(self._on_selection_changed)
+        body.addWidget(self._list, 1)
+
+        # Buttons column
+        btn_col = QVBoxLayout()
+        btn_col.setSpacing(6)
+
+        self.btn_load = QPushButton("▶ Load")
+        self.btn_load.setToolTip("Load selected profile (replaces current traces)")
+        self.btn_load.clicked.connect(self._on_load)
+        btn_col.addWidget(self.btn_load)
+
+        self.btn_rename = QPushButton("✏ Rename")
+        self.btn_rename.setToolTip("Rename the selected profile")
+        self.btn_rename.clicked.connect(self._on_rename)
+        btn_col.addWidget(self.btn_rename)
+
+        self.btn_delete = QPushButton("🗑 Delete")
+        self.btn_delete.setToolTip("Delete the selected profile")
+        self.btn_delete.clicked.connect(self._on_delete)
+        btn_col.addWidget(self.btn_delete)
+
+        btn_col.addStretch()
+
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.close)
+        btn_col.addWidget(btn_close)
+
+        body.addLayout(btn_col)
+        layout.addLayout(body, 1)
+
+        # Preview area
+        preview_frame = QGroupBox("Preview")
+        preview_layout = QVBoxLayout(preview_frame)
+        preview_layout.setContentsMargins(8, 12, 8, 8)
+        preview_layout.setSpacing(2)
+        self._preview_container = QWidget()
+        self._preview_layout = QVBoxLayout(self._preview_container)
+        self._preview_layout.setContentsMargins(0, 0, 0, 0)
+        self._preview_layout.setSpacing(1)
+        self._preview_layout.setAlignment(Qt.AlignTop)
+        preview_layout.addWidget(self._preview_container)
+        layout.addWidget(preview_frame)
+
+        self._refresh_list()
+        self._on_selection_changed(-1)
+
+    def _refresh_list(self):
+        self._list.clear()
+        for name in self._app._get_profile_names():
+            self._list.addItem(name)
+
+    def _selected_name(self):
+        item = self._list.currentItem()
+        return item.text() if item else None
+
+    def _on_selection_changed(self, row):
+        has_sel = row >= 0
+        self.btn_load.setEnabled(has_sel)
+        self.btn_rename.setEnabled(has_sel)
+        self.btn_delete.setEnabled(has_sel)
+        self._update_preview()
+
+    def _update_preview(self):
+        # Clear old preview
+        while self._preview_layout.count():
+            child = self._preview_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        name = self._selected_name()
+        if not name:
+            lbl = QLabel("Select a profile to preview")
+            lbl.setStyleSheet("color: #666; font-style: italic;")
+            self._preview_layout.addWidget(lbl)
+            return
+
+        s = QSettings("TrioScope", "ParameterScope")
+        count = int(s.value(f"profiles/data/{name}/count", 0))
+        if count == 0:
+            lbl = QLabel("(empty profile)")
+            lbl.setStyleSheet("color: #666;")
+            self._preview_layout.addWidget(lbl)
+            return
+
+        for i in range(count):
+            param = str(s.value(f"profiles/data/{name}/{i}/param", "?"))
+            axis = int(s.value(f"profiles/data/{name}/{i}/axis", 0))
+            enabled = s.value(f"profiles/data/{name}/{i}/enabled", "true") == "true"
+            fft = s.value(f"profiles/data/{name}/{i}/fft", "false") == "true"
+
+            status = "✓" if enabled else "✗"
+            fft_tag = " [FFT]" if fft else ""
+            color = TRACE_COLORS[i % len(TRACE_COLORS)]
+            text = f"  {status}  {param}({axis}){fft_tag}"
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                f"color: {color}; font-family: Consolas; font-size: 9pt;"
+            )
+            self._preview_layout.addWidget(lbl)
+
+    def _on_load(self):
+        name = self._selected_name()
+        if name:
+            self._app._load_profile(name)
+            self.close()
+
+    def _on_rename(self):
+        old_name = self._selected_name()
+        if not old_name:
+            return
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Profile", "New name:", text=old_name)
+        new_name = new_name.strip() if ok else ""
+        if not new_name or new_name == old_name:
+            return
+        existing = self._app._get_profile_names()
+        if new_name in existing:
+            QMessageBox.warning(self, "Rename",
+                                f"A profile named '{new_name}' already exists.")
+            return
+        self._app._rename_profile(old_name, new_name)
+        self._refresh_list()
+
+    def _on_delete(self):
+        name = self._selected_name()
+        if not name:
+            return
+        reply = QMessageBox.question(
+            self, "Delete Profile",
+            f"Delete profile '{name}'? This cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self._app._delete_profile(name)
+            self._refresh_list()
+            self._on_selection_changed(-1)
+
 
 class CompareWindow(QMainWindow):
     """Fullscreen overlay window for comparing up to 3 live traces on one plot.
@@ -1379,6 +1546,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         btn_add = QPushButton("+ Add New Trace")
         btn_add.clicked.connect(self.add_trace)
         th_layout.addWidget(btn_add)
+
+        btn_save_profile = QPushButton("\U0001f4be Save Profile")
+        btn_save_profile.setToolTip("Save current traces as a named profile")
+        btn_save_profile.clicked.connect(self._show_save_profile_dialog)
+        th_layout.addWidget(btn_save_profile)
+
         left_layout.addWidget(traces_header)
 
         # -- Scrollable traces area --
@@ -4063,6 +4236,231 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     # ─── AI Analysis ──────────────────────────────────────────────
 
+    # ─── Trace Profiles ─────────────────────────────────────────────
+
+    def _get_profile_names(self):
+        """Return a list of all saved profile names."""
+        s = QSettings("TrioScope", "ParameterScope")
+        count = int(s.value("profiles/count", 0))
+        names = []
+        for i in range(count):
+            name = s.value(f"profiles/{i}/name", None)
+            if name:
+                names.append(name)
+        return names
+
+    def _save_profile(self, name):
+        """Save the current trace configuration as a named profile."""
+        s = QSettings("TrioScope", "ParameterScope")
+        names = self._get_profile_names()
+
+        # Overwrite if exists, else append
+        if name in names:
+            idx = names.index(name)
+        else:
+            idx = len(names)
+            names.append(name)
+
+        # Save the full names list
+        s.setValue("profiles/count", len(names))
+        for i, n in enumerate(names):
+            s.setValue(f"profiles/{i}/name", n)
+
+        # Save traces for this profile
+        enabled_traces = [t for t in self.traces if t.parent() is not None]
+        s.setValue(f"profiles/data/{name}/count", len(enabled_traces))
+        for i, t in enumerate(enabled_traces):
+            s.setValue(f"profiles/data/{name}/{i}/param", t.param_combo.currentText())
+            s.setValue(f"profiles/data/{name}/{i}/axis", t.axis_spin.value())
+            s.setValue(f"profiles/data/{name}/{i}/enabled",
+                       "true" if t.chk_enable.isChecked() else "false")
+            s.setValue(f"profiles/data/{name}/{i}/fft",
+                       "true" if t.is_fft() else "false")
+
+        self._rebuild_profiles_menu()
+        logger.info(f"Profile '{name}' saved with {len(enabled_traces)} trace(s)")
+
+    def _load_profile(self, name):
+        """Load a named profile, replacing all current traces."""
+        s = QSettings("TrioScope", "ParameterScope")
+        count = int(s.value(f"profiles/data/{name}/count", 0))
+        if count == 0:
+            logger.warning(f"Profile '{name}' is empty or not found")
+            return
+
+        # Remove all existing traces
+        for t in list(self.traces):
+            t.setParent(None)
+            t.deleteLater()
+        self.traces.clear()
+
+        # Recreate traces from profile
+        for i in range(count):
+            param = str(s.value(f"profiles/data/{name}/{i}/param", "MPOS"))
+            axis = int(s.value(f"profiles/data/{name}/{i}/axis", 0))
+            enabled = s.value(f"profiles/data/{name}/{i}/enabled", "true") == "true"
+            fft = s.value(f"profiles/data/{name}/{i}/fft", "false") == "true"
+
+            self.add_trace()
+            t = self.traces[-1]
+            t.param_combo.setCurrentText(param)
+            t.axis_spin.setValue(axis)
+            t.chk_enable.setChecked(enabled)
+            t.set_fft(fft)
+
+        self.on_trace_changed()
+        logger.info(f"Profile '{name}' loaded with {count} trace(s)")
+
+    def _delete_profile(self, name):
+        """Delete a saved profile."""
+        s = QSettings("TrioScope", "ParameterScope")
+        names = self._get_profile_names()
+        if name in names:
+            names.remove(name)
+
+        # Rewrite names list
+        s.setValue("profiles/count", len(names))
+        for i, n in enumerate(names):
+            s.setValue(f"profiles/{i}/name", n)
+
+        # Remove profile data
+        count = int(s.value(f"profiles/data/{name}/count", 0))
+        s.remove(f"profiles/data/{name}")
+
+        self._rebuild_profiles_menu()
+        logger.info(f"Profile '{name}' deleted")
+
+    def _rename_profile(self, old_name, new_name):
+        """Rename a saved profile."""
+        if old_name == new_name:
+            return
+        s = QSettings("TrioScope", "ParameterScope")
+        names = self._get_profile_names()
+        if old_name not in names:
+            return
+
+        # Copy profile data to new name
+        count = int(s.value(f"profiles/data/{old_name}/count", 0))
+        s.setValue(f"profiles/data/{new_name}/count", count)
+        for i in range(count):
+            for key in ("param", "axis", "enabled", "fft"):
+                val = s.value(f"profiles/data/{old_name}/{i}/{key}")
+                if val is not None:
+                    s.setValue(f"profiles/data/{new_name}/{i}/{key}", val)
+
+        # Remove old data
+        s.remove(f"profiles/data/{old_name}")
+
+        # Update names list
+        idx = names.index(old_name)
+        names[idx] = new_name
+        for i, n in enumerate(names):
+            s.setValue(f"profiles/{i}/name", n)
+
+        self._rebuild_profiles_menu()
+        logger.info(f"Profile renamed: '{old_name}' → '{new_name}'")
+
+    def _rebuild_profiles_menu(self):
+        """Refresh the View → Profiles submenu with current profile names."""
+        if not hasattr(self, '_profiles_menu') or self._profiles_menu is None:
+            return
+        self._profiles_menu.clear()
+        names = self._get_profile_names()
+
+        if names:
+            for name in names:
+                act = self._profiles_menu.addAction(name)
+                act.triggered.connect(lambda checked, n=name: self._load_profile(n))
+            self._profiles_menu.addSeparator()
+
+        act_manage = self._profiles_menu.addAction("\u2699 Manage Profiles…")
+        act_manage.triggered.connect(self._show_manage_profiles_dialog)
+
+    def _show_save_profile_dialog(self):
+        """Show a dialog to save the current traces as a named profile."""
+        if not self.traces:
+            QMessageBox.information(self, "Save Profile",
+                                   "Add at least one trace before saving a profile.")
+            return
+
+        existing = self._get_profile_names()
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Save Profile")
+        dlg.setMinimumWidth(320)
+        dlg.setStyleSheet(DARK_STYLESHEET)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        lbl = QLabel("Profile name:")
+        lbl.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        layout.addWidget(lbl)
+
+        name_edit = QLineEdit()
+        name_edit.setPlaceholderText("e.g. Position Tuning")
+        name_edit.setStyleSheet(
+            "padding: 6px; font-size: 10pt; background-color: #4b4a4a;"
+            " color: #d4d4d4; border: 1px solid #606060; border-radius: 3px;")
+        layout.addWidget(name_edit)
+
+        if existing:
+            hint = QLabel(f"Existing profiles: {', '.join(existing)}")
+            hint.setStyleSheet("color: #888; font-size: 8pt;")
+            hint.setWordWrap(True)
+            layout.addWidget(hint)
+
+        # Preview of what will be saved
+        preview_lbl = QLabel("Traces to save:")
+        preview_lbl.setStyleSheet("color: #aaa; font-size: 9pt; margin-top: 6px;")
+        layout.addWidget(preview_lbl)
+        for t in self.traces:
+            if t.parent() is not None:
+                status = "\u2713" if t.chk_enable.isChecked() else "\u2717"
+                fft_tag = " [FFT]" if t.is_fft() else ""
+                trace_text = f"  {status}  {t.get_display_name()}{fft_tag}"
+                trace_lbl = QLabel(trace_text)
+                trace_lbl.setStyleSheet(f"color: {t.color}; font-size: 9pt; font-family: Consolas;")
+                layout.addWidget(trace_lbl)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_save = QPushButton("Save")
+        btn_save.setObjectName("accent")
+        btn_save.setFixedWidth(90)
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setFixedWidth(90)
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_save)
+        layout.addLayout(btn_layout)
+
+        def do_save():
+            name = name_edit.text().strip()
+            if not name:
+                QMessageBox.warning(dlg, "Save Profile", "Please enter a profile name.")
+                return
+            if name in existing:
+                reply = QMessageBox.question(
+                    dlg, "Overwrite Profile",
+                    f"Profile '{name}' already exists. Overwrite?",
+                    QMessageBox.Yes | QMessageBox.No)
+                if reply != QMessageBox.Yes:
+                    return
+            self._save_profile(name)
+            dlg.accept()
+
+        btn_save.clicked.connect(do_save)
+        btn_cancel.clicked.connect(dlg.reject)
+        name_edit.returnPressed.connect(do_save)
+
+        dlg.exec()
+
+    def _show_manage_profiles_dialog(self):
+        """Show the profile manager dialog for load/rename/delete."""
+        dlg = _ProfileManagerDialog(self)
+        dlg.exec()
+
     # ─── Menu bar ───────────────────────────────────────────────────
 
     def _create_menu_bar(self):
@@ -4144,6 +4542,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         act_ecat.setShortcut(QKeySequence("Ctrl+M"))
         act_ecat.triggered.connect(self._open_ethercat_map)
         view_menu.addAction(act_ecat)
+
+        view_menu.addSeparator()
+
+        # Profiles submenu
+        self._profiles_menu = view_menu.addMenu("\U0001f4cb &Profiles")
+        self._rebuild_profiles_menu()
 
         # ── Help menu ──────────────────────────────────────────────
         help_menu = menubar.addMenu("&Help")
