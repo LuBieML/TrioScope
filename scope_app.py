@@ -1461,7 +1461,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         right_layout.addWidget(self.plot_layout_widget, 1)
 
         # Connect mouse movement for hover readouts
-        self.plot_layout_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        self.plot_layout_widget.scene().sigMouseMoved.connect(self._on_mouse_moved_main)
 
         # 3D Plot area (hidden by default)
         self.gl_widget = gl.GLViewWidget()
@@ -3737,7 +3737,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         if self._cursors_enabled:
             self._update_cursor_readout()
 
-    def _on_mouse_moved(self, scene_pos):
+    def _on_mouse_moved_main(self, scene_pos):
         """Update hover readouts on mouse move in the main window."""
         if self.plot_mode != 'time':
             self._hide_hover_readouts()
