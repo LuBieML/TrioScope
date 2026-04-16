@@ -1612,6 +1612,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         btn_ecat.clicked.connect(self._open_ethercat_map)
         ctrl_grid.addWidget(btn_ecat, 4, 0, 1, 2)
 
+        # Row 5: Screenshot
+        btn_screenshot = QPushButton("\U0001f4f7 Screenshot")
+        btn_screenshot.clicked.connect(self.take_screenshot)
+        ctrl_grid.addWidget(btn_screenshot, 5, 0, 1, 2)
+
         left_layout.addLayout(ctrl_grid)
 
         main_layout.addWidget(left_panel)
@@ -4085,6 +4090,24 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.status_label.setText("Data cleared")
         if self._cursors_enabled:
             self._update_cursor_readout()
+
+    def take_screenshot(self):
+        """Take a screenshot of the main application window and save as PNG."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Screenshot", f"scope_screenshot_{datetime.now():%Y%m%d_%H%M%S}.png",
+            "PNG Files (*.png)"
+        )
+        if not path:
+            return
+
+        try:
+            # useOpenGL=True means self.grab() will leave plots blank.
+            # grabWindow takes an OS-level grab of the widget's bounds.
+            pixmap = self.screen().grabWindow(self.winId())
+            pixmap.save(path, "PNG")
+            self.status_label.setText(f"Screenshot saved to {Path(path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Screenshot Error", str(e))
 
     def export_to_csv(self):
         if self.accumulated_data is None:
