@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
     QDialog, QFileDialog, QMessageBox, QGridLayout, QColorDialog,
     QListWidget, QListWidgetItem, QInputDialog, QAbstractItemView,
-    QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit
+    QFormLayout, QSizePolicy, QSplitter, QPlainTextEdit, QCompleter
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QSettings, Slot
 from PySide6.QtGui import QFont, QColor, QPen, QBrush, QAction, QKeySequence
@@ -512,17 +512,51 @@ class TraceControl(QFrame):
         row0.addWidget(self.chk_enable)
 
         self.param_combo = QComboBox()
+        self.param_combo.setEditable(True)
+        self.param_combo.setInsertPolicy(QComboBox.NoInsert)
         self.param_combo.addItems(SCOPE_PARAMETERS)
+
+        # Searchable dropdown: QCompleter with substring matching
+        p_completer = QCompleter(SCOPE_PARAMETERS, self.param_combo)
+        p_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        p_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        p_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        p_completer.popup().setStyleSheet(
+            "QAbstractItemView {"
+            "  background-color: #3a3a3a; color: #d4d4d4;"
+            "  selection-background-color: #FFA500; selection-color: #000;"
+            "  font-size: 9pt; border: 1px solid #666;"
+            "}"
+        )
+        self.param_combo.setCompleter(p_completer)
+
         self.param_combo.setCurrentText("MPOS")
         self.param_combo.setMaxVisibleItems(20)
         self.param_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.param_combo.currentTextChanged.connect(self._on_param_changed)
+        self.param_combo.currentIndexChanged.connect(self._on_param_changed)
         row0.addWidget(self.param_combo, 1)
 
         # Drive variable combo (hidden by default)
         self.drive_var_combo = QComboBox()
+        self.drive_var_combo.setEditable(True)
+        self.drive_var_combo.setInsertPolicy(QComboBox.NoInsert)
         for addr, label in COMMON_DRIVE_VARIABLES:
             self.drive_var_combo.addItem(label, addr)
+
+        drive_labels = [label for _, label in COMMON_DRIVE_VARIABLES]
+        d_completer = QCompleter(drive_labels, self.drive_var_combo)
+        d_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        d_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        d_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        d_completer.popup().setStyleSheet(
+            "QAbstractItemView {"
+            "  background-color: #3a3a3a; color: #d4d4d4;"
+            "  selection-background-color: #FFA500; selection-color: #000;"
+            "  font-size: 9pt; border: 1px solid #666;"
+            "}"
+        )
+        self.drive_var_combo.setCompleter(d_completer)
+
         self.drive_var_combo.setMaxVisibleItems(20)
         self.drive_var_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.drive_var_combo.currentIndexChanged.connect(lambda: self.changed.emit())
@@ -651,7 +685,7 @@ class TraceControl(QFrame):
 
         vbox.addLayout(row1)
 
-    def _on_param_changed(self):
+    def _on_param_changed(self, index=None):
         """Update axis/channel label and range based on selected parameter."""
         is_ch = self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
         if is_ch:
