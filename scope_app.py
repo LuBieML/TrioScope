@@ -531,8 +531,9 @@ class TraceControl(QFrame):
 
         self._drive_mode = False
 
-        self.btn_delete = QPushButton("\u2715")
-        self.btn_delete.setFixedWidth(24)
+        self.btn_delete = QPushButton("X")
+        self.btn_delete.setFixedWidth(34)
+        self.btn_delete.setStyleSheet("color: #ff4d4d; font-weight: bold; font-size: 10pt;")
         self.btn_delete.clicked.connect(self._on_delete)
         row0.addWidget(self.btn_delete)
 
@@ -1584,38 +1585,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_stop.clicked.connect(self.stop_capture)
         ctrl_grid.addWidget(self.btn_stop, 0, 1)
 
-        # Row 1: Clear / Settings
+        # Row 1: Clear
         btn_clear = QPushButton("\u239a Clear")
         btn_clear.clicked.connect(self.clear_data)
-        ctrl_grid.addWidget(btn_clear, 1, 0)
-
-        btn_settings = QPushButton("\u2699 Settings")
-        btn_settings.clicked.connect(self.open_settings)
-        ctrl_grid.addWidget(btn_settings, 1, 1)
-
-        # Row 2: Export / Import
-        btn_export = QPushButton("\u2913 Export CSV")
-        btn_export.clicked.connect(self.export_to_csv)
-        ctrl_grid.addWidget(btn_export, 2, 0)
-
-        btn_import = QPushButton("\u2912 Import CSV")
-        btn_import.clicked.connect(self.import_from_csv)
-        ctrl_grid.addWidget(btn_import, 2, 1)
-
-        # Row 3: Servo Tuner
-        btn_tuner = QPushButton("\u2699 Servo Tuner")
-        btn_tuner.clicked.connect(self._toggle_tuner_panel)
-        ctrl_grid.addWidget(btn_tuner, 3, 0, 1, 2)
-
-        # Row 4: EtherCAT Map
-        btn_ecat = QPushButton("\u26a1 EtherCAT Map")
-        btn_ecat.clicked.connect(self._open_ethercat_map)
-        ctrl_grid.addWidget(btn_ecat, 4, 0, 1, 2)
-
-        # Row 5: Screenshot
-        btn_screenshot = QPushButton("\U0001f4f7 Screenshot")
-        btn_screenshot.clicked.connect(self.take_screenshot)
-        ctrl_grid.addWidget(btn_screenshot, 5, 0, 1, 2)
+        ctrl_grid.addWidget(btn_clear, 1, 0, 1, 2)
 
         left_layout.addLayout(ctrl_grid)
 
@@ -4545,6 +4518,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         act_settings.setShortcut(QKeySequence("Ctrl+,"))
         act_settings.triggered.connect(self.open_settings)
         file_menu.addAction(act_settings)
+
+        file_menu.addSeparator()
+
+        act_screenshot = QAction("Take &Screenshot", self)
+        act_screenshot.triggered.connect(self.take_screenshot)
+        file_menu.addAction(act_screenshot)
 
         file_menu.addSeparator()
 
