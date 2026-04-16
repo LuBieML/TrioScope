@@ -36,6 +36,10 @@ add_data_args = []
 if help_dir.is_dir():
     add_data_args += ["--add-data", f"{help_dir};docs/help"]
 
+licenses_file = ROOT / "THIRD_PARTY_LICENSES.txt"
+if licenses_file.is_file():
+    add_data_args += ["--add-data", f"{licenses_file};."]
+
 cmd = [
     sys.executable, "-m", "PyInstaller",
     "--name", f"TrioScope_v{__version__}",

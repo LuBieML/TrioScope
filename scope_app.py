@@ -4627,6 +4627,10 @@ class ParameterScopeOscilloscope(QMainWindow):
             "<p>Real-time multi-trace plotting, FFT, XY/XYZ/XYZW path views, "
             "AI-powered tuning analysis, and EtherCAT diagnostics.</p>"
             "<p>Built with PySide6, pyqtgraph, and Trio_UnifiedApi.</p>"
+            "<br><p><b>Legal & Licenses:</b><br>"
+            "This application utilizes third-party open source software.<br>"
+            "See <b>THIRD_PARTY_LICENSES.txt</b> in the installation directory for full <br>"
+            "license texts (LGPLv3, MIT, BSD) and copyright attributions.</p>"
             "<p><a href='#'>Help → User Manual</a> for full documentation.</p>"
         )
 
