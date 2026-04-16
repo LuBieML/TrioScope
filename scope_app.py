@@ -536,6 +536,20 @@ class TraceControl(QFrame):
         self.param_combo.currentIndexChanged.connect(self._on_param_changed)
         row0.addWidget(self.param_combo, 1)
 
+        # "Show all" button for parameter combo
+        self.btn_show_params = QPushButton("\u25bc")
+        self.btn_show_params.setFixedSize(20, 22)
+        self.btn_show_params.setToolTip("Show all parameters")
+        self.btn_show_params.setStyleSheet(
+            "QPushButton { background-color: #4b4a4a; color: #ccc;"
+            " border: 1px solid #606060; border-radius: 2px;"
+            " font-size: 8pt; padding: 0px; }"
+            "QPushButton:hover { background-color: #5a5a5a; }"
+            "QPushButton:pressed { background-color: #666; }"
+        )
+        self.btn_show_params.clicked.connect(self._show_all_params)
+        row0.addWidget(self.btn_show_params)
+
         # Drive variable combo (hidden by default)
         self.drive_var_combo = QComboBox()
         self.drive_var_combo.setEditable(True)
@@ -562,6 +576,21 @@ class TraceControl(QFrame):
         self.drive_var_combo.currentIndexChanged.connect(lambda: self.changed.emit())
         self.drive_var_combo.setVisible(False)
         row0.addWidget(self.drive_var_combo, 1)
+
+        # "Show all" button for drive variable combo
+        self.btn_show_drive_vars = QPushButton("\u25bc")
+        self.btn_show_drive_vars.setFixedSize(20, 22)
+        self.btn_show_drive_vars.setToolTip("Show all drive variables")
+        self.btn_show_drive_vars.setStyleSheet(
+            "QPushButton { background-color: #4b4a4a; color: #ccc;"
+            " border: 1px solid #606060; border-radius: 2px;"
+            " font-size: 8pt; padding: 0px; }"
+            "QPushButton:hover { background-color: #5a5a5a; }"
+            "QPushButton:pressed { background-color: #666; }"
+        )
+        self.btn_show_drive_vars.clicked.connect(self._show_all_drive_vars)
+        self.btn_show_drive_vars.setVisible(False)
+        row0.addWidget(self.btn_show_drive_vars)
 
         self._drive_mode = False
 
@@ -707,6 +736,18 @@ class TraceControl(QFrame):
         self.deleteLater()
         self.changed.emit()
 
+    def _show_all_params(self):
+        """Clear search text and show full parameter dropdown."""
+        self.param_combo.setCurrentText(self.param_combo.currentText())
+        self.param_combo.lineEdit().clear()
+        self.param_combo.showPopup()
+
+    def _show_all_drive_vars(self):
+        """Clear search text and show full drive variable dropdown."""
+        self.drive_var_combo.setCurrentText(self.drive_var_combo.currentText())
+        self.drive_var_combo.lineEdit().clear()
+        self.drive_var_combo.showPopup()
+
     def is_enabled(self):
         return self.chk_enable.isChecked()
 
@@ -765,7 +806,9 @@ class TraceControl(QFrame):
         """Switch between controller parameter and drive variable selection."""
         self._drive_mode = enabled
         self.param_combo.setVisible(not enabled)
+        self.btn_show_params.setVisible(not enabled)
         self.drive_var_combo.setVisible(enabled)
+        self.btn_show_drive_vars.setVisible(enabled)
         # Hide axis selector in drive mode (axis set globally)
         self.axis_spin.setVisible(not enabled)
 
