@@ -42,7 +42,8 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('scope_app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('scope_app.py OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/help_window.py', encoding='utf-8'\\).read\\(\\)\\); print\\('help_window.py OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('build_exe.py', encoding='utf-8'\\).read\\(\\)\\); print\\('build_exe.py OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('src/help_window.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/help_window.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import Trio_UnifiedApi as TUA; conn = TUA.TrioConnectionTCP.__new__\\(TUA.TrioConnectionTCP\\); print\\([m for m in dir\\(conn\\) if not m.startswith\\('__'\\)]\\)\")"
     ]
   }
 }
