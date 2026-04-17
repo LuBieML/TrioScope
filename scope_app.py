@@ -1321,6 +1321,12 @@ class _CompareTracePicker(QDialog):
 class ParameterScopeOscilloscope(QMainWindow):
     """Main application with oscilloscope-style UI — pyqtgraph version"""
 
+    sig_connect_progress = Signal(str)
+    sig_connect_result = Signal(object, object, object, str, object)
+    sig_capture_progress = Signal(str)
+    sig_capture_status = Signal(str)
+    sig_capture_stopped = Signal()
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"TrioScope v{__version__} - Parameter Scope")
@@ -1441,6 +1447,17 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._update_timer = QTimer(self)
         self._update_timer.timeout.connect(self._on_update_timer)
         self._update_timer.setInterval(16)
+
+        # Signal connections
+        self.sig_connect_progress.connect(self._on_connect_progress)
+        self.sig_connect_result.connect(self._on_connect_result)
+        self.sig_capture_progress.connect(self._on_capture_progress)
+        self.sig_capture_status.connect(self._on_capture_status)
+        self.sig_capture_stopped.connect(self._on_capture_stopped)
+
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self.do_connect)
 
     def _create_ui(self):
         """Create main UI"""
@@ -2817,7 +2834,8 @@ class ParameterScopeOscilloscope(QMainWindow):
                 def _heartbeat():
                     try:
                         with self._conn_lock:
-                            self.trio_connection.SetVrValue(66, 1)
+                            # Read VR(0) as a non-destructive connection probe
+                            self.trio_connection.GetVrValue(0)
                     except Exception as e:
                         heartbeat_error.append(e)
                     finally:
@@ -2873,12 +2891,23 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.drive_scope_engine = None
         if self._tuner_panel is not None:
             self._tuner_panel.set_connection(None)
+        if self._ethercat_map is not None:
+            self._ethercat_map.close()
+            self._ethercat_map = None
+            
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
-        self.status_label.setText("Connection lost")
+        self.status_label.setStyleSheet("color: #f14c4c;")
+        self.status_label.setText("Connection lost. Reconnecting in 2s...")
         self.btn_connect.setText("Connect")
         self.btn_connect.setEnabled(True)
         if self.is_running:
             self.stop_capture()
+            self.sig_capture_stopped.emit()
+            self.sig_capture_progress.emit("")
+            
+        # Queue auto-reconnect if not intentionally shutting down
+        if not self._shutting_down:
+            self._reconnect_timer.start(2000)
 
     def _attempt_connection_with_timeout(self, conn, timeout_seconds):
         """Open connection with timeout. Returns True/False."""
@@ -2937,7 +2966,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             for attempt in range(self._max_connection_attempts):
                 timeout = self._connection_timeout_seconds[attempt]
                 attempt_label = f"Attempt {attempt + 1}/{self._max_connection_attempts}"
-                self._pending_connect_progress = f"{attempt_label} (timeout: {timeout}s)"
+                self.sig_connect_progress.emit(f"{attempt_label} (timeout: {timeout}s)")
 
                 try:
                     conn = TUA.TrioConnectionTCP(self._event_handler, ip)
@@ -2950,15 +2979,15 @@ class ParameterScopeOscilloscope(QMainWindow):
                             time.sleep(1.0)
                             continue
                         else:
-                            self._pending_connect_result = (
+                            self.sig_connect_result.emit(
                                 None, None, None, ip,
                                 TimeoutError(f"Connection timed out after {self._max_connection_attempts} attempts"))
                             return
 
                     # Verify connection with VR probe
                     try:
-                        conn.SetVrValue(66, 0)
-                        conn.SetVrValue(66, 1)
+                        # Read VR(0) as a non-destructive connection probe
+                        conn.GetVrValue(0)
                     except Exception as probe_err:
                         logger.warning(f"Connection probe failed: {probe_err}")
                         self._cleanup_connection_async(conn)
@@ -2966,7 +2995,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                             time.sleep(1.0)
                             continue
                         else:
-                            self._pending_connect_result = (
+                            self.sig_connect_result.emit(
                                 None, None, None, ip,
                                 ConnectionError(f"Connection verification failed: {probe_err}"))
                             return
@@ -2975,7 +3004,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                     engine = ScopeEngine(conn)
                     servo_period = engine.read_servo_period()
                     engine.read_table_size()
-                    self._pending_connect_result = (conn, engine, servo_period, ip, None)
+                    self.sig_connect_result.emit(conn, engine, servo_period, ip, None)
                     return
 
                 except TUA.TrioConnectionError as e:
@@ -2983,7 +3012,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                     if attempt < self._max_connection_attempts - 1:
                         time.sleep(1.0)
                         continue
-                    self._pending_connect_result = (None, None, None, ip, e)
+                    self.sig_connect_result.emit(None, None, None, ip, e)
                     return
 
                 except Exception as e:
@@ -2991,44 +3020,47 @@ class ParameterScopeOscilloscope(QMainWindow):
                     if attempt < self._max_connection_attempts - 1:
                         time.sleep(1.0)
                         continue
-                    self._pending_connect_result = (None, None, None, ip, e)
+                    self.sig_connect_result.emit(None, None, None, ip, e)
                     return
 
-        self._pending_connect_result = None
-        self._pending_connect_progress = ""
         threading.Thread(target=_connect_worker, daemon=True).start()
 
-        # Poll for result without blocking UI
-        def _check_connect():
-            if self._pending_connect_result is None:
-                # Update status with progress
-                if self._pending_connect_progress:
-                    self.status_label.setText(f"Connecting to {ip}... {self._pending_connect_progress}")
-                QTimer.singleShot(100, _check_connect)
-                return
-            conn, engine, servo_period, ip_addr, err = self._pending_connect_result
-            self._pending_connect_result = None
-            if err is not None:
-                self.btn_connect.setEnabled(True)
-                self.status_label.setText("Connection failed")
-                QMessageBox.critical(self, "Connection Error", str(err))
-                logger.exception("Connection failed")
-            else:
-                self.trio_connection = conn
-                self.trio_connected = True
-                self.scope_engine = engine
-                self.drive_scope_engine = DriveScopeEngine(conn, axis=0)
-                if self._tuner_panel is not None:
-                    self._tuner_panel.set_connection(conn, self._conn_lock)
-                self._start_watchdog()
-                self.status_dot.setStyleSheet("color: #00cc00; font-size: 16pt;")
-                sp_ms = servo_period * 1000 if servo_period else 0
-                self.status_label.setText(f"Connected to {ip_addr} (Servo: {sp_ms:.1f}ms)")
-                self.table_usage_label.setText(f"TABLE size: {engine.tsize}")
-                self.btn_connect.setText("Disconnect")
-                self.btn_connect.setEnabled(True)
+    def _on_connect_progress(self, msg: str):
+        self.status_label.setText(f"Connecting to {self.ip_edit.text()}... {msg}")
 
-        QTimer.singleShot(100, _check_connect)
+    def _on_connect_result(self, conn, engine, servo_period, ip_addr, err):
+        if err is not None:
+            self.btn_connect.setEnabled(True)
+            logger.exception("Connection failed")
+            
+            # Error classification instead of raw QMessageBox Stack Trace
+            err_str = str(err)
+            if isinstance(err, TimeoutError):
+                msg = "Connection timed out"
+            elif isinstance(err, ConnectionRefusedError) or "refused" in err_str.lower():
+                msg = "Connection refused (controller not ready)"
+            elif "unreachable" in err_str.lower() or "host" in err_str.lower() or "10065" in err_str:
+                msg = "Host unreachable. Check IP and network."
+            else:
+                msg = f"Connection failed: {err}"
+                
+            self.status_label.setText(msg)
+            self.status_label.setStyleSheet("color: #f14c4c;")
+        else:
+            self.trio_connection = conn
+            self.trio_connected = True
+            self.scope_engine = engine
+            self.drive_scope_engine = DriveScopeEngine(conn, axis=0)
+            if self._tuner_panel is not None:
+                self._tuner_panel.set_connection(conn, self._conn_lock)
+            self._start_watchdog()
+            self.status_dot.setStyleSheet("color: #00cc00; font-size: 16pt;")
+            self.status_label.setStyleSheet("color: #d4d4d4;")
+            sp_ms = servo_period * 1000 if servo_period else 0
+            self.status_label.setText(f"Connected to {ip_addr} (Servo: {sp_ms:.1f}ms)")
+            self.table_usage_label.setText(f"TABLE size: {engine.tsize}")
+            self.btn_connect.setText("Disconnect")
+            self.btn_connect.setEnabled(True)
 
     def do_disconnect(self):
         """Disconnect with proper cleanup — matching gcode parser pattern."""
@@ -3259,7 +3291,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._update_timer.start()
 
             logger.info("Drive scope: %s", config)
-            self._pending_status = (
+            self.sig_capture_status.emit(
                 f"Drive scope: {config['active_channels']} ch, "
                 f"{config['sample_period_ms']:.2f} ms/sample, "
                 f"{config['capture_duration_sec']*1000:.1f} ms capture"
@@ -3284,12 +3316,12 @@ class ParameterScopeOscilloscope(QMainWindow):
             engine = self.drive_scope_engine
 
             # Step 1: Start capture on the drive
-            self._pending_status = "Drive scope: starting capture..."
+            self.sig_capture_status.emit("Drive scope: starting capture...")
             with self._conn_lock:
                 engine.start_capture()
 
             # Step 2: Wait for capture to complete (poll with short lock holds)
-            self._pending_status = "Drive scope: sampling..."
+            self.sig_capture_status.emit("Drive scope: sampling...")
             capture_timeout = max(30.0, engine.capture_duration_sec * 3)
             wait_start = time.monotonic()
             completed = False
@@ -3310,25 +3342,25 @@ class ParameterScopeOscilloscope(QMainWindow):
                 elapsed = time.monotonic() - wait_start
                 if engine.capture_duration_sec > 0:
                     pct = min(0.99, elapsed / engine.capture_duration_sec)
-                    self._pending_progress = f"Sampling: {pct*100:.0f}%"
+                    self.sig_capture_progress.emit(f"Sampling: {pct*100:.0f}%")
 
                 time.sleep(0.05)
 
             if not completed:
-                self._pending_status = "Drive scope: capture timed out"
+                self.sig_capture_status.emit("Drive scope: capture timed out")
                 logger.warning("Drive scope capture timed out")
                 return
 
-            self._pending_progress = "Sampling: 100%"
+            self.sig_capture_progress.emit("Sampling: 100%")
 
             # Step 3: Download data from drive via TABLE relay
             # This takes ~20s for 8000 words — stop the watchdog so it
             # doesn't kill the connection while we hold _conn_lock.
             self._stop_watchdog()
-            self._pending_status = "Drive scope: downloading data..."
+            self.sig_capture_status.emit("Drive scope: downloading data...")
 
             def _download_cb(pct, msg):
-                self._pending_progress = msg
+                self.sig_capture_progress.emit(msg)
 
             with self._conn_lock:
                 data = engine.read_data(progress_callback=_download_cb)
@@ -3342,19 +3374,19 @@ class ParameterScopeOscilloscope(QMainWindow):
             # Step 4: Push data into the display pipeline
             if data and data['num_samples'] > 0:
                 self._push_data(data)
-                self._pending_status = (
+                self.sig_capture_status.emit(
                     f"Drive scope: captured {data['num_samples']} samples "
                     f"({data['num_samples'] * data['sample_period'] * 1000:.1f} ms)"
                 )
             else:
-                self._pending_status = "Drive scope: no data captured"
+                self.sig_capture_status.emit("Drive scope: no data captured")
 
         except Exception as e:
-            self._pending_status = f"Drive scope error: {e}"
+            self.sig_capture_status.emit(f"Drive scope error: {e}")
             logger.exception("Drive scope capture error")
         finally:
             self.is_running = False
-            self._pending_stop_ui = True
+            self.sig_capture_stopped.emit()
 
     def _scope_single_shot_thread(self):
         """Single-shot capture — background thread"""
@@ -3372,7 +3404,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
                 elapsed = time.time() - capture_start_time
                 pct = (elapsed / duration_sec) * 100
-                self._pending_progress = f"Progress: {pct:.1f}%"
+                self.sig_capture_progress.emit(f"Progress: {pct:.1f}%")
                 time.sleep(0.010)
 
             if not self.is_running:
@@ -3392,14 +3424,14 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.scope_engine.stop_capture()
             if final_batch and final_batch['num_samples'] > 0:
                 self._push_data(final_batch)
-            self._pending_status = f"Captured {last_sample_idx} samples"
+            self.sig_capture_status.emit(f"Captured {last_sample_idx} samples")
 
         except Exception as e:
-            self._pending_status = f"Error: {e}"
+            self.sig_capture_status.emit(f"Error: {e}")
             logger.exception("Single-shot error")
         finally:
             self.is_running = False
-            self._pending_stop_ui = True
+            self.sig_capture_stopped.emit()
 
     def _scope_continuous_thread(self):
         """Continuous capture — background thread.
@@ -3419,7 +3451,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             time.sleep(0.05)
             last_sample_idx = 0
             sample_offset = 0  # cumulative sample offset across wraps
-            self._pending_status = "Capturing (continuous)..."
+            self.sig_capture_status.emit("Capturing (continuous)...")
 
             while self.is_running and self.trio_connected:
                 batch_data, new_idx = self.scope_engine.read_new_data(last_sample_idx, max_samples=0)
@@ -3451,11 +3483,11 @@ class ParameterScopeOscilloscope(QMainWindow):
                     pass
 
         except Exception as e:
-            self._pending_status = f"Error: {e}"
+            self.sig_capture_status.emit(f"Error: {e}")
             logger.exception("Continuous error")
         finally:
             self.is_running = False
-            self._pending_stop_ui = True
+            self.sig_capture_stopped.emit()
 
     def _push_data(self, data):
         """Thread-safe: push new data chunk from capture thread into pre-allocated buffer"""
@@ -3492,30 +3524,24 @@ class ParameterScopeOscilloscope(QMainWindow):
         with self._data_lock:
             self._segment_breaks.append(self._buffer_len)
 
-    _pending_progress = ""
-    _pending_status = ""
-    _pending_stop_ui = False
+    def _on_capture_progress(self, msg: str):
+        self.progress_label.setText(msg)
+
+    def _on_capture_status(self, msg: str):
+        self.status_label.setText(msg)
+
+    def _on_capture_stopped(self):
+        self.btn_run.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self._update_timer.stop()
+        # Final render: show all captured data so panning works immediately
+        if self.auto_scroll:
+            self.auto_scroll = False
+            self._update_auto_scroll_button()
+        self._fit_all_data()
 
     def _on_update_timer(self):
         """Main-thread timer: consolidate data and update plots at ~30fps"""
-        # Handle pending UI updates from background thread
-        if self._pending_progress:
-            self.progress_label.setText(self._pending_progress)
-            self._pending_progress = ""
-        if self._pending_status:
-            self.status_label.setText(self._pending_status)
-            self._pending_status = ""
-        if self._pending_stop_ui:
-            self._pending_stop_ui = False
-            self.btn_run.setEnabled(True)
-            self.btn_stop.setEnabled(False)
-            self._update_timer.stop()
-            # Final render: show all captured data so panning works immediately
-            if self.auto_scroll:
-                self.auto_scroll = False
-                self._update_auto_scroll_button()
-            self._fit_all_data()
-
         # Consolidate data chunks under lock
         with self._data_lock:
             if self._buffer_len == 0:
