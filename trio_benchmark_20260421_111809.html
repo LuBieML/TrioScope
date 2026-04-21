@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='UTF-8'>
+<title>Trio Benchmark Report — 2026-04-21 11:18</title>
+<style>
+body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #1a1a1a;
+       max-width: 1100px; margin: 0 auto; padding: 20px; }
+h1 { color: #0066cc; border-bottom: 2px solid #0066cc; padding-bottom: 6px; }
+h2 { color: #004499; margin-top: 28px; }
+table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
+th { background: #0066cc; color: white; padding: 6px 10px; text-align: left; }
+td { padding: 5px 10px; border-bottom: 1px solid #ddd; }
+tr:nth-child(even) td { background: #f5f8ff; }
+.meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.meta-box { background: #f0f4ff; border: 1px solid #b0c4de; border-radius: 6px; padding: 12px; }
+.meta-box h3 { margin: 0 0 8px 0; color: #004499; font-size: 13px; }
+dl { margin: 0; }
+dt { font-weight: bold; float: left; width: 130px; clear: left; padding: 2px 0; }
+dd { margin-left: 134px; padding: 2px 0; }
+.notes { background: #fffbe6; border-left: 4px solid #f0a500;
+         padding: 10px 14px; margin-bottom: 16px; border-radius: 0 4px 4px 0; }
+.chart-box { border: 1px solid #dce3f0; border-radius: 6px;
+             margin: 10px 0; background: #fff; overflow: hidden; }
+.test-desc { color: #444; font-size: 12px; margin: 4px 0 10px 0;
+             line-height: 1.55; max-width: 860px; }
+@media print { .chart-box { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+<script id='_chart_data' type='application/json'>{"tests":{"table_rtt":{"label":"Table write/read (500)","write":[9.7182,12.9123,13.8056,12.8062,11.4102,15.5347,10.6382,11.4792,10.3087,12.9448,11.5212,13.0566,14.0695,10.9518,8.4962,13.5937,9.7097,13.7965,10.9124,8.3793,10.1822,12.4684,9.9746,7.9877,13.8153,7.3526,9.4784,14.4373,12.7546,12.8769,11.262,14.4771,11.6029,12.7774,9.2207,11.9737,11.6972,12.7761,12.039,14.0496,9.2162,10.3882,11.6991,10.0195,12.1262,11.4683,9.7131,11.0309,7.3075,12.8101,11.1015,10.6369,13.2185,10.0196,10.4306,12.9599,6.6296,10.529,11.2891,12.0233,8.1357,13.1405,8.1019,9.0872,12.0547,12.2838,13.3919,14.3625,11.6219,14.3059,11.6574,10.102,8.632,11.4932,14.0529,13.8897,12.6647,7.5664,11.5407,11.7428,9.562,15.7119,18.8643,11.6986,10.727,12.9007,9.3218,13.7388,10.9178,10.2295,10.1585,10.1132,10.0208,10.9633,13.5716,15.7479,6.8065,12.2696,11.627,15.8549],"read":[24.5951,39.3461,24.8468,23.4598,39.8806,42.5708,33.3427,22.8996,50.9852,33.2012,39.9651,41.1878,43.0989,20.6597,43.0273,33.7187,47.0161,38.0217,27.6431,46.6652,34.5405,22.1233,48.6948,25.4296,23.3678,35.4205,28.2243,28.2949,42.2986,22.9651,29.4647,36.1194,41.4577,30.6761,33.8725,25.8596,44.6249,24.1157,35.0103,24.5872,37.6383,46.4961,40.5321,33.9184,40.6673,38.2559,36.3237,29.1189,33.4267,49.3703,44.503,30.8189,26.0429,42.5555,25.64,46.1207,43.216,42.3537,21.1649,22.0024,37.456,41.1737,27.9278,37.8884,35.8017,40.2734,27.5103,41.9439,39.2026,31.7343,42.442,33.7019,45.7195,43.8539,36.6733,34.6981,22.6655,30.3041,35.1915,34.2434,27.358,39.4208,40.6903,44.8256,70.5072,35.2254,33.029,28.0774,37.7606,43.1319,27.2835,42.129,40.1495,37.0462,31.2953,39.5548,35.9259,34.9067,42.469,37.6254]},"mpos_1":{"label":"MPOS 1 axis","read":[1.9411,1.9919,1.8213,2.333,1.9404,1.8625,1.1129,2.0078,0.9859,1.5513,1.3618,1.7225,1.0012,1.3011,1.0691,2.8766,1.9404,1.042,1.714,1.2736,2.0538,1.9341,0.9899,1.0987,0.9409,1.9467,0.9906,2.0547,0.9682,2.011,2.0135,0.9011,1.0384,1.0173,2.9223,1.9913,1.0581,1.6817,0.9709,1.2024,1.1113,0.9856,1.922,1.012,2.0578,1.6775,1.2561,2.0463,0.9954,0.9683,1.0121,2.9546,1.0443,1.8771,1.0551,1.7212,1.2546,2.1581,1.5594,1.2456,3.0609,0.9931,0.9876,2.947,0.9928,0.9855,2.071,2.9194,2.0724,0.965,0.9848,1.9447,1.7283,0.9879,1.3015,1.0661,2.8725,1.9773,1.0178,1.7346,1.2558,2.053,1.9321,1.0002,1.0367,0.9978,1.9316,0.9995,2.057,1.6555,1.2975,3.8621,1.0868,2.0461,0.98,1.8717,1.1274,1.9257,3.0875,1.894]},"din32":{"label":"DIn32","read":[1.6112,1.028,2.0009,0.8802,1.727,1.2529,2.0474,1.0927,2.0579,1.7153,3.4568,3.0646,1.6355,4.9051,5.0801,2.4058,2.454,3.5296,1.1874,1.271,1.0404,1.9212,1.0239,1.9817,1.9375,2.2158,1.7665,1.5116,2.5169,1.1521,2.2844,2.4995,4.0522,1.783,3.8791,2.3163,1.8664,2.007,1.0418,2.0525,0.9786,1.8839,1.1171,1.9168,1.8255,1.8202,4.5685,2.3809,1.7233,1.7597,3.0648,5.3947,1.4092,1.9904,1.0577,2.6656,1.2591,1.9305,1.7975,1.2522,0.9774,2.068,1.1435,3.131,1.8174,2.6248,1.2095,1.7779,2.2106,4.1442,5.3675,2.2739,2.1292,2.0845,1.863,1.0474,2.1363,1.8341,1.0053,1.9935,2.8231,1.6044,3.6852,1.1387,1.7912,1.1992,1.7175,3.1284,1.9251,4.1656,1.7969,1.9816,0.9864,1.5015,1.4922,0.988,0.9942,2.9531,1.9794,1.0525]}},"sweep":[{"size":1,"write":3.3261,"read":2.5113},{"size":101,"write":2.5072,"read":6.6511},{"size":201,"write":3.9341,"read":10.4395},{"size":301,"write":6.4743,"read":19.0703},{"size":401,"write":7.2593,"read":30.4955},{"size":501,"write":12.3046,"read":31.6901},{"size":601,"write":15.3643,"read":39.5311},{"size":701,"write":15.9897,"read":41.1529},{"size":801,"write":19.2443,"read":46.2264},{"size":901,"write":19.853,"read":67.2686},{"size":1001,"write":24.5539,"read":70.2052}]}</script>
+
+<h1>Trio UAPI Communications Benchmark Report</h1>
+<p>Generated: 2026-04-21 11:18:17</p>
+
+
+<div class="meta-grid">
+  <div class="meta-box">
+    <h3>Controller Information</h3>
+    <dl>
+      <dt>Type:</dt><dd>MCS 40 [620]</dd>
+      <dt>Firmware:</dt><dd>2.0342034002</dd>
+      <dt>UAPI version:</dt><dd>1.2.0</dd>
+    </dl>
+  </div>
+  <div class="meta-box">
+    <h3>Connection</h3>
+    <dl>
+      <dt>Target:</dt><dd>192.168.0.245</dd>
+      <dt>Type:</dt><dd>TCP</dd>
+      <dt>Multi-write:</dt><dd>Yes</dd>
+      <dt>Multi-read:</dt><dd>Yes</dd>
+    </dl>
+  </div>
+</div>
+
+
+
+<h2>Benchmark Configuration</h2>
+<table><tr><th>Parameter</th><th>Value</th></tr><tr><td>Sample count</td><td>100</td></tr><tr><td>Warmup</td><td>10</td></tr><tr><td>Inter-sample delay (ms)</td><td>5.0</td></tr><tr><td>Table size</td><td>500</td></tr><tr><td>Table offset</td><td>0</td></tr><tr><td>Max axes</td><td>1</td></tr><tr><td>Sweep min</td><td>1</td></tr><tr><td>Sweep max</td><td>1100</td></tr><tr><td>Sweep step</td><td>100</td></tr><tr><td>Sweep cycles</td><td>5</td></tr></table>
+
+<h2>Test Results</h2>
+
+<h3>Table write/read (500)</h3>
+<p class="test-desc">Writes 500 floating-point values to the controller table starting at offset 0, then immediately reads them back. Write and read times are measured independently for each iteration. 100 samples were collected after a 10-sample warm-up. An inter-sample delay of 5.0 ms was inserted between iterations.</p>
+<table>
+<tr><th>Metric</th><th>Write (ms)</th><th>Read (ms)</th></tr>
+<tr><td>n</td><td>100</td><td>100</td></tr><tr><td>min</td><td>6.630</td><td>20.660</td></tr><tr><td>avg</td><td>11.545</td><td>35.723</td></tr><tr><td>max</td><td>18.864</td><td>70.507</td></tr><tr><td>p95</td><td>14.530</td><td>46.683</td></tr><tr><td>jitter</td><td>2.183</td><td>8.307</td></tr><tr><td>errors</td><td>—</td><td>0</td></tr>
+</table>
+<div class="chart-box" id="chart-table_rtt"></div>
+
+<h3>MPOS 1 axis</h3>
+<p class="test-desc">Reads the motor position (MPOS) for 1 axis sequentially using GetAxisParameter_MPOS. This is a read-only operation; no write is performed. 100 samples were collected after a 10-sample warm-up. An inter-sample delay of 5.0 ms was inserted between iterations.</p>
+<table>
+<tr><th>Metric</th><th>Write (ms)</th><th>Read (ms)</th></tr>
+<tr><td>n</td><td>100</td><td>—</td></tr><tr><td>min</td><td>—</td><td>0.901</td></tr><tr><td>avg</td><td>—</td><td>1.603</td></tr><tr><td>max</td><td>—</td><td>3.862</td></tr><tr><td>p95</td><td>—</td><td>2.924</td></tr><tr><td>jitter</td><td>—</td><td>0.633</td></tr><tr><td>errors</td><td>—</td><td>0</td></tr>
+</table>
+<div class="chart-box" id="chart-mpos_1"></div>
+
+<h3>DIn32</h3>
+<p class="test-desc">Reads all 32 digital inputs in a single GetDIn32 call. This is a read-only operation. 100 samples were collected after a 10-sample warm-up. An inter-sample delay of 5.0 ms was inserted between iterations.</p>
+<table>
+<tr><th>Metric</th><th>Write (ms)</th><th>Read (ms)</th></tr>
+<tr><td>n</td><td>100</td><td>—</td></tr><tr><td>min</td><td>—</td><td>0.880</td></tr><tr><td>avg</td><td>—</td><td>2.088</td></tr><tr><td>max</td><td>—</td><td>5.395</td></tr><tr><td>p95</td><td>—</td><td>4.186</td></tr><tr><td>jitter</td><td>—</td><td>1.024</td></tr><tr><td>errors</td><td>—</td><td>0</td></tr>
+</table>
+<div class="chart-box" id="chart-din32"></div>
+
+
+<h2>Table Size Sweep Results</h2>
+<p class="test-desc">The table size was varied from 1 to 1100 values in steps of 100. At each size, 5 write+read cycles were performed and the average write and read times are shown. This reveals how communication overhead scales with payload size.</p>
+<table>
+<tr><th>Table size</th><th>Write avg (ms)</th><th>Read avg (ms)</th></tr>
+<tr><td>1</td><td>3.326</td><td>2.511</td></tr><tr><td>101</td><td>2.507</td><td>6.651</td></tr><tr><td>201</td><td>3.934</td><td>10.439</td></tr><tr><td>301</td><td>6.474</td><td>19.070</td></tr><tr><td>401</td><td>7.259</td><td>30.496</td></tr><tr><td>501</td><td>12.305</td><td>31.690</td></tr><tr><td>601</td><td>15.364</td><td>39.531</td></tr><tr><td>701</td><td>15.990</td><td>41.153</td></tr><tr><td>801</td><td>19.244</td><td>46.226</td></tr><tr><td>901</td><td>19.853</td><td>67.269</td></tr><tr><td>1001</td><td>24.554</td><td>70.205</td></tr>
+</table>
+<div class="chart-box" id="chart-sweep"></div>
+
+<p style="color:#888;font-size:11px;margin-top:32px;">Raw sample data not included in this report. Use Export CSV or Export JSON for full sample sets.</p>
+
+
+<script>
+(function() {
+  "use strict";
+  var payload = JSON.parse(document.getElementById("_chart_data").textContent);
+
+  var ML=72, MR=20, MT=14, MB=38, BH=36, PLOT_H=220;
+
+  function clamp(v,lo,hi){return v<lo?lo:v>hi?hi:v;}
+
+  function niceYTicks(lo, hi, n) {
+    var span = hi - lo, step = span / n;
+    var mag = Math.pow(10, Math.floor(Math.log10(step)));
+    var m = step / mag;
+    var s = m < 1.5 ? 1 : m < 3 ? 2 : m < 7 ? 5 : 10;
+    step = s * mag;
+    var t0 = Math.ceil(lo / step) * step, ticks = [];
+    for (var t = t0; t <= hi + step * 1e-6; t += step)
+      ticks.push(parseFloat(t.toPrecision(8)));
+    return ticks;
+  }
+
+  // series: [{name, color, data:[]}]
+  // xVals: array of x-axis values (indices for test charts, sizes for sweep)
+  // xLabel: string shown on x-axis
+  function buildChart(container, series, xVals, xLabel) {
+    container.style.position = "relative";
+    var n = series[0].data.length;
+    var hidden = {};
+    var brushL = 0, brushR = 1;
+
+    var cMain  = document.createElement("canvas");
+    var cBrush = document.createElement("canvas");
+    cMain.style.display  = "block";
+    cBrush.style.display = "block";
+    cBrush.style.cursor  = "ew-resize";
+
+    var tip = document.createElement("div");
+    tip.style.cssText = "position:absolute;pointer-events:none;display:none;z-index:9;"
+      + "background:rgba(255,255,255,.96);border:1px solid #ccc;border-radius:4px;"
+      + "padding:5px 9px;font-size:11px;font-family:Arial,sans-serif;"
+      + "box-shadow:0 2px 6px rgba(0,0,0,.14);white-space:nowrap;";
+    container.appendChild(cMain);
+    container.appendChild(cBrush);
+    container.appendChild(tip);
+
+    var lastW = 0, lastMeta = null;
+
+    function cw() { return container.clientWidth || 900; }
+
+    function dataRange() {
+      var s = Math.floor(brushL * n), e = Math.ceil(brushR * n);
+      if (e <= s) e = s + 1;
+      return { s: clamp(s,0,n-1), e: clamp(e,1,n) };
+    }
+
+    function yRange(s, e) {
+      var lo = Infinity, hi = -Infinity;
+      series.forEach(function(sr) {
+        if (hidden[sr.name]) return;
+        for (var i = s; i < e; i++) {
+          if (sr.data[i] < lo) lo = sr.data[i];
+          if (sr.data[i] > hi) hi = sr.data[i];
+        }
+      });
+      if (!isFinite(lo)) { lo = 0; hi = 1; }
+      var p = (hi - lo) * 0.08 || 0.001;
+      return { lo: lo - p, hi: hi + p };
+    }
+
+    function xpx(xi, s, e, plotW) {
+      var span = (xVals[e-1] - xVals[s]) || 1;
+      return ML + ((xVals[xi] - xVals[s]) / span) * plotW;
+    }
+    function ypx(v, lo, hi) {
+      return MT + PLOT_H - ((v - lo) / ((hi - lo) || 1)) * PLOT_H;
+    }
+
+    function drawMain() {
+      var W = cw(), plotW = W - ML - MR;
+      cMain.width = W; cMain.height = MT + PLOT_H + MB;
+      var ctx = cMain.getContext("2d");
+      ctx.clearRect(0, 0, W, cMain.height);
+
+      var dr = dataRange(), yr = yRange(dr.s, dr.e);
+      var ticks = niceYTicks(yr.lo, yr.hi, 5);
+
+      // Y grid + labels
+      ctx.strokeStyle = "#e8ecf2"; ctx.lineWidth = 1;
+      ctx.font = "10px Arial"; ctx.textAlign = "right"; ctx.fillStyle = "#666";
+      ticks.forEach(function(t) {
+        var y = ypx(t, yr.lo, yr.hi);
+        ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML+plotW, y); ctx.stroke();
+        ctx.fillText(t.toFixed(3), ML-5, y+3.5);
+      });
+
+      // Y axis label
+      ctx.save();
+      ctx.translate(10, MT + PLOT_H/2); ctx.rotate(-Math.PI/2);
+      ctx.textAlign = "center"; ctx.fillStyle = "#444"; ctx.font = "10px Arial";
+      ctx.fillText("latency (ms)", 0, 0);
+      ctx.restore();
+
+      // X tick marks
+      var numXT = Math.min(8, dr.e - dr.s);
+      var step  = Math.max(1, Math.ceil((dr.e - dr.s) / numXT));
+      ctx.textAlign = "center"; ctx.fillStyle = "#666"; ctx.font = "10px Arial";
+      for (var i = dr.s; i < dr.e; i += step) {
+        var xp = xpx(i, dr.s, dr.e, plotW);
+        ctx.fillText(xVals[i], xp, MT + PLOT_H + 16);
+      }
+      // X axis label
+      ctx.fillStyle = "#444";
+      ctx.fillText(xLabel, ML + plotW/2, MT + PLOT_H + MB - 4);
+
+      // Clip & draw lines
+      ctx.save();
+      ctx.beginPath(); ctx.rect(ML, MT, plotW, PLOT_H); ctx.clip();
+      series.forEach(function(sr) {
+        if (hidden[sr.name]) return;
+        ctx.beginPath(); ctx.strokeStyle = sr.color; ctx.lineWidth = 1.5;
+        var first = true;
+        for (var i = dr.s; i < dr.e; i++) {
+          var x = xpx(i, dr.s, dr.e, plotW);
+          var y = ypx(sr.data[i], yr.lo, yr.hi);
+          first ? (ctx.moveTo(x,y), first=false) : ctx.lineTo(x,y);
+        }
+        ctx.stroke();
+      });
+      ctx.restore();
+
+      // Plot border
+      ctx.strokeStyle = "#ccc"; ctx.lineWidth = 1;
+      ctx.strokeRect(ML, MT, plotW, PLOT_H);
+
+      // Legend (multi-series only)
+      if (series.length > 1) {
+        var lx = ML + plotW - 8, ly = MT + 10;
+        series.slice().reverse().forEach(function(sr) {
+          var faded = !!hidden[sr.name];
+          ctx.fillStyle = faded ? "#ccc" : sr.color;
+          ctx.fillRect(lx-26, ly-7, 16, 3);
+          ctx.fillStyle = faded ? "#bbb" : "#333";
+          ctx.font = "10px Arial"; ctx.textAlign = "right";
+          ctx.fillText(sr.name, lx, ly+4);
+          ly += 16;
+        });
+      }
+
+      lastMeta = { W:W, plotW:plotW, dr:dr, yr:yr };
+    }
+
+    function drawBrush() {
+      var W = cw(), plotW = W - ML - MR;
+      cBrush.width = W; cBrush.height = BH;
+      var ctx = cBrush.getContext("2d");
+      ctx.clearRect(0, 0, W, BH);
+
+      // Overview sparklines
+      var allYR = yRange(0, n);
+      ctx.globalAlpha = 0.55;
+      series.forEach(function(sr) {
+        if (hidden[sr.name]) return;
+        ctx.beginPath(); ctx.strokeStyle = sr.color; ctx.lineWidth = 1;
+        var span = (xVals[n-1] - xVals[0]) || 1;
+        for (var i = 0; i < n; i++) {
+          var x = ML + ((xVals[i]-xVals[0]) / span) * plotW;
+          var y = 3 + (BH-8) * (1 - (sr.data[i]-allYR.lo) / ((allYR.hi-allYR.lo)||1));
+          i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+        }
+        ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+
+      // Selection rect
+      var lPx = ML + brushL*plotW, rPx = ML + brushR*plotW;
+      ctx.fillStyle   = "rgba(136,132,216,.18)";
+      ctx.fillRect(lPx, 0, rPx-lPx, BH);
+      ctx.strokeStyle = "#8884d8"; ctx.lineWidth = 1.5;
+      ctx.strokeRect(lPx, 0, rPx-lPx, BH);
+
+      // Drag handles
+      [lPx, rPx].forEach(function(x) {
+        ctx.fillStyle = "#8884d8";
+        ctx.fillRect(x-4, (BH-14)/2, 8, 14);
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(x-1.5, (BH-14)/2+4, 1, 6);
+        ctx.fillRect(x+0.5, (BH-14)/2+4, 1, 6);
+      });
+    }
+
+    function redraw() { drawMain(); drawBrush(); }
+    redraw();
+
+    // --- Tooltip on main canvas ---
+    cMain.addEventListener("mousemove", function(ev) {
+      if (!lastMeta) return;
+      var rect = cMain.getBoundingClientRect();
+      var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+      var m = lastMeta;
+      if (mx < ML || mx > ML+m.plotW || my < MT || my > MT+PLOT_H) {
+        tip.style.display = "none"; return;
+      }
+      var frac = (mx - ML) / m.plotW;
+      var idx = Math.round(m.dr.s + frac * (m.dr.e - m.dr.s - 1));
+      idx = clamp(idx, m.dr.s, m.dr.e-1);
+      var html = "<b style='display:block;margin-bottom:3px;'>"
+               + xLabel + " " + xVals[idx] + "</b>";
+      series.forEach(function(sr) {
+        if (hidden[sr.name]) return;
+        html += "<span style='display:inline-block;width:9px;height:9px;"
+              + "background:" + sr.color + ";border-radius:2px;margin-right:4px;"
+              + "vertical-align:middle;'></span>"
+              + sr.name + ": " + sr.data[idx].toFixed(3) + " ms<br>";
+      });
+      tip.innerHTML = html;
+      tip.style.display = "block";
+      var tx = mx + 14;
+      if (tx + 175 > m.W) tx = mx - 180;
+      tip.style.left = tx + "px";
+      tip.style.top  = (my - 10) + "px";
+    });
+    cMain.addEventListener("mouseleave", function() { tip.style.display = "none"; });
+
+    // --- Legend click to toggle series ---
+    cMain.addEventListener("click", function(ev) {
+      if (!lastMeta || series.length <= 1) return;
+      var rect = cMain.getBoundingClientRect();
+      var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+      var m = lastMeta;
+      var lx = ML + m.plotW - 8, ly = MT + 10;
+      series.slice().reverse().forEach(function(sr) {
+        if (my >= ly-12 && my <= ly+6 && mx >= lx-95 && mx <= lx) {
+          hidden[sr.name] = !hidden[sr.name]; redraw();
+        }
+        ly += 16;
+      });
+    });
+
+    // --- Brush drag ---
+    var drag = null, dX0 = 0, dL0 = 0, dR0 = 0;
+    function bFrac(mx) { return clamp((mx-ML) / (cw()-ML-MR), 0, 1); }
+
+    cBrush.addEventListener("mousedown", function(ev) {
+      var rect = cBrush.getBoundingClientRect();
+      var mx = ev.clientX - rect.left;
+      var W = cw(), plotW = W - ML - MR;
+      var lPx = ML + brushL*plotW, rPx = ML + brushR*plotW;
+      drag  = Math.abs(mx-lPx) <= 8 ? "l"
+            : Math.abs(mx-rPx) <= 8 ? "r"
+            : (mx > lPx && mx < rPx)  ? "m" : null;
+      if (!drag) return;
+      dX0 = mx; dL0 = brushL; dR0 = brushR;
+      ev.preventDefault();
+    });
+    window.addEventListener("mousemove", function(ev) {
+      if (!drag) return;
+      var rect = cBrush.getBoundingClientRect();
+      var mx = ev.clientX - rect.left;
+      var d  = bFrac(mx) - bFrac(dX0);
+      if      (drag==="l") brushL = clamp(dL0+d, 0,        dR0-0.02);
+      else if (drag==="r") brushR = clamp(dR0+d, dL0+0.02, 1);
+      else { var bw = dR0-dL0; brushL = clamp(dL0+d,0,1-bw); brushR = brushL+bw; }
+      redraw();
+    });
+    window.addEventListener("mouseup", function() { drag = null; });
+    window.addEventListener("resize",  redraw);
+  }
+
+  // ---- Mount test charts -------------------------------------------------------
+  Object.keys(payload.tests).forEach(function(testId) {
+    var data   = payload.tests[testId];
+    var safeId = testId.replace(/:/g,"_").replace(/ /g,"_");
+    var el = document.getElementById("chart-" + safeId);
+    if (!el) return;
+    var xVals = data.read.map(function(_,i){ return i; });
+    var series = [];
+    if (data.write) {
+      series.push({ name:"Write", color:"#d06000", data:data.write });
+    }
+    series.push({ name:"Read", color:"#007a38", data:data.read });
+    buildChart(el, series, xVals, "sample");
+  });
+
+  // ---- Mount sweep chart -------------------------------------------------------
+  if (payload.sweep.length > 0) {
+    var sweepEl = document.getElementById("chart-sweep");
+    if (sweepEl) {
+      var sw    = payload.sweep;
+      var xVals = sw.map(function(p){ return p.size; });
+      var series = [];
+      if ("write" in sw[0]) {
+        series.push({ name:"Write avg", color:"#d06000", data:sw.map(function(p){return p.write;}) });
+      }
+      series.push({ name:"Read avg", color:"#007a38", data:sw.map(function(p){return p.read;}) });
+      buildChart(sweepEl, series, xVals, "size");
+    }
+  }
+})();
+</script>
+
+</body>
+</html>
