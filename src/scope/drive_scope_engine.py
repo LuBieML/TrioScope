@@ -491,6 +491,22 @@ class DriveScopeEngine:
         # Convert bytes to uint16 array (little-endian)
         raw_words = np.frombuffer(raw_bytes[:n_words * 2], dtype=np.dtype('<u2'))
 
+        # The EC_COE_FIFO download often returns the buffer with leading
+        # padding/wrapper bytes — the actual sample block lives at the first
+        # non-zero word, not at offset 0. Skip the prefix so reshape lines up
+        # with real data instead of the zero pad.
+        nonzero_idx = np.flatnonzero(raw_words)
+        if len(nonzero_idx) > 0:
+            data_start = int(nonzero_idx[0])
+            if data_start > 0:
+                logger.info(
+                    "Skipping %d leading zero words (%d bytes of padding)",
+                    data_start, data_start * 2,
+                )
+                raw_words = raw_words[data_start:]
+        else:
+            logger.warning("Drive scope buffer is all zeros — capture may have failed")
+
         # Expected useful data: active_channels * 1000 words
         expected_words = n_ch * SAMPLES_PER_CHANNEL
         if len(raw_words) < expected_words:

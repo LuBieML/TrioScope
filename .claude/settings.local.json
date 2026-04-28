@@ -43,7 +43,16 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/help_window.py', encoding='utf-8'\\).read\\(\\)\\); print\\('help_window.py OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('build_exe.py', encoding='utf-8'\\).read\\(\\)\\); print\\('build_exe.py OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/help_window.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(.venv/Scripts/python.exe -c \"import Trio_UnifiedApi as TUA; conn = TUA.TrioConnectionTCP.__new__\\(TUA.TrioConnectionTCP\\); print\\([m for m in dir\\(conn\\) if not m.startswith\\('__'\\)]\\)\")"
+      "Bash(.venv/Scripts/python.exe -c \"import Trio_UnifiedApi as TUA; conn = TUA.TrioConnectionTCP.__new__\\(TUA.TrioConnectionTCP\\); print\\([m for m in dir\\(conn\\) if not m.startswith\\('__'\\)]\\)\")",
+      "Bash(git -C e:/SynologySynchro/Projects/TrioScope log --oneline -20)",
+      "Bash(git -C e:/SynologySynchro/Projects/TrioScope log --oneline -5 --all -- src/scope/drive_scope_engine.py scope_app.py)",
+      "Bash(git -C e:/SynologySynchro/Projects/TrioScope show --stat d832abb)",
+      "Bash(git -C e:/SynologySynchro/Projects/TrioScope show 476ecf5 --stat)",
+      "Bash(git -C e:/SynologySynchro/Projects/TrioScope diff HEAD~5 HEAD -- src/scope/drive_scope_engine.py)",
+      "Bash(git -C e:/SynologySynchro/Projects/TrioScope log -p --all --since=\"2026-04-01\" -- src/scope/drive_scope_engine.py)",
+      "Bash(git -C e:/SynologySynchro/Projects/TrioScope log --oneline --all -- src/scope/drive_scope_engine.py)",
+      "Bash(git -C e:/SynologySynchro/Projects/TrioScope log --oneline -5 -- drive_scope.bin)",
+      "Bash(python -c ' *)"
     ]
   }
 }
