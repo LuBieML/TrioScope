@@ -236,6 +236,28 @@ class ScopeEngine:
         self.display_names = []          # User-friendly names for plotting
         self.tsize = None                # Controller TABLE size
 
+    @staticmethod
+    def _scope_command_param(param: str) -> str:
+        """Return a SCOPE command-line compatible parameter token."""
+        out_match = re.match(r'^OUT\s*\(\s*(\d+)\s*\)$', param, re.IGNORECASE)
+        if out_match:
+            return f"READ_OP({out_match.group(1)})"
+        return param
+
+    def _execute_scope_on(self, auto_retrigger: bool) -> None:
+        params_str = ", ".join(
+            self._scope_command_param(param) for param in self.scope_params
+        )
+        scope_command = (
+            f"SCOPE(ON, {self.period_cycles}, {self.table_start}, "
+            f"{self.table_end}, {params_str})"
+        )
+        trigger_command = "TRIGGER(1)" if auto_retrigger else "TRIGGER"
+
+        logger.debug("Arming SCOPE via Execute fallback: %s", scope_command)
+        self.connection.Execute(scope_command)
+        self.connection.Execute(trigger_command)
+
     def read_servo_period(self) -> float:
         """
         Read SERVO_PERIOD from controller.
@@ -362,25 +384,34 @@ class ScopeEngine:
             Exception: If SCOPE or TRIGGER fails
         """
         try:
-            # WORKAROUND: The Python wrapper's ScopeOn() method has a bug with string parameters
-            # (pybind11 issue: "NumPy type info missing for class std::basic_string_view")
-            # Solution: Use Execute() to call the SCOPE TrioBASIC command directly
-
-            # Build SCOPE command string: SCOPE(ON, period, start, end, param1, param2, ...)
-            # CRITICAL: Parameter names must NOT be quoted!
-            # The Trio BASIC parser expects unquoted parameter names like: MPOS AXIS(0)
-            # Using quotes causes SCOPE to arm but never capture (SCOPE_POS stays at 0)
-            params_str = ", ".join(self.scope_params)
-            scope_command = f"SCOPE(ON, {self.period_cycles}, {self.table_start}, {self.table_end}, {params_str})"
-
-            logger.debug(f"Arming SCOPE: {scope_command}")
-            self.connection.Execute(scope_command)
+            logger.debug(
+                "Arming SCOPE: period=%s, table=%s..%s, params=%s",
+                self.period_cycles,
+                self.table_start,
+                self.table_end,
+                self.scope_params,
+            )
+            try:
+                self.connection.ScopeOn(
+                    self.period_cycles,
+                    self.table_start,
+                    self.table_end,
+                    list(self.scope_params),
+                )
+                self.connection.Trigger(auto_retrigger)
+            except RuntimeError as e:
+                if "std::basic_string_view" not in str(e):
+                    raise
+                logger.warning(
+                    "ScopeOn string conversion failed; falling back to Execute: %s",
+                    e,
+                )
+                self._execute_scope_on(auto_retrigger)
+            self.is_capturing = True
 
             if auto_retrigger:
-                self.connection.Execute("TRIGGER(1)")
                 logger.debug("SCOPE capture started (auto-retrigger)")
             else:
-                self.connection.Execute("TRIGGER")
                 logger.debug("SCOPE capture started (single-shot)")
 
         except Exception as e:
@@ -397,20 +428,12 @@ class ScopeEngine:
             Exception: If SCOPE(OFF) fails
         """
         try:
-            # Use Execute to send SCOPE(OFF) command
-            # Note: ScopeOff() method also works, but Execute is more explicit
-            self.connection.Execute("SCOPE(OFF)")
+            self.connection.ScopeOff()
             self.is_capturing = False
             logger.debug("SCOPE capture stopped")
         except Exception as e:
             logger.error(f"Failed to stop SCOPE: {e}")
-            # Try the ScopeOff() method as fallback
-            try:
-                self.connection.ScopeOff()
-                self.is_capturing = False
-                logger.debug("SCOPE stopped via ScopeOff() fallback")
-            except:
-                raise
+            raise
 
     def get_capture_progress(self) -> Tuple[int, int, float]:
         """
