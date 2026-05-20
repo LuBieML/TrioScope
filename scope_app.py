@@ -8,6 +8,7 @@ import sys
 import time
 import re
 import threading
+import weakref
 import logging
 import csv
 import numpy as np
@@ -817,14 +818,37 @@ class TraceControl(QFrame):
 
     def get_drive_variable_address(self) -> int:
         """Return the selected drive variable address (0x0F10, etc.)."""
-        return self.drive_var_combo.currentData()
+        data = self.drive_var_combo.currentData()
+        if data is not None:
+            return data
+        
+        # Try to parse custom text input if typed directly
+        text = self.drive_var_combo.currentText().strip()
+        if not text:
+            return 0
+        for prefix in ('0x', '0X', '$'):
+            if text.startswith(prefix):
+                try:
+                    return int(text[len(prefix):], 16)
+                except ValueError:
+                    pass
+        try:
+            return int(text)
+        except ValueError:
+            try:
+                return int(text, 16)
+            except ValueError:
+                return 0
 
     def get_drive_display_name(self) -> str:
         """Return display name for the drive variable."""
         addr = self.get_drive_variable_address()
-        if addr and addr in DRIVE_VARIABLES:
-            name = DRIVE_VARIABLES[addr][0]
-            return f"{name} (0x{addr:04X})"
+        if addr:
+            if addr in DRIVE_VARIABLES:
+                name = DRIVE_VARIABLES[addr][0]
+                return f"{name} (0x{addr:04X})"
+            else:
+                return f"0x{addr:04X}"
         return self.drive_var_combo.currentText()
 
 
@@ -1080,6 +1104,7 @@ class CompareWindow(QMainWindow):
         self.axes = [self.main_plot.getAxis('left')]
         pen0 = pg.mkPen(first_color, width=width)
         curve0 = self.main_plot.plot(pen=pen0)
+        curve0._viewBox = weakref.ref(self.main_plot.vb)
         curve0.setClipToView(True)
         curve0.setDownsampling(auto=True, method='subsample')
         self.curves.append(curve0)
@@ -1099,6 +1124,7 @@ class CompareWindow(QMainWindow):
             axis.linkToView(vb)
             vb.setXLink(self.main_plot.vb)
             curve = pg.PlotDataItem(pen=pg.mkPen(color, width=width))
+            curve._viewBox = weakref.ref(vb)
             curve.setClipToView(True)
             curve.setDownsampling(auto=True, method='subsample')
             vb.addItem(curve)
@@ -3225,10 +3251,12 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # Collect channel addresses from enabled traces
         channels = []
+        display_names = []
         for t in enabled_traces:
             addr = t.get_drive_variable_address()
             if addr and addr != 0:
                 channels.append(addr)
+                display_names.append(t.get_display_name())
 
         if not channels:
             QMessageBox.warning(self, "No Variables",
@@ -3271,6 +3299,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 trigger_mode=trigger_mode,
                 trigger_value1=trigger_value1,
                 trigger_value2=trigger_value2,
+                display_names=display_names,
             )
 
             # Clear data
@@ -3359,11 +3388,35 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._stop_watchdog()
             self.sig_capture_status.emit("Drive scope: downloading data...")
 
+            # Determine safe, writable local filename for the downloaded bin file
+            import os
+            from PySide6.QtCore import QStandardPaths
+            local_filename = "drive_scope.bin"
+            try:
+                # Test write in current working directory
+                test_file = "test_write_perm.tmp"
+                with open(test_file, "w") as f:
+                    f.write("")
+                os.remove(test_file)
+            except (IOError, OSError):
+                # Fallback to Documents directory
+                docs_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+                if docs_dir and os.path.isdir(docs_dir):
+                    local_filename = os.path.join(docs_dir, "drive_scope.bin")
+                else:
+                    temp_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.TempLocation)
+                    local_filename = os.path.join(temp_dir, "drive_scope.bin")
+            
+            abs_local_filename = os.path.abspath(local_filename)
+
             def _download_cb(pct, msg):
                 self.sig_capture_progress.emit(msg)
 
             with self._conn_lock:
-                data = engine.read_data(progress_callback=_download_cb)
+                data = engine.read_data(
+                    progress_callback=_download_cb,
+                    local_filename=abs_local_filename
+                )
 
             # Restart the watchdog now that the long operation is done
             self._start_watchdog()
@@ -3375,8 +3428,8 @@ class ParameterScopeOscilloscope(QMainWindow):
             if data and data['num_samples'] > 0:
                 self._push_data(data)
                 self.sig_capture_status.emit(
-                    f"Drive scope: captured {data['num_samples']} samples "
-                    f"({data['num_samples'] * data['sample_period'] * 1000:.1f} ms)"
+                    f"Drive scope: captured {data['num_samples']} samples. "
+                    f"File: {abs_local_filename}"
                 )
             else:
                 self.sig_capture_status.emit("Drive scope: no data captured")
@@ -3538,6 +3591,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         if self.auto_scroll:
             self.auto_scroll = False
             self._update_auto_scroll_button()
+        # Draw the final buffer before fitting. Single-push captures (e.g. the
+        # drive scope) deliver all their data in one _push_data right before
+        # this handler runs, and stopping the timer can beat the next render
+        # tick — so consolidate and render once here or the curves stay empty.
+        self._on_update_timer()
         self._fit_all_data()
 
     def _on_update_timer(self):
@@ -3638,11 +3696,15 @@ class ParameterScopeOscilloscope(QMainWindow):
 
             if 'xy_path' not in self.curves:
                 pen = pg.mkPen('#03DAC6', width=self.line_width)
-                self.curves['xy_path'] = pi.plot(pen=pen)
+                curve = pi.plot(pen=pen)
+                curve._viewBox = weakref.ref(pi.getViewBox())
+                self.curves['xy_path'] = curve
             if 'xy_cursor' not in self.curves:
-                self.curves['xy_cursor'] = pi.plot(
+                curve = pi.plot(
                     symbol='o', symbolSize=8,
                     symbolBrush='#FF5555', symbolPen=None, pen=None)
+                curve._viewBox = weakref.ref(pi.getViewBox())
+                self.curves['xy_cursor'] = curve
 
             vb = pi.getViewBox()
             if self._xy_auto_range:
@@ -3958,6 +4020,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                         )
                     pen = pg.mkPen(color, width=self.line_width)
                     curve = pi.plot(name=param_name, pen=pen)
+                    curve._viewBox = weakref.ref(pi.getViewBox())
                     curve.setClipToView(True)
                     curve.setDownsampling(auto=True, method='subsample')
                     self.curves[trace_id] = curve
@@ -3973,6 +4036,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                                            width=self.line_width)
                         ref_curve = pi.plot(
                             name=f"{param_name} (REF)", pen=ref_pen)
+                        ref_curve._viewBox = weakref.ref(pi.getViewBox())
                         ref_curve.setClipToView(True)
                         ref_curve.setDownsampling(auto=True, method='subsample')
                         self.ref_curves[trace_id] = ref_curve
@@ -4032,6 +4096,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                         )
                     pen = pg.mkPen(color, width=self.line_width)
                     curve = pi.plot(name=param_name, pen=pen)
+                    curve._viewBox = weakref.ref(pi.getViewBox())
                     curve.setClipToView(True)
                     curve.setDownsampling(auto=True, method='subsample')
                     self.curves[trace_id] = curve
@@ -4051,6 +4116,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                                            width=self.line_width)
                         ref_curve = pi.plot(
                             name=f"{param_name} (REF)", pen=ref_pen)
+                        ref_curve._viewBox = weakref.ref(pi.getViewBox())
                         ref_curve.setClipToView(True)
                         ref_curve.setDownsampling(auto=True, method='subsample')
                         self.ref_curves[trace_id] = ref_curve

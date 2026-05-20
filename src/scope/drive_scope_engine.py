@@ -189,6 +189,7 @@ class DriveScopeEngine:
         self.trigger_value1: int = 0
         self.trigger_value2: int = 0
         self.ch1_data_type: int = 1    # Int16 by default
+        self.display_names: List[str] = []
 
         # State
         self.is_configured = False
@@ -214,6 +215,7 @@ class DriveScopeEngine:
         trigger_value1: int = 0,
         trigger_value2: int = 0,
         ch1_data_type: int = 1,
+        display_names: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Configure drive scope capture parameters.
@@ -227,6 +229,7 @@ class DriveScopeEngine:
             trigger_value1: First trigger threshold (32-bit, for modes 1-6).
             trigger_value2: Second trigger threshold (32-bit, for window modes 5-6).
             ch1_data_type: Data type code for channel 1 trigger comparison.
+            display_names: Custom display names corresponding to channels.
 
         Returns:
             Configuration summary dict.
@@ -238,6 +241,7 @@ class DriveScopeEngine:
 
         self.active_channels = len(channels)
         self.channel_addresses = list(channels) + [0] * (NUM_CHANNELS - len(channels))
+        self.display_names = display_names if display_names else []
         self.sample_time = max(1, sample_time)
         self.trigger_mode = trigger_mode
         self.trigger_value1 = trigger_value1
@@ -546,9 +550,15 @@ class DriveScopeEngine:
             # Determine display name and data type
             if addr in DRIVE_VARIABLES:
                 name, desc, unit, dtype_code, dtype_str = DRIVE_VARIABLES[addr]
-                display_name = f"{name} (0x{addr:04X})"
+                if self.display_names and ch_idx < len(self.display_names):
+                    display_name = self.display_names[ch_idx]
+                else:
+                    display_name = f"{name} (0x{addr:04X})"
             else:
-                display_name = f"Ch{ch_idx+1} (0x{addr:04X})"
+                if self.display_names and ch_idx < len(self.display_names):
+                    display_name = self.display_names[ch_idx]
+                else:
+                    display_name = f"Ch{ch_idx+1} (0x{addr:04X})"
                 dtype_str = "Int16"
 
             # Convert to signed if needed (C# does: (short)(hi<<8 | lo))

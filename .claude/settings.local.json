@@ -52,7 +52,10 @@
       "Bash(git -C e:/SynologySynchro/Projects/TrioScope log -p --all --since=\"2026-04-01\" -- src/scope/drive_scope_engine.py)",
       "Bash(git -C e:/SynologySynchro/Projects/TrioScope log --oneline --all -- src/scope/drive_scope_engine.py)",
       "Bash(git -C e:/SynologySynchro/Projects/TrioScope log --oneline -5 -- drive_scope.bin)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Read(//c/Users/Lukasz/AppData/Roaming/Python/Python313/site-packages/pyqtgraph/graphicsItems/**)",
+      "PowerShell(python -m py_compile scope_app.py)",
+      "PowerShell(if \\($?\\) { \"OK\" })"
     ]
   }
 }
