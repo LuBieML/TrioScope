@@ -15,7 +15,7 @@ try:
     from version import __version__
 except ImportError:
     __version__ = "1.0.0"
-
+y
 VENV_SITE = ROOT / ".venv" / "Lib" / "site-packages"
 
 # Trio .pyd and its companion DLLs
