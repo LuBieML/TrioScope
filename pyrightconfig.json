@@ -1,0 +1,9 @@
+{
+  "extraPaths": ["src"],
+  "exclude": [
+    ".venv",
+    "build",
+    "dist",
+    "**/__pycache__"
+  ]
+}
