@@ -71,96 +71,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class _LogWindow(QDialog):
-    """Scrollable log viewer — opened when the user clicks the log bar."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Log")
-        self.resize(860, 380)
-        self.setStyleSheet(
-            "QDialog { background-color: #1a1a1a; color: #d4d4d4; }"
-            "QPlainTextEdit { background-color: #1a1a1a; color: #d4d4d4;"
-            " font-family: Consolas, monospace; font-size: 8pt;"
-            " border: none; }"
-            "QPushButton { background-color: #4b4a4a; color: #d4d4d4;"
-            " border: 1px solid #606060; border-radius: 3px; padding: 3px 10px; }"
-            "QPushButton:hover { background-color: #5a5a5a; }"
-        )
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
-
-        self._view = QPlainTextEdit()
-        self._view.setReadOnly(True)
-        self._view.setMaximumBlockCount(2000)
-        layout.addWidget(self._view, 1)
-
-        btn_clear = QPushButton("Clear")
-        btn_clear.setFixedWidth(70)
-        btn_clear.clicked.connect(self._view.clear)
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_row.addWidget(btn_clear)
-        layout.addLayout(btn_row)
-
-    @Slot(str)
-    def append(self, html: str):
-        """Append a pre-formatted HTML line (called from main thread via invokeMethod)."""
-        self._view.appendHtml(html)
-        sb = self._view.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-
-class _LogBarHandler(logging.Handler):
-    """Logging handler that updates the status bar label and feeds the log window."""
-
-    _COLOURS = {
-        logging.DEBUG:    "#888888",
-        logging.INFO:     "#aaaaaa",
-        logging.WARNING:  "#FFB74D",
-        logging.ERROR:    "#f14c4c",
-        logging.CRITICAL: "#ff0000",
-    }
-
-    def __init__(self, label, log_window: _LogWindow):
-        super().__init__()
-        self._label = label
-        self._window = log_window
-        self.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-8s  %(message)s",
-                                            datefmt="%H:%M:%S"))
-
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            colour = self._COLOURS.get(record.levelno, "#aaaaaa")
-            bar_style = (
-                f"background-color: #1a1a1a; color: {colour}; font-size: 8pt;"
-                " border-top: 1px solid #444;"
-            )
-            # Short version for the bar (no timestamp)
-            bar_msg = f"{record.levelname}  {record.getMessage()}"
-            html_line = f'<span style="color:{colour};">{msg}</span>'
-
-            from PySide6.QtCore import QMetaObject, Qt, Q_ARG
-            QMetaObject.invokeMethod(
-                self._label, "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, bar_msg),
-            )
-            QMetaObject.invokeMethod(
-                self._label, "setStyleSheet",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, bar_style),
-            )
-            QMetaObject.invokeMethod(
-                self._window, "append",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, html_line),
-            )
-        except Exception:
-            pass
+from ui.logging_widgets import _LogWindow, _LogBarHandler
+from ui.theme import DARK_STYLESHEET, TRACE_COLORS, CURSOR_COLORS
+from plot.viewbox import ScopeViewBox
+from ui.trace_control import TraceControl
+from ui.profile_dialog import _ProfileManagerDialog
+from ui.compare_window import CompareWindow, _CompareTracePicker
+from scope.parameters import (
+    CHANNEL_PARAMETERS,
+    SCOPE_PARAMETERS,
+    CHANNEL_PARAMETERS_SET,
+    _VIRTUAL_PARAM_MAP,
+)
+from storage.settings_store import SettingsStore
+from storage.profiles import ProfileStore
+from storage.csv_io import CSVStorage
+from models.app_settings import AppSettings
+from models.trace_config import TraceConfig
 
 
 def _int_or_none(value) -> int | None:
@@ -171,1154 +98,6 @@ def _int_or_none(value) -> int | None:
         return int(value)
     except (ValueError, TypeError):
         return None
-
-
-# Channel-type parameters that use CHANNEL(n) instead of AXIS(n)
-CHANNEL_PARAMETERS = [
-    "AIN", "AINBI", "AOUT",
-    "DV_CONTROLWORD", "DV_IN", "DV_OUT", "DV_STATUSWORD",
-    "IN", "OUT",
-]
-
-SCOPE_PARAMETERS = [
-    "ACCEL", "ACCEL_FACTOR", "ADDAX_AXIS", "AFF_GAIN", "ATYPE",
-    "AXIS_A_OUTPUT", "AXIS_ACCEL", "AXIS_B_OUTPUT", "AXIS_BLENDING",
-    "AXIS_D_OUTPUT", "AXIS_DEBUG_A", "AXIS_DEBUG_B", "AXIS_DEBUG_C",
-    "AXIS_DEBUG_D", "AXIS_DECEL", "AXIS_DIRECTION", "AXIS_DPOS",
-    "AXIS_ENABLE", "AXIS_ENABLE_OVERRIDE", "AXIS_ERROR_COUNT",
-    "AXIS_FASTDEC", "AXIS_FS_LIMIT", "AXIS_MAX_ACC", "AXIS_MAX_JERK",
-    "AXIS_MAX_JOG_ACC", "AXIS_MAX_JOG_SPEED", "AXIS_MAX_SPEED",
-    "AXIS_MAX_TORQUE", "AXIS_MODE", "AXIS_RS_LIMIT", "AXIS_SPEED",
-    "AXIS_UNITS", "AXIS_Z_OUTPUT", "AXISSTATUS",
-    "BACKLASH_DIST", "CHANGE_DIR_LAST", "CLOSE_WIN", "CLOSE_WINB",
-    "CLUTCH_RATE", "CORNER_FACTOR", "CORNER_MODE", "CORNER_RADIUS",
-    "CORNER_STATE", "CREEP",
-    "D_GAIN", "D_ZONE_MAX", "D_ZONE_MIN", "DAC", "DAC_OUT", "DAC_SCALE",
-    "DATUM_IN", "DECEL", "DECEL_ANGLE", "DEMAND_EDGES", "DEMAND_SPEED",
-    "DEMAND_SPEED_NORMALISED",
-    "DISTANCE_TO_SYNC", "DPOS",
-    "DRIVE_BRAKE_OUTPUT", "DRIVE_CONTROL", "DRIVE_CONTROLWORD",
-    "DRIVE_CURRENT", "DRIVE_CW_MODE", "DRIVE_ENABLE", "DRIVE_FE",
-    "DRIVE_FE_LIMIT", "DRIVE_INDEX", "DRIVE_INPUTS", "DRIVE_MODE",
-    "DRIVE_MONITOR", "DRIVE_NEG_TORQUE", "DRIVE_PARAMETER",
-    "DRIVE_POS_TORQUE", "DRIVE_PROFILE", "DRIVE_REP_DIST",
-    "DRIVE_SET_VAL", "DRIVE_STATUS", "DRIVE_TORQUE", "DRIVE_TYPE",
-    "DRIVE_VALUE", "DRIVE_VELOCITY",
-    "ENCODER", "ENCODER_BITS", "ENCODER_CONTROL", "ENCODER_FILTER",
-    "ENCODER_ID", "ENCODER_STATUS", "ENCODER_TURNS",
-    "END_DIR_LAST", "END_VELOCITY", "ENDMOVE", "ENDMOVE_BUFFER",
-    "ENDMOVE_SPEED",
-    "FAST_JOG", "FASTDEC", "FASTJERK", "FE", "FE_LATCH", "FE_LIMIT",
-    "FE_LIMIT_MODE", "FE_RANGE", "FEED_OVERRIDE", "FHOLD_IN", "FHSPEED",
-    "FORCE_ACCEL", "FORCE_DECEL", "FORCE_DWELL", "FORCE_JERK",
-    "FORCE_RAMP", "FORCE_SPEED", "FRAME_REP_DIST", "FRAME_SCALE",
-    "FS_LIMIT", "FULL_SP_RADIUS", "FWD_IN", "FWD_JOG", "FWD_START",
-    "I_GAIN", "IDLE", "IN_POS", "IN_POS_DIST", "IN_POS_SPEED",
-    "INTERP_FACTOR", "INVERT_STEP", "JERK", "JERK_FACTOR", "JOGSPEED",
-    "LINK_AXIS", "LOADED", "LOOKAHEAD_FACTOR",
-    "MARK", "MARKB", "MERGE", "MICROSTEP", "MOVE_COUNT", "MOVE_COUNT_INC",
-    "MOVE_ENDMOVE_SPEED", "MOVE_FORCE_ACCEL", "MOVE_FORCE_DECEL",
-    "MOVE_FORCE_RAMP", "MOVE_FORCE_SPEED", "MOVE_PA", "MOVE_PA_CONT",
-    "MOVE_PA_IDLE", "MOVE_PB", "MOVE_PB_CONT", "MOVE_PB_IDLE",
-    "MOVE_STARTMOVE_SPEED", "MOVELINK_MODIFY", "MOVES_BUFFERED",
-    "MPOS", "MSPEED", "MSPEED_FILTER", "MSPEEDF", "MTYPE",
-    "NEG_OFFSET", "NTYPE",
-    "OFFPOS", "OPEN_WIN", "OPEN_WINB", "OUTLIMIT", "OV_GAIN",
-    "P_GAIN", "POS_DELAY", "POS_OFFSET", "POSI_SEQ_DELAY",
-    "POSI_SEQ_MODE", "PP_STEP", "PS_ENCODER", "PWM_CYCLE", "PWM_MARK",
-    "RAISE_ANGLE", "REG_INPUTS", "REG_POS", "REG_POSB",
-    "REGIST_CONTROL", "REGIST_DELAY", "REGIST_SPEED", "REGIST_SPEEDB",
-    "REMAIN", "REMAIN_TIME", "REP_DIST", "REP_OPTION", "REV_IN",
-    "REV_JOG", "REV_START",
-    "ROBOT_DPOS", "ROBOT_FE", "ROBOT_FE_LATCH", "ROBOT_FE_LIMIT",
-    "ROBOT_FE_RANGE", "ROBOT_FS_LIMIT", "ROBOT_RS_LIMIT",
-    "ROBOT_SP_MODE", "ROBOT_UNITS", "ROBOTSTATUS", "RS_LIMIT",
-    "S_REF", "S_REF_OUT", "SERVO", "SPEED", "SPEED_FACTOR", "SPEED_SIGN",
-    "SRAMP", "START_DIR_LAST", "STARTMOVE_SPEED", "STOP_ANGLE",
-    "STOPPING_DISTANCE", "SYNC_AXIS", "SYNC_CONTROL", "SYNC_DPOS",
-    "SYNC_DWELL", "SYNC_FLIGHT", "SYNC_PAUSE", "SYNC_TIME",
-    "SYNC_TIMER", "SYNC_WITHDRAW",
-    "T_REF", "T_REF_OUT", "TABLE_POINTER", "TANG_DIRECTION",
-    "TCP_DPOS", "TCP_FS_LIMIT", "TCP_RS_LIMIT", "TCP_UNITS",
-    "TRIOPCTESTVARIAB",
-    "UNITS",
-    "V_LIMIT", "VECTOR_BUFFERED", "VERIFY", "VFF_GAIN",
-    "VP_ACCEL", "VP_DEMAND_ACCEL", "VP_DEMAND_DECEL", "VP_DEMAND_JERK",
-    "VP_DEMAND_SPEED", "VP_ERROR", "VP_JERK", "VP_MODE", "VP_OPTIONS",
-    "VP_POSITION", "VP_SPEED",
-    "WORLD_ACCEL", "WORLD_DECEL", "WORLD_DPOS", "WORLD_FASTDEC",
-    "WORLD_FS_LIMIT", "WORLD_JERK", "WORLD_JOGSPEED", "WORLD_RS_LIMIT",
-    "WORLD_SPEED", "WORLD_UNITS",
-] + CHANNEL_PARAMETERS
-
-# Set for fast lookup of channel-type parameters
-CHANNEL_PARAMETERS_SET = set(CHANNEL_PARAMETERS)
-
-# Virtual (computed) parameters: map display name → underlying Trio SCOPE parameter.
-# These are not real controller parameters; their data is derived post-capture.
-_VIRTUAL_PARAM_MAP = {
-    "DEMAND_SPEED_NORMALISED": "DEMAND_SPEED",  # units/servocycle → units/second
-}
-
-TRACE_COLORS = [
-    '#03DAC6',  # Teal
-    '#FFB74D',  # Orange
-    '#64B5F6',  # Blue
-    '#F06292',  # Pink
-    '#FFF176',  # Yellow
-    '#E57373',  # Red
-    '#81C784',  # Green
-    '#BA68C8',  # Purple
-    '#4DD0E1',  # Cyan
-    '#AED581',  # Light Green
-]
-
-CURSOR_COLORS = {
-    'c1': '#FFD700',  # Gold
-    'c2': '#00CED1',  # Dark Turquoise
-}
-
-# Dark theme stylesheet
-DARK_STYLESHEET = """
-QMainWindow, QWidget {
-    background-color: #2e2e2e;
-    color: #d4d4d4;
-    font-family: 'Segoe UI';
-    font-size: 9pt;
-}
-QGroupBox {
-    background-color: #353536;
-    border: 1px solid #4b4a4a;
-    border-radius: 4px;
-    margin-top: 12px;
-    padding-top: 8px;
-    font-weight: bold;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 8px;
-    padding: 0 4px;
-    color: #d4d4d4;
-}
-QPushButton {
-    background-color: #4b4a4a;
-    color: #d4d4d4;
-    border: 1px solid #606060;
-    border-radius: 3px;
-    padding: 5px 10px;
-    font-size: 9pt;
-}
-QPushButton:hover { background-color: #5a5a5a; }
-QPushButton:pressed { background-color: #666666; }
-QPushButton:disabled { color: #666666; background-color: #3a3a3a; border-color: #4a4a4a; }
-QPushButton#accent {
-    background-color: #2e8b3e;
-    color: #ffffff;
-    font-weight: bold;
-    border: 1px solid #3aad4a;
-}
-QPushButton#accent:hover { background-color: #38a548; }
-QPushButton#accent:pressed { background-color: #267a34; }
-QLineEdit, QComboBox, QSpinBox {
-    background-color: #4b4a4a;
-    color: #d4d4d4;
-    border: 1px solid #4b4a4a;
-    border-radius: 2px;
-    padding: 3px;
-}
-QComboBox::drop-down {
-    border: none;
-    width: 20px;
-}
-QComboBox QAbstractItemView {
-    background-color: #4b4a4a;
-    color: #d4d4d4;
-    selection-background-color: #FFA500;
-    selection-color: #000000;
-}
-QCheckBox {
-    color: #d4d4d4;
-    spacing: 5px;
-}
-QCheckBox::indicator {
-    width: 14px; height: 14px;
-    border: 1px solid #666;
-    border-radius: 2px;
-    background-color: #2e2e2e;
-}
-QCheckBox::indicator:checked {
-    background-color: #FFA500;
-    border-color: #FFA500;
-}
-QRadioButton {
-    color: #d4d4d4;
-    spacing: 5px;
-}
-QRadioButton::indicator {
-    width: 14px; height: 14px;
-    border: 1px solid #666;
-    border-radius: 7px;
-    background-color: #2e2e2e;
-}
-QRadioButton::indicator:checked {
-    background-color: #FFA500;
-    border-color: #FFA500;
-}
-QScrollArea {
-    border: none;
-    background-color: #353536;
-}
-QScrollBar:vertical {
-    background-color: #2e2e2e;
-    width: 10px;
-}
-QScrollBar::handle:vertical {
-    background-color: #555;
-    border-radius: 5px;
-    min-height: 20px;
-}
-QLabel#status_dot {
-    font-size: 16pt;
-}
-QLabel#value_display {
-    background-color: #2e2e2e;
-    border-radius: 2px;
-    padding: 3px 5px;
-    font-family: 'Consolas';
-    font-size: 10pt;
-    font-weight: bold;
-}
-"""
-
-
-class ScopeViewBox(pg.ViewBox):
-    """Custom ViewBox with oscilloscope-style mouse controls.
-
-    Controls:
-        Left-drag        → Pan (X and Y)
-        Scroll wheel     → Zoom X (time axis)
-        Ctrl + scroll    → Zoom Y (value axis)
-        Right-drag       → Rubber-band zoom to region
-        Double-click     → Reset view / re-enable auto-scroll
-        Middle-click     → Context menu
-    """
-
-    # Signal emitted on double-click so the main app can re-enable auto-scroll
-    doubleClicked = Signal()
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Left-drag = pan (not rubber band)
-        self.setMouseMode(pg.ViewBox.PanMode)
-        # Disable default right-click context menu (we use right-drag for zoom)
-        self.menu = None
-        # Rubber band rectangle overlay
-        self._rb_rect = None
-        # When True, wheel zooms both axes uniformly (for XY mode)
-        self.uniform_zoom = False
-
-    def wheelEvent(self, ev, axis=None):
-        """Scroll wheel: zoom Y by default, zoom X with Ctrl held.
-        In uniform_zoom mode (XY plots), scroll zooms both axes together."""
-        if self.uniform_zoom:
-            # Zoom both axes together — no axis restriction
-            super().wheelEvent(ev, axis=None)
-            return
-        modifiers = ev.modifiers() if hasattr(ev, 'modifiers') else Qt.NoModifier
-        if modifiers == Qt.ControlModifier:
-            # Ctrl + scroll → zoom X only (time axis)
-            super().wheelEvent(ev, axis=0)
-        else:
-            # Plain scroll → zoom Y only
-            super().wheelEvent(ev, axis=1)
-
-    def mouseDragEvent(self, ev, axis=None):
-        """Left-drag = pan, Right-drag = rubber-band zoom."""
-        if ev.button() == Qt.RightButton:
-            ev.accept()
-            if ev.isStart():
-                # Create rubber band rectangle
-                self._rb_rect = pg.QtWidgets.QGraphicsRectItem(self.childGroup)
-                pen = QPen(QColor('#FFA500'), 1, Qt.DashLine)
-                pen.setCosmetic(True)
-                self._rb_rect.setPen(pen)
-                self._rb_rect.setBrush(QBrush(QColor(255, 165, 0, 40)))
-
-            if ev.isFinish():
-                # Remove rectangle
-                if self._rb_rect is not None:
-                    self._rb_rect.setParentItem(None)
-                    self._rb_rect = None
-
-                # Zoom to the dragged region
-                r = pg.Point(ev.buttonDownPos()) - pg.Point(ev.pos())
-                start = self.mapToView(ev.buttonDownPos())
-                end = self.mapToView(ev.pos())
-                x0, x1 = sorted([start.x(), end.x()])
-                y0, y1 = sorted([start.y(), end.y()])
-                if abs(r.x()) > 5 or abs(r.y()) > 5:
-                    self.setRange(xRange=(x0, x1), yRange=(y0, y1), padding=0)
-            else:
-                # Update rubber band rectangle during drag
-                if self._rb_rect is not None:
-                    start = self.mapToView(ev.buttonDownPos())
-                    end = self.mapToView(ev.pos())
-                    r = QRectF(start, end).normalized()
-                    self._rb_rect.setRect(r)
-        else:
-            # Left-drag: default pan behavior
-            super().mouseDragEvent(ev, axis)
-
-    def mouseDoubleClickEvent(self, ev):
-        """Double-click: reset view to auto-range and re-enable auto-scroll."""
-        if ev.button() == Qt.LeftButton:
-            self.enableAutoRange()
-            self.doubleClicked.emit()
-            ev.accept()
-        else:
-            super().mouseDoubleClickEvent(ev)
-
-
-class TraceControl(QFrame):
-    """Individual trace control (like one channel on an oscilloscope)"""
-
-    changed = Signal()
-
-    def __init__(self, trace_number, parent=None):
-        super().__init__(parent)
-        self.trace_number = trace_number
-        self.color = TRACE_COLORS[trace_number % len(TRACE_COLORS)]
-
-        # Colored border
-        self.setStyleSheet(f"""
-            TraceControl {{
-                background-color: #353536;
-                border: 2px solid {self.color};
-                border-radius: 4px;
-            }}
-        """)
-
-        vbox = QVBoxLayout(self)
-        vbox.setContentsMargins(4, 4, 4, 4)
-        vbox.setSpacing(3)
-
-        # Row 0: Enable checkbox + parameter dropdown + delete button
-        row0 = QHBoxLayout()
-        row0.setSpacing(4)
-
-        self.chk_enable = QCheckBox(f"Trace {trace_number + 1}")
-        self.chk_enable.setStyleSheet(f"color: {self.color}; font-weight: bold;")
-        self.chk_enable.toggled.connect(lambda: self.changed.emit())
-        row0.addWidget(self.chk_enable)
-
-        self.param_combo = QComboBox()
-        self.param_combo.setEditable(True)
-        self.param_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.param_combo.addItems(SCOPE_PARAMETERS)
-
-        # Searchable dropdown: QCompleter with substring matching
-        p_completer = QCompleter(SCOPE_PARAMETERS, self.param_combo)
-        p_completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        p_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        p_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        p_completer.popup().setStyleSheet(
-            "QAbstractItemView {"
-            "  background-color: #3a3a3a; color: #d4d4d4;"
-            "  selection-background-color: #FFA500; selection-color: #000;"
-            "  font-size: 9pt; border: 1px solid #666;"
-            "}"
-        )
-        self.param_combo.setCompleter(p_completer)
-
-        self.param_combo.setCurrentText("MPOS")
-        self.param_combo.setMaxVisibleItems(20)
-        self.param_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.param_combo.currentIndexChanged.connect(self._on_param_changed)
-        row0.addWidget(self.param_combo, 1)
-
-        # "Show all" button for parameter combo
-        self.btn_show_params = QPushButton("\u25bc")
-        self.btn_show_params.setFixedSize(20, 22)
-        self.btn_show_params.setToolTip("Show all parameters")
-        self.btn_show_params.setStyleSheet(
-            "QPushButton { background-color: #4b4a4a; color: #ccc;"
-            " border: 1px solid #606060; border-radius: 2px;"
-            " font-size: 8pt; padding: 0px; }"
-            "QPushButton:hover { background-color: #5a5a5a; }"
-            "QPushButton:pressed { background-color: #666; }"
-        )
-        self.btn_show_params.clicked.connect(self._show_all_params)
-        row0.addWidget(self.btn_show_params)
-
-        # Drive variable combo (hidden by default)
-        self.drive_var_combo = QComboBox()
-        self.drive_var_combo.setEditable(True)
-        self.drive_var_combo.setInsertPolicy(QComboBox.NoInsert)
-        for addr, label in COMMON_DRIVE_VARIABLES:
-            self.drive_var_combo.addItem(label, addr)
-
-        drive_labels = [label for _, label in COMMON_DRIVE_VARIABLES]
-        d_completer = QCompleter(drive_labels, self.drive_var_combo)
-        d_completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        d_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        d_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        d_completer.popup().setStyleSheet(
-            "QAbstractItemView {"
-            "  background-color: #3a3a3a; color: #d4d4d4;"
-            "  selection-background-color: #FFA500; selection-color: #000;"
-            "  font-size: 9pt; border: 1px solid #666;"
-            "}"
-        )
-        self.drive_var_combo.setCompleter(d_completer)
-
-        self.drive_var_combo.setMaxVisibleItems(20)
-        self.drive_var_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.drive_var_combo.currentIndexChanged.connect(lambda: self.changed.emit())
-        self.drive_var_combo.setVisible(False)
-        row0.addWidget(self.drive_var_combo, 1)
-
-        # "Show all" button for drive variable combo
-        self.btn_show_drive_vars = QPushButton("\u25bc")
-        self.btn_show_drive_vars.setFixedSize(20, 22)
-        self.btn_show_drive_vars.setToolTip("Show all drive variables")
-        self.btn_show_drive_vars.setStyleSheet(
-            "QPushButton { background-color: #4b4a4a; color: #ccc;"
-            " border: 1px solid #606060; border-radius: 2px;"
-            " font-size: 8pt; padding: 0px; }"
-            "QPushButton:hover { background-color: #5a5a5a; }"
-            "QPushButton:pressed { background-color: #666; }"
-        )
-        self.btn_show_drive_vars.clicked.connect(self._show_all_drive_vars)
-        self.btn_show_drive_vars.setVisible(False)
-        row0.addWidget(self.btn_show_drive_vars)
-
-        self._drive_mode = False
-
-        self.btn_delete = QPushButton("X")
-        self.btn_delete.setFixedWidth(34)
-        self.btn_delete.setStyleSheet("color: #ff4d4d; font-weight: bold; font-size: 10pt;")
-        self.btn_delete.clicked.connect(self._on_delete)
-        row0.addWidget(self.btn_delete)
-
-        vbox.addLayout(row0)
-
-        # Row 1: Axis selector + value display + FFT button
-        row1 = QHBoxLayout()
-        row1.setSpacing(4)
-
-        self.axis_label = QLabel("Axis")
-        row1.addWidget(self.axis_label)
-        self.axis_spin = QSpinBox()
-        self.axis_spin.setRange(0, 15)
-        self.axis_spin.setFixedWidth(28)
-        self.axis_spin.setStyleSheet(
-            "QSpinBox::up-button { width: 0; } QSpinBox::down-button { width: 0; }"
-        )
-        self.axis_spin.valueChanged.connect(lambda: self.changed.emit())
-        row1.addWidget(self.axis_spin)
-
-        _arrow_style = ("QPushButton { background-color: #4b4a4a; color: #ccc; "
-                        "border: 1px solid #606060; border-radius: 2px; "
-                        "font-size: 7pt; padding: 0px; }"
-                        "QPushButton:pressed { background-color: #666; }")
-        self.btn_ax_down = QPushButton("\u25bc")
-        self.btn_ax_down.setFixedSize(18, 12)
-        self.btn_ax_down.setStyleSheet(_arrow_style)
-        self.btn_ax_down.clicked.connect(lambda: self.axis_spin.setValue(
-            max(self.axis_spin.minimum(), self.axis_spin.value() - 1)))
-        self.btn_ax_up = QPushButton("\u25b2")
-        self.btn_ax_up.setFixedSize(18, 12)
-        self.btn_ax_up.setStyleSheet(_arrow_style)
-        self.btn_ax_up.clicked.connect(lambda: self.axis_spin.setValue(
-            min(self.axis_spin.maximum(), self.axis_spin.value() + 1)))
-
-        ax_arrows = QVBoxLayout()
-        ax_arrows.setSpacing(1)
-        ax_arrows.setContentsMargins(0, 0, 0, 0)
-        ax_arrows.addWidget(self.btn_ax_up)
-        ax_arrows.addWidget(self.btn_ax_down)
-        row1.addLayout(ax_arrows)
-
-        self.value_label = QLabel("0.0000")
-        self.value_label.setObjectName("value_display")
-        self.value_label.setStyleSheet(
-            f"color: {self.color}; background-color: #2e2e2e; "
-            f"font-family: Consolas; font-size: 9pt; font-weight: bold;"
-        )
-        self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.value_label.setFixedWidth(140)
-        row1.addWidget(self.value_label)
-
-        self.btn_fft = QPushButton("FFT")
-        self.btn_fft.setCheckable(True)
-        self.btn_fft.setFixedSize(36, 22)
-        self.btn_fft.setToolTip("Toggle FFT spectrum display for this trace")
-        self.btn_fft.setStyleSheet("""
-            QPushButton {
-                background-color: #4b4a4a;
-                color: #888;
-                border: 1px solid #606060;
-                border-radius: 2px;
-                font-size: 8pt;
-                font-weight: bold;
-                padding: 0px;
-            }
-            QPushButton:checked {
-                background-color: #8B4513;
-                color: #FFA500;
-                border: 1px solid #FFA500;
-            }
-        """)
-        self.btn_fft.toggled.connect(lambda: self.changed.emit())
-        row1.addWidget(self.btn_fft)
-
-        self.btn_pin = QPushButton("PIN")
-        self.btn_pin.setCheckable(True)
-        self.btn_pin.setFixedSize(36, 22)
-        self.btn_pin.setToolTip("Pin current trace as reference for comparison")
-        self.btn_pin.setStyleSheet("""
-            QPushButton {
-                background-color: #4b4a4a;
-                color: #888;
-                border: 1px solid #606060;
-                border-radius: 2px;
-                font-size: 8pt;
-                font-weight: bold;
-                padding: 0px;
-            }
-            QPushButton:checked {
-                background-color: #1a4a1a;
-                color: #66FF66;
-                border: 1px solid #66FF66;
-            }
-        """)
-        row1.addWidget(self.btn_pin)
-
-        # Default reference color — dimmed version of trace color
-        qc = QColor(self.color)
-        self.ref_color = QColor(
-            (qc.red() + 128) // 2,
-            (qc.green() + 128) // 2,
-            (qc.blue() + 128) // 2,
-        ).name()
-
-        self.btn_ref_color = QPushButton()
-        self.btn_ref_color.setFixedSize(22, 22)
-        self.btn_ref_color.setToolTip("Choose reference trace color")
-        self._update_ref_color_swatch()
-        self.btn_ref_color.clicked.connect(self._pick_ref_color)
-        row1.addWidget(self.btn_ref_color)
-
-        # Reference (pinned) data: {'time': np.array, 'values': np.array} or None
-        self.ref_data = None
-
-        vbox.addLayout(row1)
-
-    def _on_param_changed(self, index=None):
-        """Update axis/channel label and range based on selected parameter."""
-        is_ch = self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
-        if is_ch:
-            self.axis_label.setText("Ch")
-            self.axis_spin.setRange(0, 1024)
-            self.axis_spin.setFixedWidth(40)
-        else:
-            self.axis_label.setText("Axis")
-            self.axis_spin.setRange(0, 15)
-            self.axis_spin.setFixedWidth(28)
-        self.changed.emit()
-
-    def is_channel_parameter(self):
-        """Return True if the currently selected parameter is a channel-type."""
-        return self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
-
-    def _on_delete(self):
-        self.setParent(None)
-        self.deleteLater()
-        self.changed.emit()
-
-    def _show_all_params(self):
-        """Clear search text and show full parameter dropdown."""
-        self.param_combo.setCurrentText(self.param_combo.currentText())
-        self.param_combo.lineEdit().clear()
-        self.param_combo.showPopup()
-
-    def _show_all_drive_vars(self):
-        """Clear search text and show full drive variable dropdown."""
-        self.drive_var_combo.setCurrentText(self.drive_var_combo.currentText())
-        self.drive_var_combo.lineEdit().clear()
-        self.drive_var_combo.showPopup()
-
-    def is_enabled(self):
-        return self.chk_enable.isChecked()
-
-    def get_parameter_string(self):
-        param = self.param_combo.currentText()
-        # Virtual params capture their underlying Trio parameter from the controller
-        trio_param = _VIRTUAL_PARAM_MAP.get(param, param)
-        idx = self.axis_spin.value()
-        if trio_param in CHANNEL_PARAMETERS_SET:
-            return f"{trio_param}({idx})"
-        return f"{trio_param} AXIS({idx})"
-
-    def get_display_name(self):
-        if self._drive_mode:
-            return self.get_drive_display_name()
-        param = self.param_combo.currentText()
-        idx = self.axis_spin.value()
-        if param in CHANNEL_PARAMETERS_SET:
-            return f"{param} Ch({idx})"
-        return f"{param}({idx})"
-
-    def update_value(self, value):
-        self.value_label.setText(f"{value:>10.4f}")
-
-    def is_fft(self):
-        return self.btn_fft.isChecked()
-
-    def set_fft(self, enabled):
-        self.btn_fft.setChecked(enabled)
-
-    def get_color(self):
-        return self.color
-
-    def is_pinned(self):
-        return self.btn_pin.isChecked()
-
-    def has_ref_data(self):
-        return self.ref_data is not None
-
-    def _update_ref_color_swatch(self):
-        self.btn_ref_color.setStyleSheet(
-            f"QPushButton {{ background-color: {self.ref_color};"
-            f" border: 1px solid #606060; border-radius: 2px; }}"
-            f"QPushButton:hover {{ border: 1px solid #ffffff; }}"
-        )
-
-    def _pick_ref_color(self):
-        color = QColorDialog.getColor(
-            QColor(self.ref_color), self, "Reference Trace Color")
-        if color.isValid():
-            self.ref_color = color.name()
-            self._update_ref_color_swatch()
-            self.changed.emit()
-
-    def set_drive_mode(self, enabled: bool):
-        """Switch between controller parameter and drive variable selection."""
-        self._drive_mode = enabled
-        self.param_combo.setVisible(not enabled)
-        self.btn_show_params.setVisible(not enabled)
-        self.drive_var_combo.setVisible(enabled)
-        self.btn_show_drive_vars.setVisible(enabled)
-        # Hide axis selector in drive mode (axis set globally)
-        self.axis_label.setVisible(not enabled)
-        self.axis_spin.setVisible(not enabled)
-        self.btn_ax_down.setVisible(not enabled)
-        self.btn_ax_up.setVisible(not enabled)
-
-    def is_drive_mode(self):
-        return self._drive_mode
-
-    def get_drive_variable_address(self) -> int:
-        """Return the selected drive variable address (0x0F10, etc.)."""
-        return self.drive_var_combo.currentData()
-
-    def get_drive_display_name(self) -> str:
-        """Return display name for the drive variable."""
-        addr = self.get_drive_variable_address()
-        if addr and addr in DRIVE_VARIABLES:
-            name = DRIVE_VARIABLES[addr][0]
-            return f"{name} (0x{addr:04X})"
-        return self.drive_var_combo.currentText()
-
-
-class _ProfileManagerDialog(QDialog):
-    """Dialog for managing saved trace profiles: load, rename, delete."""
-
-    def __init__(self, app, parent=None):
-        super().__init__(parent or app)
-        self._app = app
-        self.setWindowTitle("Manage Profiles")
-        self.setMinimumSize(460, 380)
-        self.setStyleSheet(DARK_STYLESHEET)
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(8)
-        layout.setContentsMargins(12, 12, 12, 12)
-
-        title = QLabel("Saved Profiles")
-        title.setStyleSheet("font-size: 12pt; font-weight: bold;")
-        layout.addWidget(title)
-
-        body = QHBoxLayout()
-        body.setSpacing(8)
-
-        # Profile list
-        self._list = QListWidget()
-        self._list.setStyleSheet(
-            "QListWidget { background-color: #2e2e2e; border: 1px solid #4b4a4a;"
-            " border-radius: 3px; font-size: 10pt; }"
-            "QListWidget::item { padding: 5px 8px; }"
-            "QListWidget::item:selected { background-color: #FFA500; color: #000; }"
-        )
-        self._list.currentRowChanged.connect(self._on_selection_changed)
-        body.addWidget(self._list, 1)
-
-        # Buttons column
-        btn_col = QVBoxLayout()
-        btn_col.setSpacing(6)
-
-        self.btn_load = QPushButton("▶ Load")
-        self.btn_load.setToolTip("Load selected profile (replaces current traces)")
-        self.btn_load.clicked.connect(self._on_load)
-        btn_col.addWidget(self.btn_load)
-
-        self.btn_rename = QPushButton("✏ Rename")
-        self.btn_rename.setToolTip("Rename the selected profile")
-        self.btn_rename.clicked.connect(self._on_rename)
-        btn_col.addWidget(self.btn_rename)
-
-        self.btn_delete = QPushButton("🗑 Delete")
-        self.btn_delete.setToolTip("Delete the selected profile")
-        self.btn_delete.clicked.connect(self._on_delete)
-        btn_col.addWidget(self.btn_delete)
-
-        btn_col.addStretch()
-
-        btn_close = QPushButton("Close")
-        btn_close.clicked.connect(self.close)
-        btn_col.addWidget(btn_close)
-
-        body.addLayout(btn_col)
-        layout.addLayout(body, 1)
-
-        # Preview area
-        preview_frame = QGroupBox("Preview")
-        preview_layout = QVBoxLayout(preview_frame)
-        preview_layout.setContentsMargins(8, 12, 8, 8)
-        preview_layout.setSpacing(2)
-        self._preview_container = QWidget()
-        self._preview_layout = QVBoxLayout(self._preview_container)
-        self._preview_layout.setContentsMargins(0, 0, 0, 0)
-        self._preview_layout.setSpacing(1)
-        self._preview_layout.setAlignment(Qt.AlignTop)
-        preview_layout.addWidget(self._preview_container)
-        layout.addWidget(preview_frame)
-
-        self._refresh_list()
-        self._on_selection_changed(-1)
-
-    def _refresh_list(self):
-        self._list.clear()
-        for name in self._app._get_profile_names():
-            self._list.addItem(name)
-
-    def _selected_name(self):
-        item = self._list.currentItem()
-        return item.text() if item else None
-
-    def _on_selection_changed(self, row):
-        has_sel = row >= 0
-        self.btn_load.setEnabled(has_sel)
-        self.btn_rename.setEnabled(has_sel)
-        self.btn_delete.setEnabled(has_sel)
-        self._update_preview()
-
-    def _update_preview(self):
-        # Clear old preview
-        while self._preview_layout.count():
-            child = self._preview_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        name = self._selected_name()
-        if not name:
-            lbl = QLabel("Select a profile to preview")
-            lbl.setStyleSheet("color: #666; font-style: italic;")
-            self._preview_layout.addWidget(lbl)
-            return
-
-        s = QSettings("TrioScope", "ParameterScope")
-        count = int(s.value(f"profiles/data/{name}/count", 0))
-        if count == 0:
-            lbl = QLabel("(empty profile)")
-            lbl.setStyleSheet("color: #666;")
-            self._preview_layout.addWidget(lbl)
-            return
-
-        for i in range(count):
-            param = str(s.value(f"profiles/data/{name}/{i}/param", "?"))
-            axis = int(s.value(f"profiles/data/{name}/{i}/axis", 0))
-            enabled = s.value(f"profiles/data/{name}/{i}/enabled", "true") == "true"
-            fft = s.value(f"profiles/data/{name}/{i}/fft", "false") == "true"
-
-            status = "✓" if enabled else "✗"
-            fft_tag = " [FFT]" if fft else ""
-            color = TRACE_COLORS[i % len(TRACE_COLORS)]
-            text = f"  {status}  {param}({axis}){fft_tag}"
-            lbl = QLabel(text)
-            lbl.setStyleSheet(
-                f"color: {color}; font-family: Consolas; font-size: 9pt;"
-            )
-            self._preview_layout.addWidget(lbl)
-
-    def _on_load(self):
-        name = self._selected_name()
-        if name:
-            self._app._load_profile(name)
-            self.close()
-
-    def _on_rename(self):
-        old_name = self._selected_name()
-        if not old_name:
-            return
-        new_name, ok = QInputDialog.getText(
-            self, "Rename Profile", "New name:", text=old_name)
-        new_name = new_name.strip() if ok else ""
-        if not new_name or new_name == old_name:
-            return
-        existing = self._app._get_profile_names()
-        if new_name in existing:
-            QMessageBox.warning(self, "Rename",
-                                f"A profile named '{new_name}' already exists.")
-            return
-        self._app._rename_profile(old_name, new_name)
-        self._refresh_list()
-
-    def _on_delete(self):
-        name = self._selected_name()
-        if not name:
-            return
-        reply = QMessageBox.question(
-            self, "Delete Profile",
-            f"Delete profile '{name}'? This cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self._app._delete_profile(name)
-            self._refresh_list()
-            self._on_selection_changed(-1)
-
-
-class CompareWindow(QMainWindow):
-    """Fullscreen overlay window for comparing up to 3 live traces on one plot.
-
-    Each trace draws on its own ViewBox stacked on a shared main PlotItem so
-    Y-scales stay independent (traces can have different units). X axis is
-    shared. Data is pushed from the main app on every timer tick.
-    """
-
-    closed = Signal()
-
-    MAX_TRACES = 3
-
-    def __init__(self, traces, fft_mode, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Compare Traces")
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.fft_mode = fft_mode
-        self.traces = list(traces)  # TraceControl refs (up to 3)
-
-        central = QWidget()
-        central.setStyleSheet("background-color: #0A0A0A;")
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
-
-        # Top bar: title + close hint
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        names = ", ".join(t.get_display_name() for t in self.traces)
-        title_text = f"Comparing {'FFT' if fft_mode else 'time-domain'}: {names}"
-        title = QLabel(title_text)
-        title.setStyleSheet("color: #d4d4d4; font-size: 10pt; font-weight: bold;")
-        top.addWidget(title)
-        top.addStretch()
-        self.btn_link_y = QPushButton("\U0001f517 Unify Y")
-        self.btn_link_y.setCheckable(True)
-        self.btn_link_y.setToolTip(
-            "Link Y axes of all compared traces to a shared range")
-        self.btn_link_y.setStyleSheet(
-            "QPushButton { background-color: #2e2e2e; color: #d4d4d4; "
-            "padding: 4px 10px; border: 1px solid #555; } "
-            "QPushButton:checked { background-color: #03DAC6; color: #000; "
-            "font-weight: bold; } "
-            "QPushButton:hover { background-color: #3a3a3a; }"
-        )
-        self.btn_link_y.toggled.connect(self._on_link_y_toggled)
-        top.addWidget(self.btn_link_y)
-        hint = QLabel("Esc to close")
-        hint.setStyleSheet("color: #888888; font-size: 9pt; margin-left: 10px;")
-        top.addWidget(hint)
-        layout.addLayout(top)
-
-        # Graphics layout widget holding the single overlay plot
-        self.glw = pg.GraphicsLayoutWidget()
-        self.glw.setBackground('#0A0A0A')
-        layout.addWidget(self.glw, 1)
-
-        # Main plot (owns the X axis and the first Y axis). Uses the
-        # oscilloscope-style ViewBox so right-drag rubber-band zoom,
-        # wheel-zoom and double-click reset work the same as the main window.
-        self._main_vb = ScopeViewBox()
-        self.main_plot = self.glw.addPlot(row=0, col=0, viewBox=self._main_vb)
-        self._main_vb.doubleClicked.connect(self._reset_view)
-        self.main_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.main_plot.setLabel(
-            'bottom',
-            'Frequency (Hz)' if fft_mode else 'Time (seconds)',
-            color='#d4d4d4',
-        )
-
-        # Primary axis config — color-code to first trace
-        first_color = self.traces[0].get_color() if self.traces else '#d4d4d4'
-        self.main_plot.getAxis('left').setPen(pg.mkPen(first_color))
-        self.main_plot.getAxis('left').setTextPen(pg.mkPen(first_color))
-        self.main_plot.setLabel('left', self.traces[0].get_display_name(),
-                                color=first_color)
-
-        # Primary curve goes on main_plot's ViewBox
-        width = 1
-        self.curves = []
-        self.viewboxes = [self.main_plot.vb]
-        self.axes = [self.main_plot.getAxis('left')]
-        pen0 = pg.mkPen(first_color, width=width)
-        curve0 = self.main_plot.plot(pen=pen0)
-        curve0.setClipToView(True)
-        curve0.setDownsampling(auto=True, method='subsample')
-        self.curves.append(curve0)
-
-        # Extra traces: one extra ViewBox + right-side AxisItem per trace
-        # Standard pyqtgraph multi-axis pattern.
-        for i, trace in enumerate(self.traces[1:], start=1):
-            color = trace.get_color()
-            vb = pg.ViewBox()
-            axis = pg.AxisItem('right')
-            axis.setPen(pg.mkPen(color))
-            axis.setTextPen(pg.mkPen(color))
-            axis.setLabel(trace.get_display_name(), color=color)
-            # Append axis into the layout on the right side of the main plot
-            self.glw.addItem(axis, row=0, col=i + 1)
-            self.glw.scene().addItem(vb)
-            axis.linkToView(vb)
-            vb.setXLink(self.main_plot.vb)
-            curve = pg.PlotDataItem(pen=pg.mkPen(color, width=width))
-            curve.setClipToView(True)
-            curve.setDownsampling(auto=True, method='subsample')
-            vb.addItem(curve)
-            self.curves.append(curve)
-            self.viewboxes.append(vb)
-            self.axes.append(axis)
-
-        # Sync the extra ViewBoxes' geometry to the main plot's ViewBox
-        self.main_plot.vb.sigResized.connect(self._sync_viewboxes)
-        self._sync_viewboxes()
-
-        # --- Hover crosshair + coordinate readout ---
-        # Vertical line that follows the mouse; per-trace values are read out
-        # in a translucent label anchored in the top-left of the plot.
-        self._vline = pg.InfiniteLine(
-            angle=90, movable=False,
-            pen=pg.mkPen('#888888', width=1, style=Qt.DashLine),
-        )
-        self._vline.setZValue(1000)
-        self.main_plot.addItem(self._vline, ignoreBounds=True)
-        self._vline.hide()
-
-        self._hover_label = pg.TextItem(anchor=(0, 0), color='#d4d4d4',
-                                        fill=pg.mkBrush(0, 0, 0, 180))
-        self._hover_label.setZValue(1001)
-        self.main_plot.addItem(self._hover_label, ignoreBounds=True)
-        self._hover_label.hide()
-
-        # Cache of latest x-array + per-trace y-array for interpolation
-        self._last_x = None
-        self._last_y = [None] * len(self.traces)
-
-        self.main_plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
-
-    def _sync_viewboxes(self):
-        rect = self.main_plot.vb.sceneBoundingRect()
-        for vb in self.viewboxes[1:]:
-            vb.setGeometry(rect)
-            vb.linkedViewChanged(self.main_plot.vb, vb.XAxis)
-
-    def _on_link_y_toggled(self, checked):
-        """Link/unlink all extra ViewBoxes' Y axes to the main one.
-
-        When linked, all traces share the widest Y range (union of individual
-        ranges), so they scale together. When unlinked, each trace gets back
-        its own auto-ranged Y.
-        """
-        main_vb = self.main_plot.vb
-        if checked:
-            # Compute union of current Y ranges across all ViewBoxes
-            y_mins, y_maxs = [], []
-            for vb in self.viewboxes:
-                y_min, y_max = vb.viewRange()[1]
-                y_mins.append(y_min)
-                y_maxs.append(y_max)
-            y_min = min(y_mins)
-            y_max = max(y_maxs)
-            # Disable auto-range on the driver, fix range to the union, then link
-            main_vb.enableAutoRange(axis='y', enable=False)
-            main_vb.setYRange(y_min, y_max, padding=0)
-            for vb in self.viewboxes[1:]:
-                vb.enableAutoRange(axis='y', enable=False)
-                vb.setYLink(main_vb)
-        else:
-            # Break the link and restore per-trace auto-ranging
-            for vb in self.viewboxes[1:]:
-                vb.setYLink(None)
-                vb.enableAutoRange(axis='y', enable=True)
-            main_vb.enableAutoRange(axis='y', enable=True)
-
-    def update_data(self, time_arr, params_by_name, fft_freqs=None,
-                    fft_magnitudes=None):
-        """Push latest data into each curve. For FFT mode, supply freqs+mags."""
-        if self.fft_mode:
-            if fft_freqs is None or not fft_magnitudes:
-                return
-            self._last_x = fft_freqs
-            for i, (curve, trace) in enumerate(zip(self.curves, self.traces)):
-                name = trace.get_display_name()
-                mag = fft_magnitudes.get(name)
-                if mag is None or len(mag) == 0:
-                    continue
-                curve.setData(fft_freqs, mag, skipFiniteCheck=True)
-                self._last_y[i] = mag
-        else:
-            if time_arr is None or len(time_arr) == 0:
-                return
-            self._last_x = time_arr
-            for i, (curve, trace) in enumerate(zip(self.curves, self.traces)):
-                name = trace.get_display_name()
-                values = params_by_name.get(name)
-                if values is None or len(values) == 0:
-                    continue
-                curve.setData(time_arr, values, skipFiniteCheck=True)
-                self._last_y[i] = values
-
-    def _reset_view(self):
-        """Re-enable auto-range on all ViewBoxes after a double-click reset."""
-        for vb in self.viewboxes:
-            vb.enableAutoRange()
-        if self.btn_link_y.isChecked():
-            self.btn_link_y.setChecked(False)
-
-    def _on_mouse_moved(self, scene_pos):
-        """Update crosshair + coordinate readout from the mouse scene position."""
-        vb = self.main_plot.vb
-        if not self.main_plot.sceneBoundingRect().contains(scene_pos):
-            self._vline.hide()
-            self._hover_label.hide()
-            return
-        mouse_point = vb.mapSceneToView(scene_pos)
-        x = mouse_point.x()
-        self._vline.setPos(x)
-        self._vline.show()
-
-        if self._last_x is None or len(self._last_x) == 0:
-            self._hover_label.hide()
-            return
-
-        xs = self._last_x
-        if x < xs[0] or x > xs[-1]:
-            self._hover_label.hide()
-            return
-
-        idx = np.searchsorted(xs, x)
-        if idx > 0 and (idx == len(xs) or abs(xs[idx - 1] - x) <= abs(xs[idx] - x)):
-            idx -= 1
-
-        x_label = ("f" if self.fft_mode else "t")
-        x_unit = ("Hz" if self.fft_mode else "s")
-        lines = [f"{x_label} = {x:.4g} {x_unit}"]
-        for trace, ys in zip(self.traces, self._last_y):
-            if ys is None or len(ys) != len(xs):
-                continue
-            y = float(ys[idx])
-            color = trace.get_color()
-            name = trace.get_display_name()
-            lines.append(
-                f"<span style='color:{color};'>{name} = {y:.4g}</span>")
-        self._hover_label.setHtml(
-            "<div style='font-family:monospace;font-size:9pt;'>"
-            + "<br/>".join(lines) + "</div>"
-        )
-        # Anchor the label just right of the cursor, near the top of the view
-        x_range, y_range = vb.viewRange()
-        y_top = y_range[1]
-        x_span = x_range[1] - x_range[0]
-        self._hover_label.setPos(x + x_span * 0.01, y_top)
-        self._hover_label.show()
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self.close()
-            return
-        super().keyPressEvent(event)
-
-    def closeEvent(self, event):
-        self.closed.emit()
-        super().closeEvent(event)
-
-
-class _CompareTracePicker(QDialog):
-    """Small modal: pick up to 3 same-type enabled traces to compare."""
-
-    def __init__(self, candidates, fft_mode, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Compare Traces")
-        self.setStyleSheet(
-            "QDialog { background-color: #1a1a1a; color: #d4d4d4; } "
-            "QCheckBox { color: #d4d4d4; padding: 4px; } "
-            "QPushButton { background-color: #2e2e2e; color: #d4d4d4; "
-            "padding: 6px 14px; border: 1px solid #555; } "
-            "QPushButton:hover { background-color: #3a3a3a; }"
-        )
-        self.fft_mode = fft_mode
-        self.candidates = candidates  # list[TraceControl]
-        self.checks = []
-
-        layout = QVBoxLayout(self)
-        kind = "FFT" if fft_mode else "time-domain"
-        header = QLabel(f"Select 2–3 {kind} traces to overlay:")
-        header.setStyleSheet("font-weight: bold;")
-        layout.addWidget(header)
-
-        for t in candidates:
-            cb = QCheckBox(t.get_display_name())
-            cb.setStyleSheet(f"color: {t.get_color()}; font-weight: bold;")
-            cb.toggled.connect(self._enforce_limit)
-            self.checks.append(cb)
-            layout.addWidget(cb)
-
-        btns = QHBoxLayout()
-        btns.addStretch()
-        self.btn_ok = QPushButton("Compare")
-        self.btn_ok.clicked.connect(self.accept)
-        self.btn_ok.setEnabled(False)
-        cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self.reject)
-        btns.addWidget(self.btn_ok)
-        btns.addWidget(cancel)
-        layout.addLayout(btns)
-
-    def _enforce_limit(self):
-        selected = [cb for cb in self.checks if cb.isChecked()]
-        if len(selected) > CompareWindow.MAX_TRACES:
-            # Uncheck the most recent (the one that triggered us is the last toggled)
-            sender = self.sender()
-            if sender in selected:
-                sender.blockSignals(True)
-                sender.setChecked(False)
-                sender.blockSignals(False)
-                selected = [cb for cb in self.checks if cb.isChecked()]
-        self.btn_ok.setEnabled(2 <= len(selected) <= CompareWindow.MAX_TRACES)
-
-    def selected_traces(self):
-        return [t for t, cb in zip(self.candidates, self.checks)
-                if cb.isChecked()]
 
 
 class ParameterScopeOscilloscope(QMainWindow):
@@ -4223,14 +3002,8 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         try:
             data = self.accumulated_data
-            param_names = list(data['params'].keys())
-            with open(path, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(['Time'] + param_names)
-                for i in range(len(data['time'])):
-                    row = [round(data['time'][i], 6)] + [data['params'][p][i] for p in param_names]
-                    writer.writerow(row)
-            self.status_label.setText(f"Exported {len(param_names)} channel(s) to {path}")
+            CSVStorage.export_data(path, data['time'], data['params'])
+            self.status_label.setText(f"Exported {len(data['params'])} channel(s) to {path}")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
@@ -4248,31 +3021,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             return
 
         try:
-            with open(path, 'r', newline='') as f:
-                reader = csv.reader(f)
-                header = next(reader)
-
-                if not header or header[0] != 'Time':
-                    QMessageBox.critical(self, "Import Error",
-                                         "Invalid CSV format — expected 'Time' as first column")
-                    return
-
-                param_names = header[1:]
-                if not param_names:
-                    QMessageBox.critical(self, "Import Error", "No parameter columns found")
-                    return
-
-                # Read all data rows
-                rows = list(reader)
-
-            if not rows:
-                QMessageBox.warning(self, "Import", "CSV file contains no data rows")
-                return
-
-            time_arr = np.array([float(row[0]) for row in rows])
-            params = {}
-            for col_idx, pname in enumerate(param_names, start=1):
-                params[pname] = np.array([float(row[col_idx]) for row in rows])
+            time_arr, params, traces_data = CSVStorage.import_data(path)
 
             # --- Reconfigure traces to match imported columns ---
             # Remove all existing traces
@@ -4281,21 +3030,12 @@ class ParameterScopeOscilloscope(QMainWindow):
                 t.deleteLater()
             self.traces.clear()
 
-            # Parse column names like "MPOS(0)" → param="MPOS", axis=0
-            param_pattern = re.compile(r'^(.+)\((\d+)\)$')
-
-            for pname in param_names:
-                m = param_pattern.match(pname)
+            for param, axis in traces_data:
                 self.add_trace()
                 trace = self.traces[-1]
                 trace.chk_enable.setChecked(True)
-                if m:
-                    trace.param_combo.setCurrentText(m.group(1))
-                    trace.axis_spin.setValue(int(m.group(2)))
-                else:
-                    # Fallback: use full name as parameter, axis 0
-                    trace.param_combo.setCurrentText(pname)
-                    trace.axis_spin.setValue(0)
+                trace.param_combo.setCurrentText(param)
+                trace.axis_spin.setValue(axis)
 
             # --- Load data ---
             self.accumulated_data = {
@@ -4337,7 +3077,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._render_plots()
 
             self.status_label.setText(
-                f"Imported {len(time_arr)} samples, {len(param_names)} params from {Path(path).name}")
+                f"Imported {len(time_arr)} samples, {len(params)} params from {Path(path).name}")
 
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
@@ -4348,51 +3088,27 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _get_profile_names(self):
         """Return a list of all saved profile names."""
-        s = QSettings("TrioScope", "ParameterScope")
-        count = int(s.value("profiles/count", 0))
-        names = []
-        for i in range(count):
-            name = s.value(f"profiles/{i}/name", None)
-            if name:
-                names.append(name)
-        return names
+        return ProfileStore().get_profile_names()
 
     def _save_profile(self, name):
         """Save the current trace configuration as a named profile."""
-        s = QSettings("TrioScope", "ParameterScope")
-        names = self._get_profile_names()
-
-        # Overwrite if exists, else append
-        if name in names:
-            idx = names.index(name)
-        else:
-            idx = len(names)
-            names.append(name)
-
-        # Save the full names list
-        s.setValue("profiles/count", len(names))
-        for i, n in enumerate(names):
-            s.setValue(f"profiles/{i}/name", n)
-
-        # Save traces for this profile
-        enabled_traces = [t for t in self.traces if t.parent() is not None]
-        s.setValue(f"profiles/data/{name}/count", len(enabled_traces))
-        for i, t in enumerate(enabled_traces):
-            s.setValue(f"profiles/data/{name}/{i}/param", t.param_combo.currentText())
-            s.setValue(f"profiles/data/{name}/{i}/axis", t.axis_spin.value())
-            s.setValue(f"profiles/data/{name}/{i}/enabled",
-                       "true" if t.chk_enable.isChecked() else "false")
-            s.setValue(f"profiles/data/{name}/{i}/fft",
-                       "true" if t.is_fft() else "false")
-
+        enabled_traces = [
+            TraceConfig(
+                param=t.param_combo.currentText(),
+                axis=t.axis_spin.value(),
+                enabled=t.chk_enable.isChecked(),
+                fft=t.is_fft()
+            )
+            for t in self.traces if t.parent() is not None
+        ]
+        ProfileStore().save_profile(name, enabled_traces)
         self._rebuild_profiles_menu()
         logger.info(f"Profile '{name}' saved with {len(enabled_traces)} trace(s)")
 
     def _load_profile(self, name):
         """Load a named profile, replacing all current traces."""
-        s = QSettings("TrioScope", "ParameterScope")
-        count = int(s.value(f"profiles/data/{name}/count", 0))
-        if count == 0:
+        traces_config = ProfileStore().load_profile(name)
+        if not traces_config:
             logger.warning(f"Profile '{name}' is empty or not found")
             return
 
@@ -4403,38 +3119,20 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.traces.clear()
 
         # Recreate traces from profile
-        for i in range(count):
-            param = str(s.value(f"profiles/data/{name}/{i}/param", "MPOS"))
-            axis = int(s.value(f"profiles/data/{name}/{i}/axis", 0))
-            enabled = s.value(f"profiles/data/{name}/{i}/enabled", "true") == "true"
-            fft = s.value(f"profiles/data/{name}/{i}/fft", "false") == "true"
-
+        for t_cfg in traces_config:
             self.add_trace()
             t = self.traces[-1]
-            t.param_combo.setCurrentText(param)
-            t.axis_spin.setValue(axis)
-            t.chk_enable.setChecked(enabled)
-            t.set_fft(fft)
+            t.param_combo.setCurrentText(t_cfg.param)
+            t.axis_spin.setValue(t_cfg.axis)
+            t.chk_enable.setChecked(t_cfg.enabled)
+            t.set_fft(t_cfg.fft)
 
         self.on_trace_changed()
-        logger.info(f"Profile '{name}' loaded with {count} trace(s)")
+        logger.info(f"Profile '{name}' loaded with {len(traces_config)} trace(s)")
 
     def _delete_profile(self, name):
         """Delete a saved profile."""
-        s = QSettings("TrioScope", "ParameterScope")
-        names = self._get_profile_names()
-        if name in names:
-            names.remove(name)
-
-        # Rewrite names list
-        s.setValue("profiles/count", len(names))
-        for i, n in enumerate(names):
-            s.setValue(f"profiles/{i}/name", n)
-
-        # Remove profile data
-        count = int(s.value(f"profiles/data/{name}/count", 0))
-        s.remove(f"profiles/data/{name}")
-
+        ProfileStore().delete_profile(name)
         self._rebuild_profiles_menu()
         logger.info(f"Profile '{name}' deleted")
 
@@ -4442,29 +3140,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         """Rename a saved profile."""
         if old_name == new_name:
             return
-        s = QSettings("TrioScope", "ParameterScope")
-        names = self._get_profile_names()
-        if old_name not in names:
-            return
-
-        # Copy profile data to new name
-        count = int(s.value(f"profiles/data/{old_name}/count", 0))
-        s.setValue(f"profiles/data/{new_name}/count", count)
-        for i in range(count):
-            for key in ("param", "axis", "enabled", "fft"):
-                val = s.value(f"profiles/data/{old_name}/{i}/{key}")
-                if val is not None:
-                    s.setValue(f"profiles/data/{new_name}/{i}/{key}", val)
-
-        # Remove old data
-        s.remove(f"profiles/data/{old_name}")
-
-        # Update names list
-        idx = names.index(old_name)
-        names[idx] = new_name
-        for i, n in enumerate(names):
-            s.setValue(f"profiles/{i}/name", n)
-
+        ProfileStore().rename_profile(old_name, new_name)
         self._rebuild_profiles_menu()
         logger.info(f"Profile renamed: '{old_name}' → '{new_name}'")
 
@@ -4763,27 +3439,9 @@ class ParameterScopeOscilloscope(QMainWindow):
             if self.trio_connected and self.trio_connection:
                 self._tuner_panel.set_connection(self.trio_connection, self._conn_lock)
             # Restore saved per-axis drive profiles
-            s = QSettings("TrioScope", "ParameterScope")
-            num_profiles = int(s.value("ai/drive_profiles/count", 0))
-            saved_profiles = {}
-            for i in range(num_profiles):
-                axis = s.value(f"ai/drive_profiles/{i}/axis", None)
-                if axis is None:
-                    continue
-                axis = int(axis)
-                saved_profiles[axis] = {
-                    "drive_type": s.value(f"ai/drive_profiles/{i}/drive_type", "None"),
-                    "pn100": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn100")),
-                    "pn101": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn101")),
-                    "pn102": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn102")),
-                    "pn103": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn103")),
-                    "pn104": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn104")),
-                    "pn105": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn105")),
-                    "pn106": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn106")),
-                    "pn112": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn112")),
-                }
-            if saved_profiles:
-                self._tuner_panel.set_all_profiles(saved_profiles)
+            app_settings = SettingsStore().load()
+            if app_settings.drive_profiles:
+                self._tuner_panel.set_all_profiles(app_settings.drive_profiles)
             # Preserve window geometry — adding the dock triggers a deferred
             # layout pass that inflates the main window's minimumSizeHint.
             saved_size = self.size()
@@ -4947,97 +3605,92 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _load_settings(self):
         """Restore saved settings from QSettings."""
-        s = QSettings("TrioScope", "ParameterScope")
+        app_settings = SettingsStore().load()
 
         # Connection
-        self.ip_edit.setText(str(s.value("connection/ip", "192.168.0.245")))
+        self.ip_edit.setText(app_settings.connection.ip)
 
         # Configuration
-        self.period_edit.setText(str(s.value("config/sample_period", "1")))
-        self.duration_edit.setText(str(s.value("config/duration", "5.0")))
-        self.table_start_edit.setText(str(s.value("config/table_start", "0")))
-        self.use_end_of_table = s.value("config/use_end_of_table", "true") == "true"
-        if s.value("config/capture_mode", "continuous") == "single":
+        self.period_edit.setText(app_settings.capture.sample_period)
+        self.duration_edit.setText(app_settings.capture.duration)
+        self.table_start_edit.setText(app_settings.capture.table_start)
+        self.use_end_of_table = app_settings.capture.use_end_of_table
+        if app_settings.capture.capture_mode == "single":
             self.radio_single.setChecked(True)
         else:
             self.radio_continuous.setChecked(True)
 
         # Display / plot settings
-        self.plot_mode = str(s.value("display/plot_mode", "time"))
-        # Migration: old 'fft' global mode → 'time' with per-trace FFT
-        migrate_global_fft = (self.plot_mode == 'fft')
-        if migrate_global_fft:
-            self.plot_mode = 'time'
-        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(str(self.plot_mode), 0)
+        self.plot_mode = app_settings.display.plot_mode
+        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(self.plot_mode, 0)
         self.plot_mode_combo.setCurrentIndex(mode_index)
-        self.window_duration = float(s.value("display/window_duration", 5.0))
-        self.lock_x_axis = s.value("display/lock_x_axis", "true") == "true"
+        self.window_duration = app_settings.display.window_duration
+        self.lock_x_axis = app_settings.display.lock_x_axis
         self.chk_lock_x.setChecked(self.lock_x_axis)
-        self.line_width = float(s.value("plot/line_width", 1))
-        self.grid_alpha = float(s.value("plot/grid_alpha", 0.3))
-        self.plot_bg_color = s.value("plot/bg_color", "#0A0A0A")
+        self.line_width = app_settings.plot.line_width
+        self.grid_alpha = app_settings.plot.grid_alpha
+        self.plot_bg_color = app_settings.plot.bg_color
 
         # Traces
-        num_traces = int(s.value("traces/count", 1))
-        for i in range(num_traces):
+        if not app_settings.traces:
+            app_settings.traces.append(TraceConfig(param="MPOS", axis=0, enabled=True, fft=False))
+
+        # Recreate traces in UI
+        for i, trace_config in enumerate(app_settings.traces):
             if i >= len(self.traces):
                 self.add_trace()
             t = self.traces[i]
-            param = str(s.value(f"traces/{i}/param", "MPOS"))
-            axis = int(s.value(f"traces/{i}/axis", 0))
-            enabled = s.value(f"traces/{i}/enabled", "true") == "true"
-            t.param_combo.setCurrentText(param)
-            t.axis_spin.setValue(axis)
-            t.chk_enable.setChecked(enabled)
-            fft = s.value(f"traces/{i}/fft", "false") == "true" or migrate_global_fft
-            t.set_fft(fft)
+            t.param_combo.setCurrentText(trace_config.param)
+            t.axis_spin.setValue(trace_config.axis)
+            t.chk_enable.setChecked(trace_config.enabled)
+            t.set_fft(trace_config.fft)
 
-        # If no traces were saved, add default
-        if not self.traces:
-            self.add_trace()
+        # Remove extra UI trace controls if there are any
+        while len(self.traces) > len(app_settings.traces):
+            t = self.traces.pop()
+            t.setParent(None)
+            t.deleteLater()
 
     def _save_settings(self):
         """Persist current settings to QSettings."""
-        s = QSettings("TrioScope", "ParameterScope")
+        app_settings = AppSettings()
 
         # Connection
-        s.setValue("connection/ip", self.ip_edit.text())
+        app_settings.connection.ip = self.ip_edit.text()
 
         # Configuration
-        s.setValue("config/sample_period", self.period_edit.text())
-        s.setValue("config/duration", self.duration_edit.text())
-        s.setValue("config/table_start", self.table_start_edit.text())
-        s.setValue("config/use_end_of_table", "true" if self.use_end_of_table else "false")
-        s.setValue("config/capture_mode",
-                   "single" if self.radio_single.isChecked() else "continuous")
+        app_settings.capture.sample_period = self.period_edit.text()
+        app_settings.capture.duration = self.duration_edit.text()
+        app_settings.capture.table_start = self.table_start_edit.text()
+        app_settings.capture.use_end_of_table = self.use_end_of_table
+        app_settings.capture.capture_mode = "single" if self.radio_single.isChecked() else "continuous"
 
         # Display / plot settings
-        s.setValue("display/plot_mode", self.plot_mode)
-        s.setValue("display/window_duration", self.window_duration)
-        s.setValue("display/lock_x_axis", "true" if self.lock_x_axis else "false")
-        s.setValue("plot/line_width", self.line_width)
-        s.setValue("plot/grid_alpha", self.grid_alpha)
-        s.setValue("plot/bg_color", self.plot_bg_color)
+        app_settings.display.plot_mode = self.plot_mode
+        app_settings.display.window_duration = self.window_duration
+        app_settings.display.lock_x_axis = self.lock_x_axis
+        app_settings.plot.line_width = self.line_width
+        app_settings.plot.grid_alpha = self.grid_alpha
+        app_settings.plot.bg_color = self.plot_bg_color
 
         # Traces
-        s.setValue("traces/count", len(self.traces))
-        for i, t in enumerate(self.traces):
-            s.setValue(f"traces/{i}/param", t.param_combo.currentText())
-            s.setValue(f"traces/{i}/axis", t.axis_spin.value())
-            s.setValue(f"traces/{i}/enabled",
-                       "true" if t.chk_enable.isChecked() else "false")
-            s.setValue(f"traces/{i}/fft",
-                       "true" if t.is_fft() else "false")
+        for t in self.traces:
+            app_settings.traces.append(TraceConfig(
+                param=t.param_combo.currentText(),
+                axis=t.axis_spin.value(),
+                enabled=t.chk_enable.isChecked(),
+                fft=t.is_fft()
+            ))
 
         # Per-axis drive profiles (from tuner panel if open)
         if self._tuner_panel is not None:
-            profiles = self._tuner_panel.get_all_profiles()
-            s.setValue("ai/drive_profiles/count", len(profiles))
-            for i, (axis, profile_dict) in enumerate(profiles.items()):
-                s.setValue(f"ai/drive_profiles/{i}/axis", axis)
-                for key, val in profile_dict.items():
-                    s.setValue(f"ai/drive_profiles/{i}/{key}",
-                               "" if val is None else val)
+            app_settings.drive_profiles = self._tuner_panel.get_all_profiles()
+        else:
+            # We should load the existing ones from settings so we don't overwrite them with empty
+            existing = SettingsStore().load()
+            app_settings.drive_profiles = existing.drive_profiles
+
+        SettingsStore().save(app_settings)
 
     # ─── Cleanup ────────────────────────────────────────────────────
 
