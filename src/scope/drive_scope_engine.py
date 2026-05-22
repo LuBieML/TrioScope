@@ -470,13 +470,9 @@ class DriveScopeEngine:
     def _parse_raw_bytes(self, raw_bytes: bytes) -> Dict[str, Any]:
         """Parse binary data downloaded via EC_COE_FIFO.
 
-        The data layout is interleaved across ACTIVE channels only (not
-        always 8).  Each sample row contains one 16-bit word per active
-        channel, so the stride per sample = active_channels words.
-
-        C# reference (Uapi.cs):
-            int colonne = 6;  // words per sample row
-            for (i = 0, j = 0; j < 1000; j++, i += colonne * 2)
+        The data layout is interleaved across all 8 channels (the drive's built-in
+        scope always captures and outputs 8 channels). Each sample row contains
+        eight 16-bit words.
         """
         n_bytes = len(raw_bytes)
         n_words = n_bytes // 2
@@ -485,34 +481,34 @@ class DriveScopeEngine:
         logger.info(
             "Parsing %d bytes (%d words), %d active channels, "
             "stride=%d words/sample",
-            n_bytes, n_words, n_ch, n_ch,
+            n_bytes, n_words, n_ch, NUM_CHANNELS,
         )
 
         # Convert bytes to uint16 array (little-endian)
         raw_words = np.frombuffer(raw_bytes[:n_words * 2], dtype=np.dtype('<u2'))
 
         # The EC_COE_FIFO download often returns the buffer with leading
-        # padding/wrapper bytes — the actual sample block lives at the first
-        # non-zero word, not at offset 0. Skip the prefix so reshape lines up
-        # with real data instead of the zero pad.
+        # padding/wrapper bytes — the actual 16000-byte domain starts at the first
+        # non-zero word, followed by a fixed 624-word setup parameter header.
+        # The interleaved sample block begins exactly at block_start + 624.
         nonzero_idx = np.flatnonzero(raw_words)
         if len(nonzero_idx) > 0:
-            data_start = int(nonzero_idx[0])
-            if data_start > 0:
-                logger.info(
-                    "Skipping %d leading zero words (%d bytes of padding)",
-                    data_start, data_start * 2,
-                )
-                raw_words = raw_words[data_start:]
+            block_start = int(nonzero_idx[0])
+            data_start = block_start + 624
+            logger.info(
+                "Block start found at word %d (byte %d). Skipping to sample data at word %d (byte %d).",
+                block_start, block_start * 2, data_start, data_start * 2
+            )
+            raw_words = raw_words[data_start:]
         else:
             logger.warning("Drive scope buffer is all zeros — capture may have failed")
 
-        # Expected useful data: active_channels * 1000 words
-        expected_words = n_ch * SAMPLES_PER_CHANNEL
+        # Expected useful data: NUM_CHANNELS * SAMPLES_PER_CHANNEL (8000 words)
+        expected_words = NUM_CHANNELS * SAMPLES_PER_CHANNEL
         if len(raw_words) < expected_words:
             logger.warning(
                 "Got %d words, expected %d (%d ch × %d samples) — padding",
-                len(raw_words), expected_words, n_ch, SAMPLES_PER_CHANNEL,
+                len(raw_words), expected_words, NUM_CHANNELS, SAMPLES_PER_CHANNEL,
             )
             padded = np.zeros(expected_words, dtype=np.uint16)
             padded[:len(raw_words)] = raw_words
@@ -521,8 +517,8 @@ class DriveScopeEngine:
         # Take only the words we need (buffer may be larger)
         raw_words = raw_words[:expected_words]
 
-        # Reshape to (1000, active_channels) — each row is one sample
-        data_2d = raw_words.reshape(SAMPLES_PER_CHANNEL, n_ch)
+        # Reshape to (1000, 8) — each row is one sample across 8 channels
+        data_2d = raw_words.reshape(SAMPLES_PER_CHANNEL, NUM_CHANNELS)
 
         # Build time array
         time_array = np.arange(SAMPLES_PER_CHANNEL) * self.sample_period_sec

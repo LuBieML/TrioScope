@@ -621,22 +621,22 @@ class TraceControl(QFrame):
                         "border: 1px solid #606060; border-radius: 2px; "
                         "font-size: 7pt; padding: 0px; }"
                         "QPushButton:pressed { background-color: #666; }")
-        btn_ax_down = QPushButton("\u25bc")
-        btn_ax_down.setFixedSize(18, 12)
-        btn_ax_down.setStyleSheet(_arrow_style)
-        btn_ax_down.clicked.connect(lambda: self.axis_spin.setValue(
+        self.btn_ax_down = QPushButton("\u25bc")
+        self.btn_ax_down.setFixedSize(18, 12)
+        self.btn_ax_down.setStyleSheet(_arrow_style)
+        self.btn_ax_down.clicked.connect(lambda: self.axis_spin.setValue(
             max(self.axis_spin.minimum(), self.axis_spin.value() - 1)))
-        btn_ax_up = QPushButton("\u25b2")
-        btn_ax_up.setFixedSize(18, 12)
-        btn_ax_up.setStyleSheet(_arrow_style)
-        btn_ax_up.clicked.connect(lambda: self.axis_spin.setValue(
+        self.btn_ax_up = QPushButton("\u25b2")
+        self.btn_ax_up.setFixedSize(18, 12)
+        self.btn_ax_up.setStyleSheet(_arrow_style)
+        self.btn_ax_up.clicked.connect(lambda: self.axis_spin.setValue(
             min(self.axis_spin.maximum(), self.axis_spin.value() + 1)))
 
         ax_arrows = QVBoxLayout()
         ax_arrows.setSpacing(1)
         ax_arrows.setContentsMargins(0, 0, 0, 0)
-        ax_arrows.addWidget(btn_ax_up)
-        ax_arrows.addWidget(btn_ax_down)
+        ax_arrows.addWidget(self.btn_ax_up)
+        ax_arrows.addWidget(self.btn_ax_down)
         row1.addLayout(ax_arrows)
 
         self.value_label = QLabel("0.0000")
@@ -810,7 +810,10 @@ class TraceControl(QFrame):
         self.drive_var_combo.setVisible(enabled)
         self.btn_show_drive_vars.setVisible(enabled)
         # Hide axis selector in drive mode (axis set globally)
+        self.axis_label.setVisible(not enabled)
         self.axis_spin.setVisible(not enabled)
+        self.btn_ax_down.setVisible(not enabled)
+        self.btn_ax_up.setVisible(not enabled)
 
     def is_drive_mode(self):
         return self._drive_mode
@@ -2824,7 +2827,8 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _watchdog_loop(self):
         """Heartbeat loop — polls VR(66) every 0.5s, 5s timeout on dead socket."""
-        while not self._watchdog_stop.wait(0.5):
+        stop_event = self._watchdog_stop
+        while not stop_event.wait(0.5):
             if not (self.trio_connection and self.trio_connected):
                 continue
             try:
@@ -2844,12 +2848,18 @@ class ParameterScopeOscilloscope(QMainWindow):
                 t = threading.Thread(target=_heartbeat, name="ScopeWatchdog", daemon=True)
                 t.start()
                 if not heartbeat_done.wait(timeout=5.0):
+                    if stop_event.is_set():
+                        break
                     logger.warning("Watchdog heartbeat timed out after 5s")
                     self._mark_connection_lost()
+                    break
+                if stop_event.is_set():
                     break
                 if heartbeat_error:
                     raise heartbeat_error[0]
             except Exception as exc:
+                if stop_event.is_set():
+                    break
                 if 'Disconnected' in str(exc) or 'No connection' in str(exc):
                     logger.warning(f"Watchdog detected connection loss: {exc}")
                     self._mark_connection_lost()
@@ -2870,7 +2880,6 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._watchdog_stop.set()
         self._watchdog_thread.join(timeout=1.0)
         self._watchdog_thread = None
-        self._watchdog_stop = threading.Event()
 
     def _mark_connection_lost(self):
         """Called by watchdog when connection is lost — thread-safe."""

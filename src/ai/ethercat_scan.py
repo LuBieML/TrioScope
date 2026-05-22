@@ -8,6 +8,7 @@ a structured list of discovered devices with axis mappings.
 import contextlib
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -16,7 +17,7 @@ import Trio_UnifiedApi as TUA
 logger = logging.getLogger(__name__)
 
 # EtherCAT slots available on Trio controllers
-_MAX_SLOTS = 4
+_MAX_SLOTS = 1
 
 # CoE Identity Object (0x1018) subindices
 _IDENTITY_INDEX = 0x1018
@@ -91,22 +92,30 @@ class EthercatSlave:
 class EthercatSlot:
     """One EtherCAT port/slot on the controller."""
     slot: int
-    state: TUA.EthercatState = TUA.EthercatState.Initial
+    state: int = 0
     num_slaves: int = 0
     slaves: list[EthercatSlave] = field(default_factory=list)
 
     @property
     def state_name(self) -> str:
-        return {
-            TUA.EthercatState.Initial: "Initial",
-            TUA.EthercatState.PreOperational: "Pre-Operational",
-            TUA.EthercatState.SafeOperational: "Safe-Operational",
-            TUA.EthercatState.Operational: "Operational",
-        }.get(self.state, f"Unknown ({self.state})")
+        # Standard ESM: 1=Init, 2=PreOp, 4=SafeOp, 8=Op
+        # TUA Enum: 0=Initial/Init, 1=PreOp/Init, 2=SafeOp/PreOp, 3=Op/SafeOp
+        # Map both standard ESM and TUA enum values to clear names:
+        val = int(self.state)
+        if val in (0, 1):
+            return "Initial"
+        elif val == 2:
+            return "Pre-Operational"
+        elif val == 4:
+            return "Safe-Operational"
+        elif val in (3, 8):
+            return "Operational"
+        else:
+            return f"Unknown ({val})"
 
     @property
     def is_operational(self) -> bool:
-        return self.state == TUA.EthercatState.Operational
+        return int(self.state) in (3, 8)
 
 
 @dataclass
@@ -206,11 +215,23 @@ def scan_network(
                 return fn(*args)
         except Exception:
             return default
+        finally:
+            time.sleep(0.01)
 
     for slot_idx in range(_MAX_SLOTS):
         slot = EthercatSlot(slot=slot_idx)
 
-        state = _call(connection.Ethercat_GetState, slot_idx)
+        # Use VR(901) to fetch the raw EtherCAT state to avoid enum ValueError conversion issues.
+        # Since Ethercat_GetState_VR returns None on success, we execute it and check if the VR value changed.
+        vr_scratch = 901
+        _call(connection.SetVrValue, vr_scratch, -999.0)
+        _call(connection.Ethercat_GetState_VR, slot_idx, vr_scratch)
+        state_val = _call(connection.GetVrValue, vr_scratch, default=-999.0)
+        if state_val != -999.0:
+            state = int(state_val)
+        else:
+            state = None
+
         if state is None:
             logger.debug("Slot %d: not available", slot_idx)
             network.slots.append(slot)
@@ -267,13 +288,15 @@ def scan_network(
         network.slots.append(slot)
 
     # ----- Axis mapping fallback ----------------------------------------
-    # If Ethercat_GetSlaveAxis didn't work (returns -1 for all), try to
-    # map axes to slaves by probing controller axes directly.
+    # If Ethercat_GetSlaveAxis didn't work (returns -1 for all online slaves),
+    # try to map axes to slaves by probing controller axes directly.
     all_slaves = network.all_slaves
-    unmapped = [s for s in all_slaves if s.axis < 0 and s.online]
+    online_slaves = [s for s in all_slaves if s.online]
+    has_mapped_axis = any(s.axis >= 0 for s in online_slaves)
 
-    if unmapped:
-        logger.debug("Attempting axis mapping for %d unmapped slaves", len(unmapped))
+    if online_slaves and not has_mapped_axis:
+        unmapped = online_slaves
+        logger.debug("Attempting axis mapping fallback for %d unmapped slaves", len(unmapped))
         addr_to_slave: dict[int, EthercatSlave] = {}
         for s in unmapped:
             if s.address > 0:
