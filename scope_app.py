@@ -2113,7 +2113,12 @@ class ParameterScopeOscilloscope(QMainWindow):
             capture_timeout = max(30.0, engine.capture_duration_sec * 3)
             wait_start = time.monotonic()
             completed = False
-            started_sampling = False
+            started_sampling = bool(getattr(engine, "last_start_saw_sampling", False))
+            if started_sampling:
+                logger.info(
+                    "Drive scope start already observed sampling; status sequence=%s",
+                    getattr(engine, "last_start_status_sequence", []),
+                )
 
             # Small initial sleep to allow the start command to execute on the controller
             time.sleep(0.05)
@@ -2131,14 +2136,21 @@ class ParameterScopeOscilloscope(QMainWindow):
                 if status == 1:
                     started_sampling = True
 
-                # We consider capture complete if status is 2 AND either:
-                # 1. We saw it transition to status 1 (sampling) first.
-                # 2. Or at least 200ms have elapsed (to bypass delayed transition in status register).
-                if status == 2 and (started_sampling or (time.monotonic() - wait_start) > 0.2):
+                if status == 2 and started_sampling:
                     completed = True
                     break
 
                 elapsed = time.monotonic() - wait_start
+                if (
+                    status == 2
+                    and not started_sampling
+                    and elapsed >= engine.capture_duration_sec + 0.5
+                ):
+                    raise RuntimeError(
+                        "Drive scope did not report a fresh sampling state; "
+                        "refusing to download stale drive scope data."
+                    )
+
                 if engine.capture_duration_sec > 0:
                     pct = min(0.99, elapsed / engine.capture_duration_sec)
                     self.sig_capture_progress.emit(f"Sampling: {pct*100:.0f}%")
@@ -2161,11 +2173,13 @@ class ParameterScopeOscilloscope(QMainWindow):
             def _download_cb(pct, msg):
                 self.sig_capture_progress.emit(msg)
 
-            with self._conn_lock:
-                data = engine.read_data(progress_callback=_download_cb)
-
-            # Restart the watchdog now that the long operation is done
-            self._start_watchdog()
+            try:
+                with self._conn_lock:
+                    data = engine.read_data(progress_callback=_download_cb)
+            finally:
+                # Restart the watchdog now that the long operation is done,
+                # even if the FIFO transfer raises.
+                self._start_watchdog()
 
             if not self.is_running:
                 return
