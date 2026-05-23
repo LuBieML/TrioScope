@@ -67,8 +67,33 @@ try:
 except ImportError:
     HelpWindow = None
 
-logging.basicConfig(level=logging.INFO)
+# Setup detailed logging to a file in the workspace
+log_file = "trio_scope.log"
+try:
+    file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s"
+    ))
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+    
+    # Ensure standard handlers default to INFO (so they aren't flooded with DEBUG)
+    for handler in root_logger.handlers:
+        if handler != file_handler:
+            handler.setLevel(logging.INFO)
+except Exception as e:
+    print(f"Failed to initialize file logger: {e}", file=sys.stderr)
+
 logger = logging.getLogger(__name__)
+logger.info("=========================================")
+logger.info("TrioScope app starting. Version: %s", getattr(sys.modules.get('version'), '__version__', 'unknown'))
+logger.info("Current working directory: %s", Path.cwd())
+logger.info("Python interpreter: %s", sys.executable)
+logger.info("Python version: %s", sys.version)
+logger.info("=========================================")
 
 
 from ui.logging_widgets import _LogWindow, _LogBarHandler
@@ -577,11 +602,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         )
 
         self._log_bar.mousePressEvent = lambda _: self._log_window.show()
-        outer_layout.addWidget(self._log_bar)
-
         # Wire Python logging into the bar and window
         self._log_handler = _LogBarHandler(self._log_bar, self._log_window)
+        self._log_handler.setLevel(logging.INFO)
         logging.getLogger().addHandler(self._log_handler)
+        outer_layout.addWidget(self._log_bar)
 
     # ─── Plot management ────────────────────────────────────────────
 

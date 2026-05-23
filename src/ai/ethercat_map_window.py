@@ -62,7 +62,7 @@ def _state_colour(state) -> QColor:
 
 
 def _drive_type_label(raw: int) -> str:
-    known = {0: "", 41: "DX3", 42: "DX4"}
+    known = {0: "", 41: "DX3", 42: "DX4", 43: "DX1", 45: "DX5"}
     return known.get(raw, f"T{raw}")
 
 

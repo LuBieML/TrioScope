@@ -123,6 +123,8 @@ COMMON_DRIVE_VARIABLES = [
 SUPPORTED_DRIVE_TYPES = {
     41: "DX3",
     42: "DX4",
+    43: "DX1",
+    45: "DX5",
 }
 
 # SDO read sentinel and timing
@@ -191,6 +193,7 @@ class DriveScopeEngine:
         self.vr_scratch = vr_scratch
 
         # Configuration
+        self.drive_model = "DX3"  # "DX3", "DX5", or "DX1"
         self.channel_addresses: List[int] = [0] * NUM_CHANNELS
         self.active_channels: int = 0  # how many channels are in use
         self.sample_time: int = 1      # in units of 125 μs
@@ -233,6 +236,8 @@ class DriveScopeEngine:
 
     @property
     def sample_period_us(self) -> float:
+        if self.drive_model == "DX1":
+            return self.sample_time * 62.5
         return self.sample_time * SAMPLE_TIME_UNIT_US
 
     @property
@@ -251,6 +256,7 @@ class DriveScopeEngine:
         trigger_value1: int = 0,
         trigger_value2: int = 0,
         ch1_data_type: int = 1,
+        drive_model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Configure drive scope capture parameters.
@@ -264,6 +270,7 @@ class DriveScopeEngine:
             trigger_value1: First trigger threshold (32-bit, for modes 1-6).
             trigger_value2: Second trigger threshold (32-bit, for window modes 5-6).
             ch1_data_type: Data type code for channel 1 trigger comparison.
+            drive_model: Optional manual override string ("DX3", "DX5", "DX1")
 
         Returns:
             Configuration summary dict.
@@ -274,29 +281,38 @@ class DriveScopeEngine:
             raise ValueError(f"Maximum {NUM_CHANNELS} channels supported")
 
         get_drive_type = getattr(self.connection, "GetAxisParameter_DRIVE_TYPE", None)
+        detected_model = None
         if get_drive_type is not None:
             try:
                 drive_type = int(get_drive_type(self.axis))
                 if drive_type and drive_type not in SUPPORTED_DRIVE_TYPES:
                     raise RuntimeError(
-                        "Drive Scope (SDO) currently supports Trio DX3/DX4 only; "
+                        "Drive Scope (SDO) currently supports Trio DX3/DX4/DX5/DX1 only; "
                         f"axis {self.axis} reports DRIVE_TYPE={drive_type}."
                     )
                 if drive_type:
+                    detected_model = SUPPORTED_DRIVE_TYPES[drive_type]
                     logger.info(
                         "Drive scope axis %d drive type: %s (%d)",
-                        self.axis, SUPPORTED_DRIVE_TYPES[drive_type], drive_type,
+                        self.axis, detected_model, drive_type,
                     )
                 else:
                     logger.warning(
                         "Drive scope axis %d reports DRIVE_TYPE=0; "
-                        "cannot confirm DX3/DX4 protocol compatibility",
+                        "cannot confirm drive protocol compatibility",
                         self.axis,
                     )
             except RuntimeError:
                 raise
             except Exception as exc:
                 logger.debug("Could not read DRIVE_TYPE for axis %d: %s", self.axis, exc)
+
+        if drive_model is not None:
+            self.drive_model = drive_model
+        elif detected_model is not None:
+            self.drive_model = detected_model
+        else:
+            self.drive_model = "DX3"
 
         self.active_channels = len(channels)
         self.channel_addresses = list(channels) + [0] * (NUM_CHANNELS - len(channels))
@@ -306,47 +322,123 @@ class DriveScopeEngine:
         self.trigger_value2 = trigger_value2
         self.ch1_data_type = ch1_data_type
 
-        # Stop any running capture first (C# does this before configuring)
-        self._write_u16(CONTROL_INDEX, 0, 0)
-        time.sleep(0.02)
+        sleep_time = 0.05
 
-        # Write setup using co_write_axis via Execute — matching C# reference.
-        # Syntax: co_write_axis(axis, $368c, sub, 6, -1, value)
-        # type 6 = Unsigned16
-        # Use ${:x} hex notation for values to match C# reference exactly.
-        writes = [
-            (1, self.trigger_mode),
-            (2, self.trigger_value1 & 0xFFFF),         # Trigger value 1 low
-            (3, (self.trigger_value1 >> 16) & 0xFFFF),  # Trigger value 1 high
-            (4, self.trigger_value2 & 0xFFFF),         # Trigger value 2 low
-            (5, (self.trigger_value2 >> 16) & 0xFFFF),  # Trigger value 2 high
-            (6, self.ch1_data_type),
-            (7, self.sample_time),
-        ]
-        # Sub-indices 8–15: channel variable addresses
-        for i, addr in enumerate(self.channel_addresses):
-            writes.append((8 + i, addr))
+        if self.drive_model in ("DX5", "DX1"):
+            # Disable Scope: Z_AScopeEnable = 0 (Index 0x2065, subindex 0, length 4 bytes)
+            cmd = f"co_write_axis({self.axis}, $2065, 0, 4, -1, 0)"
+            self.connection.Execute(cmd)
+            time.sleep(sleep_time)
 
-        for sub, val in writes:
-            self._write_u16(SETUP_INDEX, sub, val)
+            # Set Length: Z_AScopeSamples = 8000 (Index 0x2068, subindex 0, length 4 bytes)
+            cmd = f"co_write_axis({self.axis}, $2068, 0, 4, -1, 8000)"
+            self.connection.Execute(cmd)
+            time.sleep(sleep_time)
+
+            # Set Steps: Z_AScopeSteps = sample_time (Index 0x2069, subindex 0, length 4 bytes)
+            cmd = f"co_write_axis({self.axis}, $2069, 0, 4, -1, {self.sample_time})"
+            self.connection.Execute(cmd)
+            time.sleep(sleep_time)
+
+            # Set Trigger Channel: Z_AScopeTrigChan (Index 0x206A, subindex 0, length 4)
+            trig_chan = 0 if self.trigger_mode == 0 else 1
+            cmd = f"co_write_axis({self.axis}, $206A, 0, 4, -1, {trig_chan})"
+            self.connection.Execute(cmd)
+            time.sleep(sleep_time)
+
+            # Set Trigger Value: Z_AScopeTrigVal (Index 0x206B, subindex 0, length 8)
+            cmd = f"co_write_axis({self.axis}, $206B, 0, 8, -1, {self.trigger_value1})"
+            self.connection.Execute(cmd)
+            time.sleep(sleep_time)
+
+            # Set Trigger Up/Down: Z_AScopeTrigUpDown (Index 0x206C, subindex 0, length 4)
+            trig_updown = 0 if self.trigger_mode in (1, 3, 5) else 1
+            cmd = f"co_write_axis({self.axis}, $206C, 0, 4, -1, {trig_updown})"
+            self.connection.Execute(cmd)
+            time.sleep(sleep_time)
+
+            # Set Pretrigger: Z_AScopeTrigPre (Index 0x206D, subindex 0, length 4)
+            pretrigger = 100
+            cmd = f"co_write_axis({self.axis}, $206D, 0, 4, -1, {pretrigger})"
+            self.connection.Execute(cmd)
+            time.sleep(sleep_time)
+
+            # Calculate channel offset
+            chOffset = 0
+            if self.drive_model == "DX5":
+                if self.axis % 2 != 0:
+                    chOffset = 0x800
+
+            # Write Setup channels Z_AScopeCh1 to Ch8 (Index 0x206E to 0x2075)
+            objAdd_speed = 0x36df + chOffset
+            objAdd_iqr = 0x36eb + chOffset
+            objAdd_pos1 = 14064 + chOffset
+            objAdd_pos2 = 14050 + chOffset
+            objAdd_alarm = 14392
+
+            channels_to_write = [
+                (0x206E, objAdd_speed),
+                (0x206F, objAdd_iqr),
+                (0x2070, objAdd_pos1),
+                (0x2071, objAdd_pos2),
+                (0x2072, objAdd_alarm),
+                (0x2073, 0),
+                (0x2074, 0),
+                (0x2075, 0),
+            ]
+
+            for index, objAdd in channels_to_write:
+                cmd = f"co_write_axis({self.axis}, ${index:X}, 0, 4, -1, {objAdd})"
+                self.connection.Execute(cmd)
+                time.sleep(sleep_time)
+
+            # Enable Scope: Z_AScopeEnable = 1
+            cmd = f"co_write_axis({self.axis}, $2065, 0, 4, -1, 1)"
+            self.connection.Execute(cmd)
+            time.sleep(sleep_time)
+
+        else:
+            # Stop any running capture first (C# does this before configuring)
+            self._write_u16(CONTROL_INDEX, 0, 0)
             time.sleep(0.02)
-            logger.debug("Setup 0x368C[%d] = %d", sub, val & 0xFFFF)
 
-        try:
-            readback = {
-                sub: self._read_u16(SETUP_INDEX, sub)
-                for sub in (1, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
-            }
-            logger.info(
-                "Drive scope setup readback: trigger=%d, dtype=%d, sample=%d, "
-                "channels=%s",
-                readback[1],
-                readback[6],
-                readback[7],
-                [f"0x{readback[sub]:04X}" for sub in range(8, 16)],
-            )
-        except Exception as exc:
-            logger.warning("Could not read back drive scope setup: %s", exc)
+            # Write setup using co_write_axis via Execute — matching C# reference.
+            # Syntax: co_write_axis(axis, $368c, sub, 6, -1, value)
+            # type 6 = Unsigned16
+            # Use ${:x} hex notation for values to match C# reference exactly.
+            writes = [
+                (1, self.trigger_mode),
+                (2, self.trigger_value1 & 0xFFFF),         # Trigger value 1 low
+                (3, (self.trigger_value1 >> 16) & 0xFFFF),  # Trigger value 1 high
+                (4, self.trigger_value2 & 0xFFFF),         # Trigger value 2 low
+                (5, (self.trigger_value2 >> 16) & 0xFFFF),  # Trigger value 2 high
+                (6, self.ch1_data_type),
+                (7, self.sample_time),
+            ]
+            # Sub-indices 8–15: channel variable addresses
+            for i, addr in enumerate(self.channel_addresses):
+                writes.append((8 + i, addr))
+
+            for sub, val in writes:
+                self._write_u16(SETUP_INDEX, sub, val)
+                time.sleep(0.02)
+                logger.debug("Setup 0x368C[%d] = %d", sub, val & 0xFFFF)
+
+            try:
+                readback = {
+                    sub: self._read_u16(SETUP_INDEX, sub)
+                    for sub in (1, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+                }
+                logger.info(
+                    "Drive scope setup readback: trigger=%d, dtype=%d, sample=%d, "
+                    "channels=%s",
+                    readback[1],
+                    readback[6],
+                    readback[7],
+                    [f"0x{readback[sub]:04X}" for sub in range(8, 16)],
+                )
+            except Exception as exc:
+                logger.warning("Could not read back drive scope setup: %s", exc)
 
         self.is_configured = True
 
@@ -377,26 +469,37 @@ class DriveScopeEngine:
         self.last_start_saw_sampling = False
         self.last_start_status_sequence = []
 
-        self._write_u16(CONTROL_INDEX, 0, 0)
-        time.sleep(0.05)
-        try:
-            stop_status = self.get_status()
-            self.last_start_status_sequence.append(stop_status)
-            logger.info("Drive scope status after stop/re-arm: %d", stop_status)
-        except Exception as exc:
-            logger.warning("Could not verify drive scope stop/re-arm status: %s", exc)
+        if self.drive_model in ("DX3", "DX4"):
+            self._write_u16(CONTROL_INDEX, 0, 0)
+            time.sleep(0.05)
+            try:
+                stop_status = self.get_status()
+                self.last_start_status_sequence.append(stop_status)
+                logger.info("Drive scope status after stop/re-arm: %d", stop_status)
+            except Exception as exc:
+                logger.warning("Could not verify drive scope stop/re-arm status: %s", exc)
 
-        self._write_u16(CONTROL_INDEX, 0, 1)
-        self.is_capturing = True
+            self._write_u16(CONTROL_INDEX, 0, 1)
+            self.is_capturing = True
 
-        verify_deadline = time.monotonic() + min(1.0, max(0.25, self.capture_duration_sec * 0.25))
-        while time.monotonic() < verify_deadline:
-            status = self.get_status()
-            self.last_start_status_sequence.append(status)
-            if status == 1:
-                self.last_start_saw_sampling = True
-                break
-            time.sleep(0.02)
+            verify_deadline = time.monotonic() + min(1.0, max(0.25, self.capture_duration_sec * 0.25))
+            while time.monotonic() < verify_deadline:
+                status = self.get_status()
+                self.last_start_status_sequence.append(status)
+                if status == 1:
+                    self.last_start_saw_sampling = True
+                    break
+                time.sleep(0.02)
+        else:
+            # DX5 / DX1
+            # Re-arm by writing 0 and then 1 to $2065 Z_AScopeEnable
+            cmd = f"co_write_axis({self.axis}, $2065, 0, 4, -1, 0)"
+            self.connection.Execute(cmd)
+            time.sleep(0.05)
+            cmd = f"co_write_axis({self.axis}, $2065, 0, 4, -1, 1)"
+            self.connection.Execute(cmd)
+            self.is_capturing = True
+            self.last_start_saw_sampling = True  # assume started
 
         logger.info(
             "Drive scope capture started; start status sequence=%s, saw_sampling=%s",
@@ -405,9 +508,13 @@ class DriveScopeEngine:
         )
 
     def stop_capture(self):
-        """Stop drive scope capture by writing 0 to 0x368B."""
+        """Stop drive scope capture."""
         try:
-            self._write_u16(CONTROL_INDEX, 0, 0)
+            if self.drive_model in ("DX3", "DX4"):
+                self._write_u16(CONTROL_INDEX, 0, 0)
+            else:
+                cmd = f"co_write_axis({self.axis}, $2065, 0, 4, -1, 0)"
+                self.connection.Execute(cmd)
         except Exception as e:
             logger.warning("Failed to stop drive scope: %s", e)
         self.is_capturing = False
@@ -415,17 +522,30 @@ class DriveScopeEngine:
 
     def get_status(self) -> int:
         """
-        Read capture status from 0x3680 bits 14-15.
-
-        Uses co_read_axis via Execute (matching C# reference):
-            co_read_axis(axis, $3680, 0, 6, vr)
-        type 6 = Unsigned16
-
-        Returns:
-            0 = not in sampling status
-            1 = sampling in progress
-            2 = sampling done
+        Read capture status from 0x3680 bits 14-15 (DX3/DX4) or 0x2066 (DX5/DX1).
         """
+        if self.drive_model in ("DX5", "DX1"):
+            try:
+                vr = self.vr_scratch
+                self.connection.SetVrValue(vr, _VR_SENTINEL)
+                cmd = f"co_read_axis({self.axis}, $2066, 0, 4, {vr})"
+                self.connection.Execute(cmd)
+                deadline = time.monotonic() + _SDO_TIMEOUT
+                while time.monotonic() < deadline:
+                    val = self.connection.GetVrValue(vr)
+                    if val != _VR_SENTINEL:
+                        val_int = int(val)
+                        if val_int == 3:
+                            return 2  # done
+                        elif val_int in (1, 2):
+                            return 1  # sampling
+                        else:
+                            return 0  # idle
+                    time.sleep(0.01)
+            except Exception as exc:
+                logger.warning("Failed to read DX5/DX1 status: %s", exc)
+            return 0
+
         try:
             raw = self._read_u16(STATUS_INDEX, 0)
             status = (raw >> 14) & 0x3
@@ -506,95 +626,105 @@ class DriveScopeEngine:
                 return
             if any(existing == value for existing, _ in candidates):
                 return
+            logger.info("Adding device candidate %d (%s) for axis %d", value, source, self.axis)
             candidates.append((value, source))
 
-        fallback = self.axis + 1
-        add(fallback, "axis+1 reference")
+        # 1. API physical position and slave address (highly specific)
+        try:
+            check_slaves = getattr(self.connection, "Ethercat_CheckNumberOfSlaves", None)
+            get_slave_axis = getattr(self.connection, "Ethercat_GetSlaveAxis", None)
+            get_slave_addr = getattr(self.connection, "Ethercat_GetSlaveAddress", None)
+            if check_slaves is not None and get_slave_axis is not None:
+                num_slaves = int(check_slaves(0))
+                logger.debug("API: checking %d slaves on slot 0", num_slaves)
+                for pos in range(max(0, num_slaves)):
+                    mapped_axis = int(get_slave_axis(0, pos))
+                    logger.debug("API: slave at position %d has axis %d (expected %d)", pos, mapped_axis, self.axis)
+                    if mapped_axis == self.axis:
+                        logger.info("API matched axis %d to slave position %d", self.axis, pos)
+                        add(pos + 1, f"slave position {pos}")
+                        if get_slave_addr is not None:
+                            addr = int(get_slave_addr(0, pos))
+                            if addr > 0:
+                                add(addr, f"slave address {addr}")
+        except Exception as exc:
+            logger.warning("Could not resolve EtherCAT device via API for axis %d: %s", self.axis, exc)
 
+        # 2. BASIC ETHERCAT functions physical position and address fallback (extremely robust)
+        try:
+            num_slaves = self._execute_ethercat_vr_function(3, "0", timeout=1.0)
+            logger.debug("BASIC ETHERCAT: checking %d slaves on slot 0", num_slaves)
+            for pos in range(max(0, num_slaves)):
+                slave_axis = self._execute_ethercat_vr_function(5, f"0, {pos}", timeout=1.0)
+                logger.debug("BASIC ETHERCAT: slave at position %d has axis %d (expected %d)", pos, slave_axis, self.axis)
+                if slave_axis == self.axis:
+                    logger.info("BASIC ETHERCAT matched axis %d to slave position %d", self.axis, pos)
+                    add(pos + 1, f"slave position {pos} (via BASIC ETHERCAT)")
+                    slave_address = self._execute_ethercat_vr_function(4, f"0, {pos}", timeout=1.0)
+                    if slave_address > 0:
+                        add(slave_address, f"slave address {slave_address} (via BASIC ETHERCAT)")
+        except Exception as exc:
+            logger.debug("Could not resolve EtherCAT device via ETHERCAT BASIC fallback for axis %d: %s", self.axis, exc)
+
+        # 3. Axis SLOT_NUMBER parameter (configured station address)
         try:
             get_slot_number = getattr(self.connection, "GetAxisParameter_SLOT_NUMBER", None)
             if get_slot_number is not None:
                 slot_number = int(get_slot_number(self.axis))
                 if slot_number > 0:
-                    logger.debug(
-                        "Drive scope axis %d fallback SLOT_NUMBER/device address %d",
-                        self.axis, slot_number,
-                    )
+                    logger.info("Axis SLOT_NUMBER parameter read: %d", slot_number)
                     add(slot_number, "axis SLOT_NUMBER")
         except Exception as exc:
-            logger.debug("Could not read SLOT_NUMBER for axis %d: %s", self.axis, exc)
+            logger.warning("Could not read SLOT_NUMBER for axis %d: %s", self.axis, exc)
 
-        try:
-            check_slaves = getattr(self.connection, "Ethercat_CheckNumberOfSlaves", None)
-            get_slave_axis = getattr(self.connection, "Ethercat_GetSlaveAxis", None)
-            if check_slaves is not None and get_slave_axis is not None:
-                num_slaves = int(check_slaves(0))
-                for pos in range(max(0, num_slaves)):
-                    if int(get_slave_axis(0, pos)) != self.axis:
-                        continue
-                    logger.debug(
-                        "Drive scope axis %d found at EtherCAT slave position %d; "
-                        "adding BASIC device candidate %d",
-                        self.axis, pos, pos + 1,
-                    )
-                    add(pos + 1, f"slave position {pos}")
-        except Exception as exc:
-            logger.debug("Could not resolve EtherCAT device for axis %d: %s", self.axis, exc)
+        # 4. Standard fallback: axis + 1
+        fallback = self.axis + 1
+        logger.info("Adding standard fallback candidate: %d", fallback)
+        add(fallback, "axis+1 reference")
 
-        logger.debug("Drive scope FIFO device candidates for axis %d: %s", self.axis, candidates)
+        logger.info("Drive scope FIFO device candidates for axis %d: %s", self.axis, candidates)
         return candidates
 
-    def _execute_ethercat_function(self, args: str, timeout: float = 2.0) -> int:
-        """Execute a Trio BASIC ETHERCAT(...) function and return its result.
+    def _execute_ethercat_vr_function(self, func_num: int, extra_args: str = "", timeout: float = 1.0) -> int:
+        """Execute an ETHERCAT function that writes its output to a VR parameter.
 
-        Execute() alone cannot report the function return value.  Assigning the
-        function to a scratch VR gives us a numeric completion/error/progress
-        code while still using the same BASIC command surface as the reference
-        C# implementation.
+        Assigning/writing the function value to a scratch VR gives us a numeric
+        completion/error/progress code while still using the same BASIC command
+        surface as the reference C# implementation.
         """
         vr = self.vr_scratch
         self.connection.SetVrValue(vr, _VR_SENTINEL)
-        self.connection.Execute(f"VR({vr})=ETHERCAT({args})")
+        if extra_args:
+            cmd = f"ETHERCAT({func_num}, {extra_args}, {vr})"
+        else:
+            cmd = f"ETHERCAT({func_num}, {vr})"
+        logger.debug("Executing BASIC command: %s", cmd)
+        self.connection.Execute(cmd)
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             val = self.connection.GetVrValue(vr)
             if val != _VR_SENTINEL:
+                logger.debug("BASIC command %s returned VR(%d)=%d", cmd, vr, int(val))
                 return int(val)
             time.sleep(_SDO_POLL_MS / 1000.0)
 
-        raise TimeoutError(f"ETHERCAT({args}) did not return a value")
+        raise TimeoutError(f"{cmd} did not return a value")
 
     def _wait_for_fifo_transfer(
         self,
         progress_callback: Optional[Callable[[float, str], None]] = None,
     ) -> None:
         """Wait until the controller-side EC_COE_FIFO transfer is complete."""
-        deadline = time.monotonic() + _FIFO_TIMEOUT
-        saw_progress = False
-
-        while time.monotonic() < deadline:
-            try:
-                progress = self._execute_ethercat_function("$142", timeout=0.5)
-            except Exception as exc:
-                logger.debug("Could not read EC_COE_FIFO progress: %s", exc)
-                if not saw_progress:
-                    time.sleep(2.0)
-                    return
-                break
-
-            saw_progress = True
-            if progress >= 100:
-                if progress_callback:
-                    progress_callback(0.3, "FIFO transfer complete")
-                return
-
-            if progress_callback:
-                pct = max(0, min(99, progress))
-                progress_callback(0.1 + pct * 0.002, f"FIFO transfer: {pct}%")
-            time.sleep(0.1)
-
-        raise TimeoutError("Timed out waiting for EC_COE_FIFO transfer to complete")
+        # ETHERCAT($161, ...) SDO transfers do not report progress via $142.
+        # We sleep for a fixed duration of 2.0 seconds to allow the controller to
+        # copy the SDO FIFO to the local file system (matching reference implementation).
+        logger.info("Waiting 2.0 seconds for SDO FIFO transfer to complete on the controller...")
+        if progress_callback:
+            progress_callback(0.15, "FIFO transfer in progress...")
+        time.sleep(2.0)
+        if progress_callback:
+            progress_callback(0.3, "FIFO transfer complete")
 
     def _start_fifo_transfer(
         self,
@@ -605,13 +735,15 @@ class DriveScopeEngine:
 
         for device, source in self._candidate_fifo_devices():
             self._delete_remote_fifo_file()
-            ethercat_args = f"$161, 0, {device}, $3687, 0, {EXPECTED_CAPTURE_BYTES}"
-            cmd = f"ethercat({ethercat_args})"
+            if self.drive_model in ("DX5", "DX1"):
+                cmd = f'ETHERCAT($141, 0, {device}, "C", "EC_COE_FIFO", "ASCOPE_data0", -1)'
+            else:
+                ethercat_args = f"$161, 0, {device}, $3687, 0, {EXPECTED_CAPTURE_BYTES}"
+                cmd = f"ethercat({ethercat_args})"
             logger.debug("FIFO transfer candidate from %s: %s", source, cmd)
 
             try:
-                # Match the C# reference: start $161 as a BASIC command.  The
-                # command's boolean return is not the transferred data status.
+                # Match the C# reference: start as a BASIC command.
                 self.connection.Execute(cmd)
             except Exception as exc:
                 errors.append(f"{device} ({source}): {exc}")
@@ -627,7 +759,11 @@ class DriveScopeEngine:
                 progress_callback(0.1, "Waiting for FIFO transfer...")
 
             try:
-                self._wait_for_fifo_transfer(progress_callback)
+                if self.drive_model in ("DX5", "DX1"):
+                    logger.info("Waiting 5.0 seconds for SDO FIFO file transfer on controller...")
+                    time.sleep(5.0)
+                else:
+                    self._wait_for_fifo_transfer(progress_callback)
             except Exception as exc:
                 errors.append(f"{device} ({source}): wait failed: {exc}")
                 logger.debug("FIFO transfer candidate failed: %s", errors[-1])
@@ -840,25 +976,155 @@ class DriveScopeEngine:
             raise FileNotFoundError(f"Downloaded FIFO file not found: {raw_file_path}")
 
         raw_bytes = raw_file_path.read_bytes()
-        capture_bytes = self._select_capture_bytes(raw_bytes)
-        file_path.write_bytes(capture_bytes)
-        elapsed = time.monotonic() - read_start
+        if self.drive_model in ("DX5", "DX1"):
+            # No select/strip for DX5/DX1 binary file, run the converter tool on raw bytes
+            file_path.write_bytes(raw_bytes)
+            if progress_callback:
+                progress_callback(0.9, "Running CSV converter...")
+            result = self._convert_and_parse_dx5_data(str(file_path))
+            if progress_callback:
+                progress_callback(1.0, "Data download and parsing complete")
+            return result
+        else:
+            capture_bytes = self._select_capture_bytes(raw_bytes)
+            file_path.write_bytes(capture_bytes)
+            elapsed = time.monotonic() - read_start
 
-        raw_ranges = self._nonzero_byte_ranges(raw_bytes)
-        capture_ranges = self._nonzero_byte_ranges(capture_bytes)
-        logger.info(
-            "FIFO raw download complete: %d bytes in %.1f s, nonzero ranges=%s",
-            len(raw_bytes), elapsed, raw_ranges[:8],
-        )
-        logger.info(
-            "Composed %s: %d bytes, nonzero ranges=%s",
-            file_path.name, len(capture_bytes), capture_ranges[:8],
-        )
+            raw_ranges = self._nonzero_byte_ranges(raw_bytes)
+            capture_ranges = self._nonzero_byte_ranges(capture_bytes)
+            logger.info(
+                "FIFO raw download complete: %d bytes in %.1f s, nonzero ranges=%s",
+                len(raw_bytes), elapsed, raw_ranges[:8],
+            )
+            logger.info(
+                "Composed %s: %d bytes, nonzero ranges=%s",
+                file_path.name, len(capture_bytes), capture_ranges[:8],
+            )
 
-        if progress_callback:
-            progress_callback(1.0, "Data download complete")
+            if progress_callback:
+                progress_callback(1.0, "Data download complete")
 
-        return self._parse_raw_bytes(capture_bytes)
+            return self._parse_raw_bytes(capture_bytes)
+
+    def _convert_and_parse_dx5_data(self, local_bin_path: str) -> Dict[str, Any]:
+        """Convert DX5/DX1 binary scope data to CSV using AScope2DataDx5.exe, and parse it."""
+        import subprocess
+        import sys
+
+        bin_dir = pathlib.Path(local_bin_path).parent.resolve()
+        csv_path = bin_dir / "data.csv"
+
+        if csv_path.exists():
+            try:
+                csv_path.unlink()
+            except OSError:
+                pass
+
+        exe_name = "AScope2DataDx5.exe"
+        exe_candidates = [
+            pathlib.Path.cwd() / exe_name,
+            pathlib.Path(__file__).parent / exe_name,
+            pathlib.Path(__file__).parent.parent / exe_name,
+            pathlib.Path(sys.argv[0]).parent / exe_name,
+        ]
+
+        exe_path = None
+        for cand in exe_candidates:
+            if cand.exists():
+                exe_path = cand
+                break
+
+        if exe_path is None:
+            exe_path = pathlib.Path(exe_name)
+
+        logger.info("Running converter: %s with args: %s data.csv", exe_path, local_bin_path)
+
+        try:
+            res = subprocess.run(
+                [str(exe_path), str(pathlib.Path(local_bin_path).resolve()), "data.csv"],
+                cwd=str(bin_dir),
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            logger.info("Converter stdout: %s", res.stdout)
+        except Exception as e:
+            logger.error("Failed to run AScope2DataDx5.exe converter: %s", e)
+            raise FileNotFoundError(
+                f"Could not convert binary data to CSV. Please ensure {exe_name} is in "
+                f"the application directory. Error: {e}"
+            ) from e
+
+        if not csv_path.exists():
+            raise FileNotFoundError(f"Converter failed to output data.csv at {csv_path}")
+
+        return self._parse_csv_file(str(csv_path))
+
+    def _parse_csv_file(self, csv_path: str) -> Dict[str, Any]:
+        """Parse the CSV file outputted by the converter tool."""
+        logger.info("Parsing CSV file: %s", csv_path)
+
+        times = []
+        col1 = []
+        col2 = []
+        col3 = []
+        col4 = []
+
+        factor = 125e-6 if self.drive_model == "DX5" else 62.5e-6
+        sample_period = self.sample_time * factor
+
+        with open(csv_path, "r", encoding="utf-8") as f:
+            line_num = 0
+            for line in f:
+                line_num += 1
+                if line_num <= 8:
+                    continue
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                fields = stripped.split("\t")
+                if len(fields) < 5:
+                    continue
+                try:
+                    v1 = float(fields[1])
+                    v2 = float(fields[2])
+                    v3 = float(fields[3])
+                    v4 = float(fields[4])
+
+                    j = len(times)
+                    times.append(j * sample_period)
+                    col1.append(v1)
+                    col2.append(v2)
+                    col3.append(v3)
+                    col4.append(v4)
+                except ValueError:
+                    continue
+
+        num_samples = len(times)
+        logger.info("Parsed %d samples from CSV", num_samples)
+
+        result = {
+            'time': np.array(times, dtype=np.float64),
+            'sample_period': sample_period,
+            'num_samples': num_samples,
+            'params': {},
+        }
+
+        temp_cols = [col1, col2, col3, col4]
+        for idx in range(min(len(temp_cols), self.active_channels)):
+            addr = self.channel_addresses[idx]
+            if addr == 0:
+                continue
+
+            if addr in DRIVE_VARIABLES:
+                name, desc, unit, dtype_code, dtype_str = DRIVE_VARIABLES[addr]
+                display_name = f"{name} (0x{addr:04X})"
+            else:
+                display_name = f"Ch{idx+1} (0x{addr:04X})"
+
+            result['params'][display_name] = np.array(temp_cols[idx], dtype=np.float64)
+
+        return result
 
     def _parse_raw_bytes(self, raw_bytes: bytes) -> Dict[str, Any]:
         """Parse binary data downloaded via EC_COE_FIFO.

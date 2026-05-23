@@ -1,0 +1,592 @@
+2026-05-23 12:56:14,728 [INFO] __main__ (scope_app.py:91): =========================================
+2026-05-23 12:56:14,728 [INFO] __main__ (scope_app.py:92): TrioScope app starting. Version: 0.0.2
+2026-05-23 12:56:14,728 [INFO] __main__ (scope_app.py:93): Current working directory: E:\SynologySynchro\Projects\TrioScope
+2026-05-23 12:56:14,728 [INFO] __main__ (scope_app.py:94): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
+2026-05-23 12:56:14,728 [INFO] __main__ (scope_app.py:95): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
+2026-05-23 12:56:14,728 [INFO] __main__ (scope_app.py:96): =========================================
+2026-05-23 12:56:17,372 [INFO] scope.scope_engine (scope_engine.py:197): Servo period: 1000 μs (1.000 ms)
+2026-05-23 12:56:17,374 [INFO] scope.scope_engine (scope_engine.py:215): TABLE size: 512000
+2026-05-23 12:56:20,295 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:300): Drive scope axis 0 reports DRIVE_TYPE=0; cannot confirm drive protocol compatibility
+2026-05-23 12:56:20,367 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[1] = 0
+2026-05-23 12:56:20,405 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[2] = 0
+2026-05-23 12:56:20,438 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[3] = 0
+2026-05-23 12:56:20,467 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[4] = 0
+2026-05-23 12:56:20,503 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[5] = 0
+2026-05-23 12:56:20,538 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[6] = 1
+2026-05-23 12:56:20,573 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[7] = 8
+2026-05-23 12:56:20,600 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[8] = 3856
+2026-05-23 12:56:20,629 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[9] = 3856
+2026-05-23 12:56:20,663 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[10] = 3856
+2026-05-23 12:56:20,693 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[11] = 0
+2026-05-23 12:56:20,726 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[12] = 0
+2026-05-23 12:56:20,753 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[13] = 0
+2026-05-23 12:56:20,783 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[14] = 0
+2026-05-23 12:56:20,817 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[15] = 0
+2026-05-23 12:56:20,996 [INFO] scope.drive_scope_engine (drive_scope_engine.py:432): Drive scope setup readback: trigger=0, dtype=1, sample=8, channels=['0x0F10', '0x0F10', '0x0F10', '0x0000', '0x0000', '0x0000', '0x0000', '0x0000']
+2026-05-23 12:56:20,996 [INFO] scope.drive_scope_engine (drive_scope_engine.py:456): Drive scope configured: 3 ch, sample_time=8 (1000.0 μs), trigger=Free Run (no trigger), duration=1.000 s
+2026-05-23 12:56:20,996 [INFO] __main__ (scope_app.py:2106): Drive scope: {'active_channels': 3, 'sample_time_units': 8, 'sample_period_us': 1000, 'sample_period_ms': 1.0, 'capture_duration_sec': 1.0, 'samples_per_channel': 1000, 'trigger_mode': 'Free Run (no trigger)', 'channel_addresses': ['0x0F10', '0x0F10', '0x0F10']}
+2026-05-23 12:56:21,077 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x0000 status=0
+2026-05-23 12:56:21,077 [INFO] scope.drive_scope_engine (drive_scope_engine.py:478): Drive scope status after stop/re-arm: 0
+2026-05-23 12:56:21,094 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,094 [INFO] scope.drive_scope_engine (drive_scope_engine.py:504): Drive scope capture started; start status sequence=[0, 1], saw_sampling=True
+2026-05-23 12:56:21,094 [INFO] __main__ (scope_app.py:2143): Drive scope start already observed sampling; status sequence=[0, 1]
+2026-05-23 12:56:21,157 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,221 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,284 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,348 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,410 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,474 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,537 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,600 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,661 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,725 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,788 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,853 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,915 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:21,976 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:22,041 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:56:22,104 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x8000 status=2
+2026-05-23 12:56:22,104 [INFO] scope.drive_scope_engine (drive_scope_engine.py:927): Reading drive scope data via EC_COE_FIFO transfer...
+2026-05-23 12:56:22,110 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:639): API: checking 9 slaves on slot 0
+2026-05-23 12:56:22,114 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 0 has axis -1 (expected 0)
+2026-05-23 12:56:22,118 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 1 has axis -1 (expected 0)
+2026-05-23 12:56:22,122 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 2 has axis -1 (expected 0)
+2026-05-23 12:56:22,125 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 3 has axis -1 (expected 0)
+2026-05-23 12:56:22,128 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 4 has axis -1 (expected 0)
+2026-05-23 12:56:22,133 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 5 has axis -1 (expected 0)
+2026-05-23 12:56:22,137 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 6 has axis 0 (expected 0)
+2026-05-23 12:56:22,137 [INFO] scope.drive_scope_engine (drive_scope_engine.py:644): API matched axis 0 to slave position 6
+2026-05-23 12:56:22,137 [INFO] scope.drive_scope_engine (drive_scope_engine.py:629): Adding device candidate 7 (slave position 6) for axis 0
+2026-05-23 12:56:22,142 [INFO] scope.drive_scope_engine (drive_scope_engine.py:629): Adding device candidate 1 (slave address 1) for axis 0
+2026-05-23 12:56:22,147 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 7 has axis 1 (expected 0)
+2026-05-23 12:56:22,151 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 8 has axis 2 (expected 0)
+2026-05-23 12:56:22,153 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(3, 0, 901)
+2026-05-23 12:56:22,160 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(3, 0, 901) returned VR(901)=9
+2026-05-23 12:56:22,160 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:656): BASIC ETHERCAT: checking 9 slaves on slot 0
+2026-05-23 12:56:22,162 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 0, 901)
+2026-05-23 12:56:22,167 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 0, 901) returned VR(901)=-1
+2026-05-23 12:56:22,167 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 0 has axis -1 (expected 0)
+2026-05-23 12:56:22,169 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 1, 901)
+2026-05-23 12:56:22,176 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 1, 901) returned VR(901)=-1
+2026-05-23 12:56:22,176 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 1 has axis -1 (expected 0)
+2026-05-23 12:56:22,178 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 2, 901)
+2026-05-23 12:56:22,183 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 2, 901) returned VR(901)=-1
+2026-05-23 12:56:22,183 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 2 has axis -1 (expected 0)
+2026-05-23 12:56:22,184 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 3, 901)
+2026-05-23 12:56:22,191 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 3, 901) returned VR(901)=-1
+2026-05-23 12:56:22,191 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 3 has axis -1 (expected 0)
+2026-05-23 12:56:22,193 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 4, 901)
+2026-05-23 12:56:22,200 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 4, 901) returned VR(901)=-1
+2026-05-23 12:56:22,200 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 4 has axis -1 (expected 0)
+2026-05-23 12:56:22,201 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 5, 901)
+2026-05-23 12:56:22,208 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 5, 901) returned VR(901)=-1
+2026-05-23 12:56:22,208 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 5 has axis -1 (expected 0)
+2026-05-23 12:56:22,210 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 6, 901)
+2026-05-23 12:56:22,217 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 6, 901) returned VR(901)=0
+2026-05-23 12:56:22,217 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 6 has axis 0 (expected 0)
+2026-05-23 12:56:22,217 [INFO] scope.drive_scope_engine (drive_scope_engine.py:661): BASIC ETHERCAT matched axis 0 to slave position 6
+2026-05-23 12:56:22,219 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(4, 0, 6, 901)
+2026-05-23 12:56:22,224 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(4, 0, 6, 901) returned VR(901)=1
+2026-05-23 12:56:22,226 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 7, 901)
+2026-05-23 12:56:22,232 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 7, 901) returned VR(901)=1
+2026-05-23 12:56:22,232 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 7 has axis 1 (expected 0)
+2026-05-23 12:56:22,234 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 8, 901)
+2026-05-23 12:56:22,241 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 8, 901) returned VR(901)=2
+2026-05-23 12:56:22,241 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 8 has axis 2 (expected 0)
+2026-05-23 12:56:22,243 [INFO] scope.drive_scope_engine (drive_scope_engine.py:682): Adding standard fallback candidate: 1
+2026-05-23 12:56:22,243 [INFO] scope.drive_scope_engine (drive_scope_engine.py:685): Drive scope FIFO device candidates for axis 0: [(7, 'slave position 6'), (1, 'slave address 1')]
+2026-05-23 12:56:22,245 [INFO] scope.drive_scope_engine (drive_scope_engine.py:795): Controller EC_COE_FIFO before cleanup: FileExists=-3
+2026-05-23 12:56:22,247 [INFO] scope.drive_scope_engine (drive_scope_engine.py:801): Deleted previous controller EC_COE_FIFO file
+2026-05-23 12:56:22,247 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:743): FIFO transfer candidate from slave position 6: ethercat($161, 0, 7, $3687, 0, 16000)
+2026-05-23 12:56:22,249 [INFO] scope.drive_scope_engine (drive_scope_engine.py:753): EC_COE_FIFO transfer command issued using device 7 (slave position 6)
+2026-05-23 12:56:22,249 [INFO] scope.drive_scope_engine (drive_scope_engine.py:722): Waiting 2.0 seconds for SDO FIFO transfer to complete on the controller...
+2026-05-23 12:56:24,253 [INFO] scope.drive_scope_engine (drive_scope_engine.py:774): Controller EC_COE_FIFO after transfer candidate 7 (slave position 6): FileExists=0, CRC=0x0000
+2026-05-23 12:56:24,255 [INFO] scope.drive_scope_engine (drive_scope_engine.py:795): Controller EC_COE_FIFO before cleanup: FileExists=0
+2026-05-23 12:56:24,257 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:804): Could not delete previous controller EC_COE_FIFO file: ('Program not found', <ErrorCode.ControllerError_PROGRAM_NOT_FOUND: 17179869211>)
+2026-05-23 12:56:24,312 [INFO] scope.drive_scope_engine (drive_scope_engine.py:811): Controller EC_COE_FIFO after cleanup: FileExists=0
+2026-05-23 12:56:24,312 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:743): FIFO transfer candidate from slave address 1: ethercat($161, 0, 1, $3687, 0, 16000)
+2026-05-23 12:56:24,314 [INFO] scope.drive_scope_engine (drive_scope_engine.py:753): EC_COE_FIFO transfer command issued using device 1 (slave address 1)
+2026-05-23 12:56:24,314 [INFO] scope.drive_scope_engine (drive_scope_engine.py:722): Waiting 2.0 seconds for SDO FIFO transfer to complete on the controller...
+2026-05-23 12:56:26,320 [INFO] scope.drive_scope_engine (drive_scope_engine.py:774): Controller EC_COE_FIFO after transfer candidate 1 (slave address 1): FileExists=-3, CRC=0x967B
+2026-05-23 12:56:26,325 [INFO] scope.drive_scope_engine (drive_scope_engine.py:941): Controller EC_COE_FIFO before download: FileExists=-3, CRC=0x967B
+2026-05-23 12:56:26,329 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=0
+2026-05-23 12:56:26,388 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=256
+2026-05-23 12:56:26,388 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=512
+2026-05-23 12:56:26,388 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=768
+2026-05-23 12:56:26,388 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1024
+2026-05-23 12:56:26,388 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1280
+2026-05-23 12:56:26,388 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1460
+2026-05-23 12:56:26,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1716
+2026-05-23 12:56:26,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1972
+2026-05-23 12:56:26,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=2228
+2026-05-23 12:56:26,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=2484
+2026-05-23 12:56:26,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=2740
+2026-05-23 12:56:26,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=2996
+2026-05-23 12:56:26,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=3252
+2026-05-23 12:56:26,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=3508
+2026-05-23 12:56:26,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=3764
+2026-05-23 12:56:26,437 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4020
+2026-05-23 12:56:26,437 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4096
+2026-05-23 12:56:26,443 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4352
+2026-05-23 12:56:26,443 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4608
+2026-05-23 12:56:26,443 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4864
+2026-05-23 12:56:26,443 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=5120
+2026-05-23 12:56:26,443 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=5376
+2026-05-23 12:56:26,443 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=5632
+2026-05-23 12:56:26,443 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=5888
+2026-05-23 12:56:26,443 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=6137
+2026-05-23 12:56:26,444 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=6376
+2026-05-23 12:56:26,445 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=6616
+2026-05-23 12:56:26,445 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=6872
+2026-05-23 12:56:26,445 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=7128
+2026-05-23 12:56:26,446 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=7384
+2026-05-23 12:56:26,447 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=7640
+2026-05-23 12:56:26,447 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=7896
+2026-05-23 12:56:26,447 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=8151
+2026-05-23 12:56:26,448 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=8407
+2026-05-23 12:56:26,449 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=8663
+2026-05-23 12:56:26,449 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=8919
+2026-05-23 12:56:26,449 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=9175
+2026-05-23 12:56:26,450 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=9431
+2026-05-23 12:56:26,451 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=9687
+2026-05-23 12:56:26,451 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=9943
+2026-05-23 12:56:26,451 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=10198
+2026-05-23 12:56:26,452 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=10454
+2026-05-23 12:56:26,452 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=10710
+2026-05-23 12:56:26,452 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=10966
+2026-05-23 12:56:26,452 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=11222
+2026-05-23 12:56:26,453 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=11478
+2026-05-23 12:56:26,453 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=11734
+2026-05-23 12:56:26,453 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=11990
+2026-05-23 12:56:26,453 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=12003
+2026-05-23 12:56:26,454 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=12259
+2026-05-23 12:56:26,454 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=12515
+2026-05-23 12:56:26,454 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=12771
+2026-05-23 12:56:26,454 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=12777
+2026-05-23 12:56:26,455 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=13033
+2026-05-23 12:56:26,456 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=13289
+2026-05-23 12:56:26,456 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=13545
+2026-05-23 12:56:26,456 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=13557
+2026-05-23 12:56:26,456 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=13813
+2026-05-23 12:56:26,457 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=14069
+2026-05-23 12:56:26,457 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=14325
+2026-05-23 12:56:26,457 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=14336
+2026-05-23 12:56:26,457 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=14592
+2026-05-23 12:56:26,457 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=14848
+2026-05-23 12:56:26,458 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15104
+2026-05-23 12:56:26,458 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15114
+2026-05-23 12:56:26,459 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15370
+2026-05-23 12:56:26,459 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15626
+2026-05-23 12:56:26,459 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15882
+2026-05-23 12:56:26,459 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15894
+2026-05-23 12:56:26,461 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=16150
+2026-05-23 12:56:26,462 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=16406
+2026-05-23 12:56:26,462 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=16662
+2026-05-23 12:56:26,462 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=16918
+2026-05-23 12:56:26,463 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=17174
+2026-05-23 12:56:26,463 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=17430
+2026-05-23 12:56:26,463 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=17686
+2026-05-23 12:56:26,463 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=17941
+2026-05-23 12:56:26,464 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=18197
+2026-05-23 12:56:26,465 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=18453
+2026-05-23 12:56:26,465 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=18709
+2026-05-23 12:56:26,465 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=18721
+2026-05-23 12:56:26,465 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=18977
+2026-05-23 12:56:26,466 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=19233
+2026-05-23 12:56:26,466 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=19489
+2026-05-23 12:56:26,466 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=19501
+2026-05-23 12:56:26,467 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=19757
+2026-05-23 12:56:26,467 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20013
+2026-05-23 12:56:26,467 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20269
+2026-05-23 12:56:26,467 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20282
+2026-05-23 12:56:26,469 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20538
+2026-05-23 12:56:26,469 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20794
+2026-05-23 12:56:26,470 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21050
+2026-05-23 12:56:26,470 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21062
+2026-05-23 12:56:26,471 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21318
+2026-05-23 12:56:26,472 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21574
+2026-05-23 12:56:26,472 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21830
+2026-05-23 12:56:26,472 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21842
+2026-05-23 12:56:26,472 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22098
+2026-05-23 12:56:26,473 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22354
+2026-05-23 12:56:26,473 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22610
+2026-05-23 12:56:26,473 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22622
+2026-05-23 12:56:26,474 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22878
+2026-05-23 12:56:26,474 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23134
+2026-05-23 12:56:26,474 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23390
+2026-05-23 12:56:26,474 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23391
+2026-05-23 12:56:26,474 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23647
+2026-05-23 12:56:26,475 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23903
+2026-05-23 12:56:26,475 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24159
+2026-05-23 12:56:26,475 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24164
+2026-05-23 12:56:26,476 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24420
+2026-05-23 12:56:26,477 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24676
+2026-05-23 12:56:26,477 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24932
+2026-05-23 12:56:26,477 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24941
+2026-05-23 12:56:26,478 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25197
+2026-05-23 12:56:26,478 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25453
+2026-05-23 12:56:26,479 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25709
+2026-05-23 12:56:26,479 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25715
+2026-05-23 12:56:26,480 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25971
+2026-05-23 12:56:26,480 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26227
+2026-05-23 12:56:26,480 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26483
+2026-05-23 12:56:26,480 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26494
+2026-05-23 12:56:26,481 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26750
+2026-05-23 12:56:26,481 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=27006
+2026-05-23 12:56:26,482 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=27262
+2026-05-23 12:56:26,482 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=27518
+2026-05-23 12:56:26,482 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=27774
+2026-05-23 12:56:26,482 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28030
+2026-05-23 12:56:26,482 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28055
+2026-05-23 12:56:26,483 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28311
+2026-05-23 12:56:26,483 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28567
+2026-05-23 12:56:26,483 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28823
+2026-05-23 12:56:26,483 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28835
+2026-05-23 12:56:26,485 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29091
+2026-05-23 12:56:26,485 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29347
+2026-05-23 12:56:26,485 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29603
+2026-05-23 12:56:26,485 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29615
+2026-05-23 12:56:26,486 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29871
+2026-05-23 12:56:26,487 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30127
+2026-05-23 12:56:26,487 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30383
+2026-05-23 12:56:26,487 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30395
+2026-05-23 12:56:26,487 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30651
+2026-05-23 12:56:26,487 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30907
+2026-05-23 12:56:26,488 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31163
+2026-05-23 12:56:26,488 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31175
+2026-05-23 12:56:26,490 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31431
+2026-05-23 12:56:26,490 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31687
+2026-05-23 12:56:26,490 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31943
+2026-05-23 12:56:26,490 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31955
+2026-05-23 12:56:26,490 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=32211
+2026-05-23 12:56:26,491 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=32467
+2026-05-23 12:56:26,491 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=32723
+2026-05-23 12:56:26,491 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=32979
+2026-05-23 12:56:26,491 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=33024
+2026-05-23 12:56:26,492 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=0
+2026-05-23 12:56:26,493 [INFO] scope.drive_scope_engine (drive_scope_engine.py:857): FIFO file contains 1 chunk(s), using newest chunk at byte 0
+2026-05-23 12:56:26,493 [INFO] scope.drive_scope_engine (drive_scope_engine.py:874): Selected FIFO payload window: raw byte 256, chunk offset 256, length 16000
+2026-05-23 12:56:26,496 [INFO] scope.drive_scope_engine (drive_scope_engine.py:995): FIFO raw download complete: 33024 bytes in 4.4 s, nonzero ranges=[(6000, 6591)]
+2026-05-23 12:56:26,496 [INFO] scope.drive_scope_engine (drive_scope_engine.py:999): Composed drive_scope.bin: 16000 bytes, nonzero ranges=[(5744, 6335)]
+2026-05-23 12:56:26,496 [INFO] scope.drive_scope_engine (drive_scope_engine.py:1140): Parsing 16000 bytes (8000 words), 3 active channels, stride=8 words/sample
+2026-05-23 12:56:26,496 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:1213): Ch0 SPD_FB_RPM (0x0F10): min=-31831.0 max=30239.0 mean=-118.6
+2026-05-23 12:56:26,497 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:1213): Ch1 SPD_FB_RPM (0x0F10): min=-31831.0 max=30464.0 mean=56.9
+2026-05-23 12:56:26,497 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:1213): Ch2 SPD_FB_RPM (0x0F10): min=-30039.0 max=30280.0 mean=39.5
+2026-05-23 12:57:04,842 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:300): Drive scope axis 2 reports DRIVE_TYPE=0; cannot confirm drive protocol compatibility
+2026-05-23 12:57:04,907 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[1] = 0
+2026-05-23 12:57:04,943 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[2] = 0
+2026-05-23 12:57:04,982 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[3] = 0
+2026-05-23 12:57:05,015 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[4] = 0
+2026-05-23 12:57:05,044 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[5] = 0
+2026-05-23 12:57:05,079 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[6] = 1
+2026-05-23 12:57:05,115 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[7] = 8
+2026-05-23 12:57:05,152 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[8] = 3856
+2026-05-23 12:57:05,187 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[9] = 3856
+2026-05-23 12:57:05,223 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[10] = 3856
+2026-05-23 12:57:05,259 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[11] = 0
+2026-05-23 12:57:05,294 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[12] = 0
+2026-05-23 12:57:05,330 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[13] = 0
+2026-05-23 12:57:05,366 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[14] = 0
+2026-05-23 12:57:05,402 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[15] = 0
+2026-05-23 12:57:05,566 [INFO] scope.drive_scope_engine (drive_scope_engine.py:432): Drive scope setup readback: trigger=0, dtype=1, sample=8, channels=['0x0F10', '0x0F10', '0x0F10', '0x0000', '0x0000', '0x0000', '0x0000', '0x0000']
+2026-05-23 12:57:05,566 [INFO] scope.drive_scope_engine (drive_scope_engine.py:456): Drive scope configured: 3 ch, sample_time=8 (1000.0 μs), trigger=Free Run (no trigger), duration=1.000 s
+2026-05-23 12:57:05,566 [INFO] __main__ (scope_app.py:2106): Drive scope: {'active_channels': 3, 'sample_time_units': 8, 'sample_period_us': 1000, 'sample_period_ms': 1.0, 'capture_duration_sec': 1.0, 'samples_per_channel': 1000, 'trigger_mode': 'Free Run (no trigger)', 'channel_addresses': ['0x0F10', '0x0F10', '0x0F10']}
+2026-05-23 12:57:05,645 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x0000 status=0
+2026-05-23 12:57:05,645 [INFO] scope.drive_scope_engine (drive_scope_engine.py:478): Drive scope status after stop/re-arm: 0
+2026-05-23 12:57:05,664 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:05,664 [INFO] scope.drive_scope_engine (drive_scope_engine.py:504): Drive scope capture started; start status sequence=[0, 1], saw_sampling=True
+2026-05-23 12:57:05,664 [INFO] __main__ (scope_app.py:2143): Drive scope start already observed sampling; status sequence=[0, 1]
+2026-05-23 12:57:05,727 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:05,791 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:05,852 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:05,913 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:05,976 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,041 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,102 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,168 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,239 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,304 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,372 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,436 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,498 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,561 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,628 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x4000 status=1
+2026-05-23 12:57:06,699 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:552): Drive scope status raw=0x8000 status=2
+2026-05-23 12:57:06,699 [INFO] scope.drive_scope_engine (drive_scope_engine.py:927): Reading drive scope data via EC_COE_FIFO transfer...
+2026-05-23 12:57:06,702 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:639): API: checking 9 slaves on slot 0
+2026-05-23 12:57:06,706 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 0 has axis -1 (expected 2)
+2026-05-23 12:57:06,711 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 1 has axis -1 (expected 2)
+2026-05-23 12:57:06,715 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 2 has axis -1 (expected 2)
+2026-05-23 12:57:06,720 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 3 has axis -1 (expected 2)
+2026-05-23 12:57:06,724 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 4 has axis -1 (expected 2)
+2026-05-23 12:57:06,729 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 5 has axis -1 (expected 2)
+2026-05-23 12:57:06,734 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 6 has axis 0 (expected 2)
+2026-05-23 12:57:06,739 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 7 has axis 1 (expected 2)
+2026-05-23 12:57:06,744 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:642): API: slave at position 8 has axis 2 (expected 2)
+2026-05-23 12:57:06,744 [INFO] scope.drive_scope_engine (drive_scope_engine.py:644): API matched axis 2 to slave position 8
+2026-05-23 12:57:06,744 [INFO] scope.drive_scope_engine (drive_scope_engine.py:629): Adding device candidate 9 (slave position 8) for axis 2
+2026-05-23 12:57:06,748 [INFO] scope.drive_scope_engine (drive_scope_engine.py:629): Adding device candidate 3 (slave address 3) for axis 2
+2026-05-23 12:57:06,749 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(3, 0, 901)
+2026-05-23 12:57:06,755 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(3, 0, 901) returned VR(901)=9
+2026-05-23 12:57:06,755 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:656): BASIC ETHERCAT: checking 9 slaves on slot 0
+2026-05-23 12:57:06,756 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 0, 901)
+2026-05-23 12:57:06,762 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 0, 901) returned VR(901)=-1
+2026-05-23 12:57:06,762 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 0 has axis -1 (expected 2)
+2026-05-23 12:57:06,764 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 1, 901)
+2026-05-23 12:57:06,771 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 1, 901) returned VR(901)=-1
+2026-05-23 12:57:06,771 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 1 has axis -1 (expected 2)
+2026-05-23 12:57:06,773 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 2, 901)
+2026-05-23 12:57:06,780 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 2, 901) returned VR(901)=-1
+2026-05-23 12:57:06,780 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 2 has axis -1 (expected 2)
+2026-05-23 12:57:06,781 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 3, 901)
+2026-05-23 12:57:06,788 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 3, 901) returned VR(901)=-1
+2026-05-23 12:57:06,788 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 3 has axis -1 (expected 2)
+2026-05-23 12:57:06,790 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 4, 901)
+2026-05-23 12:57:06,797 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 4, 901) returned VR(901)=-1
+2026-05-23 12:57:06,797 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 4 has axis -1 (expected 2)
+2026-05-23 12:57:06,798 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 5, 901)
+2026-05-23 12:57:06,804 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 5, 901) returned VR(901)=-1
+2026-05-23 12:57:06,804 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 5 has axis -1 (expected 2)
+2026-05-23 12:57:06,805 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 6, 901)
+2026-05-23 12:57:06,812 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 6, 901) returned VR(901)=0
+2026-05-23 12:57:06,812 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 6 has axis 0 (expected 2)
+2026-05-23 12:57:06,813 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 7, 901)
+2026-05-23 12:57:06,819 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 7, 901) returned VR(901)=1
+2026-05-23 12:57:06,819 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 7 has axis 1 (expected 2)
+2026-05-23 12:57:06,821 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(5, 0, 8, 901)
+2026-05-23 12:57:06,826 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(5, 0, 8, 901) returned VR(901)=2
+2026-05-23 12:57:06,826 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:659): BASIC ETHERCAT: slave at position 8 has axis 2 (expected 2)
+2026-05-23 12:57:06,826 [INFO] scope.drive_scope_engine (drive_scope_engine.py:661): BASIC ETHERCAT matched axis 2 to slave position 8
+2026-05-23 12:57:06,829 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:701): Executing BASIC command: ETHERCAT(4, 0, 8, 901)
+2026-05-23 12:57:06,835 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:708): BASIC command ETHERCAT(4, 0, 8, 901) returned VR(901)=3
+2026-05-23 12:57:06,837 [INFO] scope.drive_scope_engine (drive_scope_engine.py:682): Adding standard fallback candidate: 3
+2026-05-23 12:57:06,837 [INFO] scope.drive_scope_engine (drive_scope_engine.py:685): Drive scope FIFO device candidates for axis 2: [(9, 'slave position 8'), (3, 'slave address 3')]
+2026-05-23 12:57:06,839 [INFO] scope.drive_scope_engine (drive_scope_engine.py:795): Controller EC_COE_FIFO before cleanup: FileExists=-3
+2026-05-23 12:57:06,840 [INFO] scope.drive_scope_engine (drive_scope_engine.py:801): Deleted previous controller EC_COE_FIFO file
+2026-05-23 12:57:06,840 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:743): FIFO transfer candidate from slave position 8: ethercat($161, 0, 9, $3687, 0, 16000)
+2026-05-23 12:57:06,843 [INFO] scope.drive_scope_engine (drive_scope_engine.py:753): EC_COE_FIFO transfer command issued using device 9 (slave position 8)
+2026-05-23 12:57:06,843 [INFO] scope.drive_scope_engine (drive_scope_engine.py:722): Waiting 2.0 seconds for SDO FIFO transfer to complete on the controller...
+2026-05-23 12:57:08,845 [INFO] scope.drive_scope_engine (drive_scope_engine.py:774): Controller EC_COE_FIFO after transfer candidate 9 (slave position 8): FileExists=0, CRC=0x0000
+2026-05-23 12:57:08,846 [INFO] scope.drive_scope_engine (drive_scope_engine.py:795): Controller EC_COE_FIFO before cleanup: FileExists=0
+2026-05-23 12:57:08,847 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:804): Could not delete previous controller EC_COE_FIFO file: ('Program not found', <ErrorCode.ControllerError_PROGRAM_NOT_FOUND: 17179869211>)
+2026-05-23 12:57:08,902 [INFO] scope.drive_scope_engine (drive_scope_engine.py:811): Controller EC_COE_FIFO after cleanup: FileExists=0
+2026-05-23 12:57:08,902 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:743): FIFO transfer candidate from slave address 3: ethercat($161, 0, 3, $3687, 0, 16000)
+2026-05-23 12:57:08,903 [INFO] scope.drive_scope_engine (drive_scope_engine.py:753): EC_COE_FIFO transfer command issued using device 3 (slave address 3)
+2026-05-23 12:57:08,903 [INFO] scope.drive_scope_engine (drive_scope_engine.py:722): Waiting 2.0 seconds for SDO FIFO transfer to complete on the controller...
+2026-05-23 12:57:10,910 [INFO] scope.drive_scope_engine (drive_scope_engine.py:774): Controller EC_COE_FIFO after transfer candidate 3 (slave address 3): FileExists=-3, CRC=0x2902
+2026-05-23 12:57:10,915 [INFO] scope.drive_scope_engine (drive_scope_engine.py:941): Controller EC_COE_FIFO before download: FileExists=-3, CRC=0x2902
+2026-05-23 12:57:10,917 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=0
+2026-05-23 12:57:11,041 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=256
+2026-05-23 12:57:11,042 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=512
+2026-05-23 12:57:11,042 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=768
+2026-05-23 12:57:11,042 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1024
+2026-05-23 12:57:11,042 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1280
+2026-05-23 12:57:11,042 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1460
+2026-05-23 12:57:11,083 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1716
+2026-05-23 12:57:11,083 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=1972
+2026-05-23 12:57:11,083 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=2228
+2026-05-23 12:57:11,084 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=2484
+2026-05-23 12:57:11,084 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=2740
+2026-05-23 12:57:11,084 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=2996
+2026-05-23 12:57:11,084 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=3252
+2026-05-23 12:57:11,084 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=3508
+2026-05-23 12:57:11,084 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=3764
+2026-05-23 12:57:11,084 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4020
+2026-05-23 12:57:11,084 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4096
+2026-05-23 12:57:11,092 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4352
+2026-05-23 12:57:11,092 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4608
+2026-05-23 12:57:11,092 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=4864
+2026-05-23 12:57:11,092 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=5120
+2026-05-23 12:57:11,093 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=5376
+2026-05-23 12:57:11,093 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=5632
+2026-05-23 12:57:11,093 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=5888
+2026-05-23 12:57:11,093 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=6137
+2026-05-23 12:57:11,095 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=6376
+2026-05-23 12:57:11,095 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=6616
+2026-05-23 12:57:11,095 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=6872
+2026-05-23 12:57:11,095 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=7128
+2026-05-23 12:57:11,097 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=7384
+2026-05-23 12:57:11,097 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=7640
+2026-05-23 12:57:11,097 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=7896
+2026-05-23 12:57:11,097 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=8151
+2026-05-23 12:57:11,099 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=8407
+2026-05-23 12:57:11,099 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=8663
+2026-05-23 12:57:11,099 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=8919
+2026-05-23 12:57:11,099 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=9175
+2026-05-23 12:57:11,102 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=9431
+2026-05-23 12:57:11,102 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=9687
+2026-05-23 12:57:11,102 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=9943
+2026-05-23 12:57:11,102 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=10198
+2026-05-23 12:57:11,104 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=10454
+2026-05-23 12:57:11,104 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=10710
+2026-05-23 12:57:11,104 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=10966
+2026-05-23 12:57:11,104 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=11222
+2026-05-23 12:57:11,106 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=11478
+2026-05-23 12:57:11,106 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=11734
+2026-05-23 12:57:11,106 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=11990
+2026-05-23 12:57:11,106 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=12245
+2026-05-23 12:57:11,108 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=12501
+2026-05-23 12:57:11,108 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=12757
+2026-05-23 12:57:11,108 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=13013
+2026-05-23 12:57:11,108 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=13269
+2026-05-23 12:57:11,110 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=13525
+2026-05-23 12:57:11,110 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=13781
+2026-05-23 12:57:11,110 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=14037
+2026-05-23 12:57:11,110 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=14292
+2026-05-23 12:57:11,112 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=14548
+2026-05-23 12:57:11,112 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=14804
+2026-05-23 12:57:11,112 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15060
+2026-05-23 12:57:11,112 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15316
+2026-05-23 12:57:11,113 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15572
+2026-05-23 12:57:11,113 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=15828
+2026-05-23 12:57:11,113 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=16084
+2026-05-23 12:57:11,113 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=16339
+2026-05-23 12:57:11,116 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=16595
+2026-05-23 12:57:11,116 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=16851
+2026-05-23 12:57:11,116 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=17107
+2026-05-23 12:57:11,116 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=17119
+2026-05-23 12:57:11,120 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=17375
+2026-05-23 12:57:11,120 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=17631
+2026-05-23 12:57:11,120 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=17887
+2026-05-23 12:57:11,120 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=18143
+2026-05-23 12:57:11,121 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=18399
+2026-05-23 12:57:11,121 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=18655
+2026-05-23 12:57:11,121 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=18911
+2026-05-23 12:57:11,121 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=19166
+2026-05-23 12:57:11,122 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=19422
+2026-05-23 12:57:11,122 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=19678
+2026-05-23 12:57:11,122 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=19934
+2026-05-23 12:57:11,122 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=19946
+2026-05-23 12:57:11,123 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20202
+2026-05-23 12:57:11,123 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20458
+2026-05-23 12:57:11,123 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20714
+2026-05-23 12:57:11,124 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20726
+2026-05-23 12:57:11,125 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=20982
+2026-05-23 12:57:11,125 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21238
+2026-05-23 12:57:11,125 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21494
+2026-05-23 12:57:11,125 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21506
+2026-05-23 12:57:11,127 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=21762
+2026-05-23 12:57:11,127 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22018
+2026-05-23 12:57:11,127 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22274
+2026-05-23 12:57:11,127 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22286
+2026-05-23 12:57:11,128 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22542
+2026-05-23 12:57:11,128 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=22798
+2026-05-23 12:57:11,128 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23054
+2026-05-23 12:57:11,128 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23067
+2026-05-23 12:57:11,129 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23323
+2026-05-23 12:57:11,129 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23579
+2026-05-23 12:57:11,129 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23835
+2026-05-23 12:57:11,129 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=23846
+2026-05-23 12:57:11,131 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24102
+2026-05-23 12:57:11,131 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24358
+2026-05-23 12:57:11,131 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24614
+2026-05-23 12:57:11,131 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=24870
+2026-05-23 12:57:11,132 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25126
+2026-05-23 12:57:11,132 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25382
+2026-05-23 12:57:11,132 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25407
+2026-05-23 12:57:11,133 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25663
+2026-05-23 12:57:11,133 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=25919
+2026-05-23 12:57:11,133 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26175
+2026-05-23 12:57:11,133 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26177
+2026-05-23 12:57:11,134 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26433
+2026-05-23 12:57:11,134 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26689
+2026-05-23 12:57:11,134 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26945
+2026-05-23 12:57:11,134 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=26955
+2026-05-23 12:57:11,135 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=27211
+2026-05-23 12:57:11,135 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=27467
+2026-05-23 12:57:11,135 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=27723
+2026-05-23 12:57:11,135 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=27735
+2026-05-23 12:57:11,137 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=27991
+2026-05-23 12:57:11,137 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28247
+2026-05-23 12:57:11,137 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28503
+2026-05-23 12:57:11,137 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28511
+2026-05-23 12:57:11,138 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=28767
+2026-05-23 12:57:11,138 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29023
+2026-05-23 12:57:11,138 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29279
+2026-05-23 12:57:11,138 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29291
+2026-05-23 12:57:11,140 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29547
+2026-05-23 12:57:11,140 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=29803
+2026-05-23 12:57:11,140 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30059
+2026-05-23 12:57:11,140 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30072
+2026-05-23 12:57:11,141 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30328
+2026-05-23 12:57:11,141 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30584
+2026-05-23 12:57:11,141 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30840
+2026-05-23 12:57:11,141 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=30851
+2026-05-23 12:57:11,143 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31107
+2026-05-23 12:57:11,143 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31363
+2026-05-23 12:57:11,143 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31619
+2026-05-23 12:57:11,143 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31632
+2026-05-23 12:57:11,145 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=31888
+2026-05-23 12:57:11,145 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=32144
+2026-05-23 12:57:11,145 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=32400
+2026-05-23 12:57:11,145 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=32656
+2026-05-23 12:57:11,145 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=32912
+2026-05-23 12:57:11,145 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=33024
+2026-05-23 12:57:11,146 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:963): DownloadFile progress: pos=0
+2026-05-23 12:57:11,147 [INFO] scope.drive_scope_engine (drive_scope_engine.py:857): FIFO file contains 1 chunk(s), using newest chunk at byte 0
+2026-05-23 12:57:11,147 [INFO] scope.drive_scope_engine (drive_scope_engine.py:874): Selected FIFO payload window: raw byte 256, chunk offset 256, length 16000
+2026-05-23 12:57:11,150 [INFO] scope.drive_scope_engine (drive_scope_engine.py:995): FIFO raw download complete: 33024 bytes in 4.4 s, nonzero ranges=[(6000, 6591)]
+2026-05-23 12:57:11,150 [INFO] scope.drive_scope_engine (drive_scope_engine.py:999): Composed drive_scope.bin: 16000 bytes, nonzero ranges=[(5744, 6335)]
+2026-05-23 12:57:11,150 [INFO] scope.drive_scope_engine (drive_scope_engine.py:1140): Parsing 16000 bytes (8000 words), 3 active channels, stride=8 words/sample
+2026-05-23 12:57:11,151 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:1213): Ch0 SPD_FB_RPM (0x0F10): min=-31831.0 max=30239.0 mean=-118.6
+2026-05-23 12:57:11,151 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:1213): Ch1 SPD_FB_RPM (0x0F10): min=-31831.0 max=30464.0 mean=56.9
+2026-05-23 12:57:11,151 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:1213): Ch2 SPD_FB_RPM (0x0F10): min=-30039.0 max=30280.0 mean=39.5
+2026-05-23 12:57:14,832 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:300): Drive scope axis 3 reports DRIVE_TYPE=0; cannot confirm drive protocol compatibility
+2026-05-23 12:57:14,834 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368B:0=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:14,858 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:1=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:14,880 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[1] = 0
+2026-05-23 12:57:14,882 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:2=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:14,904 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[2] = 0
+2026-05-23 12:57:14,906 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:3=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:14,929 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[3] = 0
+2026-05-23 12:57:14,931 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:4=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:14,954 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[4] = 0
+2026-05-23 12:57:14,956 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:5=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:14,978 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[5] = 0
+2026-05-23 12:57:14,979 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:6=1; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:15,002 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[6] = 1
+2026-05-23 12:57:15,004 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:7=8; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:15,026 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[7] = 8
+2026-05-23 12:57:15,028 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:8=3856; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:15,051 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[8] = 3856
+2026-05-23 12:57:15,053 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:9=3856; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:15,075 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[9] = 3856
+2026-05-23 12:57:15,077 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:10=3856; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:15,099 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[10] = 3856
+2026-05-23 12:57:15,101 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:11=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:15,123 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[11] = 0
+2026-05-23 12:57:15,124 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:12=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:15,148 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[12] = 0
+2026-05-23 12:57:15,149 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:13=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:15,171 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[13] = 0
+2026-05-23 12:57:15,172 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:219): Typed CoE write failed for axis 3 0x368C:14=0; falling back to Execute: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+2026-05-23 12:57:17,346 [ERROR] __main__ (scope_app.py:2120): Drive scope start failed
+Traceback (most recent call last):
+  File "e:\SynologySynchro\Projects\TrioScope\src\scope\drive_scope_engine.py", line 215, in _write_u16
+    _fast_coe_write(
+    ~~~~~~~~~~~~~~~^
+        self.connection, self.axis, index, subindex, value, _get_u16()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "e:\SynologySynchro\Projects\TrioScope\src\scope\drive_scope_engine.py", line 175, in _fast_coe_write
+    connection.Ethercat_CoWriteAxis_Value(axis, index, subindex, obj_type, value)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Trio_UnifiedApi.TrioConnectionError: ('Parameter out of range', <ErrorCode.ControllerError_PARAMETER_OUT_OF_RANGE: 17179869203>)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "e:\SynologySynchro\Projects\TrioScope\scope_app.py", line 2081, in _start_drive_scope_capture
+    config = self.drive_scope_engine.configure(
+        channels=channels,
+    ...<3 lines>...
+        trigger_value2=trigger_value2,
+    )
+  File "e:\SynologySynchro\Projects\TrioScope\src\scope\drive_scope_engine.py", line 423, in configure
+    self._write_u16(SETUP_INDEX, sub, val)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\SynologySynchro\Projects\TrioScope\src\scope\drive_scope_engine.py", line 229, in _write_u16
+    self.connection.Execute(cmd)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+Trio_UnifiedApi.TrioConnectionError: ('Stack overflow', <ErrorCode.ControllerError_STACK_OVERFLOW: 17179869191>)

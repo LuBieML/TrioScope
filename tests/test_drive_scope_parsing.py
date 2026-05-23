@@ -196,7 +196,11 @@ class DriveScopeParsingTests(unittest.TestCase):
             with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
                 engine.read_data(local_filename=str(target))
 
-        self.assertIn("ethercat($161, 0, 1, $3687, 0, 16000)", conn.commands)
+        # Check that we tried 5 first, then fell back to 1
+        ethercat_cmds = [c for c in conn.commands if c.startswith("ethercat($161")]
+        self.assertEqual(len(ethercat_cmds), 2)
+        self.assertIn("ethercat($161, 0, 5,", ethercat_cmds[0])
+        self.assertIn("ethercat($161, 0, 1,", ethercat_cmds[1])
 
     def test_select_capture_bytes_strips_fifo_container_prefix(self):
         values = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)
@@ -232,6 +236,25 @@ class DriveScopeParsingTests(unittest.TestCase):
 
     def test_read_data_retries_when_fifo_candidate_creates_no_file(self):
         values = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)
+        conn = FakeDownloadConnection(make_capture_bytes(values), slot_number=5, created_devices={1})
+
+        engine = DriveScopeEngine(conn, axis=0)
+        engine.active_channels = 1
+        engine.channel_addresses = [0x0F10] + [0] * 7
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "drive_scope.bin"
+            with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+                result = engine.read_data(local_filename=str(target))
+
+        parsed = result["params"]["SPD_FB_RPM (0x0F10)"]
+        np.testing.assert_array_equal(parsed, values.astype(np.float64))
+        # It should try 5 first, fail, and then try 1
+        self.assertIn("ethercat($161, 0, 5, $3687, 0, 16000)", conn.commands)
+        self.assertIn("ethercat($161, 0, 1, $3687, 0, 16000)", conn.commands)
+
+    def test_read_data_uses_axis_slot_number_first_and_succeeds(self):
+        values = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)
         conn = FakeDownloadConnection(make_capture_bytes(values), slot_number=5, created_devices={5})
 
         engine = DriveScopeEngine(conn, axis=0)
@@ -245,8 +268,9 @@ class DriveScopeParsingTests(unittest.TestCase):
 
         parsed = result["params"]["SPD_FB_RPM (0x0F10)"]
         np.testing.assert_array_equal(parsed, values.astype(np.float64))
-        self.assertIn("ethercat($161, 0, 1, $3687, 0, 16000)", conn.commands)
+        # It should try 5 and succeed, meaning it never needs to try 1
         self.assertIn("ethercat($161, 0, 5, $3687, 0, 16000)", conn.commands)
+        self.assertNotIn("ethercat($161, 0, 1, $3687, 0, 16000)", conn.commands)
 
     def test_read_data_keeps_previous_file_when_fifo_not_created(self):
         values = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)
@@ -266,6 +290,144 @@ class DriveScopeParsingTests(unittest.TestCase):
                     engine.read_data(local_filename=str(target))
 
             self.assertEqual(target.read_bytes(), previous)
+
+class FakeDxConnection:
+    def __init__(self, statuses=None):
+        self.statuses = list(statuses or [])
+        self.commands = []
+        self.vr_values = {}
+        self.remote_file_exists = True
+
+    def Execute(self, command):
+        self.commands.append(command)
+        if command.startswith("co_read_axis") and "$2066" in command:
+            # Find the vr parameter
+            parts = command.replace(")", "").split(",")
+            vr = int(parts[-1].strip())
+            if self.statuses:
+                self.vr_values[vr] = self.statuses.pop(0)
+            else:
+                self.vr_values[vr] = 3 # done
+        elif command.startswith("ETHERCAT($141") or command.startswith("ethercat($161"):
+            self.remote_file_exists = True
+
+    def SetVrValue(self, vr, value):
+        self.vr_values[vr] = value
+
+    def GetVrValue(self, vr):
+        return self.vr_values.get(vr, -9999.0)
+
+    def GetAxisParameter_SLOT_NUMBER(self, axis):
+        return 1
+
+    def Delete(self, remote_name):
+        self.remote_file_exists = False
+
+    def FileExists(self, remote_name):
+        return -1 if self.remote_file_exists else 0
+
+    def GetRemoteFileCRC(self, remote_name):
+        return 0x1234 if self.remote_file_exists else 0
+
+    def DownloadFile(self, local_filename, remote_name, progress_callback):
+        Path(local_filename).write_bytes(b"dummy bin data")
+        class Info:
+            current_pos = 14
+        progress_callback(Info())
+
+
+class DriveScopeDx5Dx1Tests(unittest.TestCase):
+    def test_configure_dx5(self):
+        conn = FakeDxConnection()
+        engine = DriveScopeEngine(conn, axis=1)
+        engine.configure(
+            channels=[0x0F10, 0x0F20],
+            sample_time=8,
+            trigger_mode=1, # rising edge
+            trigger_value1=500,
+            drive_model="DX5"
+        )
+        self.assertEqual(engine.drive_model, "DX5")
+        self.assertIn("co_write_axis(1, $2065, 0, 4, -1, 0)", conn.commands)
+        self.assertIn("co_write_axis(1, $2068, 0, 4, -1, 8000)", conn.commands)
+        self.assertIn("co_write_axis(1, $2069, 0, 4, -1, 8)", conn.commands)
+        self.assertIn("co_write_axis(1, $206A, 0, 4, -1, 1)", conn.commands) # trigger enabled
+        self.assertIn("co_write_axis(1, $206B, 0, 8, -1, 500)", conn.commands)
+        self.assertIn("co_write_axis(1, $206C, 0, 4, -1, 0)", conn.commands) # greater = 0
+        self.assertIn("co_write_axis(1, $206D, 0, 4, -1, 100)", conn.commands)
+        # Axis 1 is odd -> chOffset is 0x800. Speed is 0x36df + 0x800 = 0x3edf (16095)
+        self.assertIn("co_write_axis(1, $206E, 0, 4, -1, 16095)", conn.commands)
+        self.assertIn("co_write_axis(1, $206F, 0, 4, -1, 16107)", conn.commands)
+        self.assertIn("co_write_axis(1, $2070, 0, 4, -1, 16112)", conn.commands)
+        self.assertIn("co_write_axis(1, $2071, 0, 4, -1, 16098)", conn.commands)
+        self.assertIn("co_write_axis(1, $2072, 0, 4, -1, 14392)", conn.commands)
+        self.assertIn("co_write_axis(1, $2065, 0, 4, -1, 1)", conn.commands)
+
+    def test_configure_dx1(self):
+        conn = FakeDxConnection()
+        engine = DriveScopeEngine(conn, axis=1)
+        engine.configure(
+            channels=[0x0F10],
+            sample_time=4,
+            trigger_mode=0, # free run
+            drive_model="DX1"
+        )
+        self.assertEqual(engine.drive_model, "DX1")
+        self.assertIn("co_write_axis(1, $206E, 0, 4, -1, 14047)", conn.commands) # chOffset = 0
+        self.assertIn("co_write_axis(1, $206A, 0, 4, -1, 0)", conn.commands)
+
+    def test_get_status_dx5(self):
+        conn = FakeDxConnection(statuses=[1, 1, 3])
+        engine = DriveScopeEngine(conn, axis=0)
+        engine.drive_model = "DX5"
+        
+        status1 = engine.get_status()
+        self.assertEqual(status1, 1) # sampling
+        
+        status2 = engine.get_status()
+        self.assertEqual(status2, 1) # sampling
+        
+        status3 = engine.get_status()
+        self.assertEqual(status3, 2) # done
+
+    def test_read_data_dx5_parsing(self):
+        conn = FakeDxConnection()
+        engine = DriveScopeEngine(conn, axis=0)
+        engine.drive_model = "DX5"
+        engine.active_channels = 2
+        engine.channel_addresses = [0x0F10, 0x0F20] + [0]*6
+        engine.sample_time = 8
+
+        dummy_csv_content = (
+            "Header line 1\nHeader 2\nHeader 3\nHeader 4\nHeader 5\nHeader 6\nHeader 7\nHeader 8\n"
+            "0\t1000.0\t200.0\t3.0\t4.0\t5.0\n"
+            "1\t1050.0\t210.0\t3.1\t4.1\t5.1\n"
+            "2\t1100.0\t220.0\t3.2\t4.2\t5.2\n"
+        )
+
+        def mock_run(*args, **kwargs):
+            cwd = kwargs.get("cwd", ".")
+            Path(cwd, "data.csv").write_text(dummy_csv_content)
+            class MockProcess:
+                stdout = "mock success"
+            return MockProcess()
+
+        with patch("subprocess.run", mock_run), tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "drive_scope.bin"
+            with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+                result = engine.read_data(local_filename=str(target))
+
+        self.assertIn("SPD_FB_RPM (0x0F10)", result["params"])
+        self.assertIn("IQ_REF (0x0F20)", result["params"])
+        
+        spd = result["params"]["SPD_FB_RPM (0x0F10)"]
+        iqr = result["params"]["IQ_REF (0x0F20)"]
+        
+        np.testing.assert_array_equal(spd, [1000.0, 1050.0, 1100.0])
+        np.testing.assert_array_equal(iqr, [200.0, 210.0, 220.0])
+        self.assertEqual(result["sample_period"], 0.001)
+        np.testing.assert_array_almost_equal(result["time"], [0.0, 0.001, 0.002])
+
 
 if __name__ == "__main__":
     unittest.main()
