@@ -2113,6 +2113,10 @@ class ParameterScopeOscilloscope(QMainWindow):
             capture_timeout = max(30.0, engine.capture_duration_sec * 3)
             wait_start = time.monotonic()
             completed = False
+            started_sampling = False
+
+            # Small initial sleep to allow the start command to execute on the controller
+            time.sleep(0.05)
 
             while (time.monotonic() - wait_start) < capture_timeout:
                 if not self.is_running:
@@ -2123,7 +2127,14 @@ class ParameterScopeOscilloscope(QMainWindow):
                 with self._conn_lock:
                     status = engine.get_status()
 
-                if status == 2:
+                # Status: 0/2 (idle/done from previous), 1 (sampling), 2 (done)
+                if status == 1:
+                    started_sampling = True
+
+                # We consider capture complete if status is 2 AND either:
+                # 1. We saw it transition to status 1 (sampling) first.
+                # 2. Or at least 200ms have elapsed (to bypass delayed transition in status register).
+                if status == 2 and (started_sampling or (time.monotonic() - wait_start) > 0.2):
                     completed = True
                     break
 
