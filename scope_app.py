@@ -2322,6 +2322,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self._update_timer.stop()
+        # Force final update to consolidate and render all captured/downloaded data
+        self._on_update_timer()
         # Final render: show all captured data so panning works immediately
         if self.auto_scroll:
             self.auto_scroll = False

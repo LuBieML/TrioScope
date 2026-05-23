@@ -487,22 +487,6 @@ class DriveScopeEngine:
         # Convert bytes to uint16 array (little-endian)
         raw_words = np.frombuffer(raw_bytes[:n_words * 2], dtype=np.dtype('<u2'))
 
-        # The EC_COE_FIFO download often returns the buffer with leading
-        # padding/wrapper bytes — the actual 16000-byte domain starts at the first
-        # non-zero word, followed by a fixed 624-word setup parameter header.
-        # The interleaved sample block begins exactly at block_start + 624.
-        nonzero_idx = np.flatnonzero(raw_words)
-        if len(nonzero_idx) > 0:
-            block_start = int(nonzero_idx[0])
-            data_start = block_start + 624
-            logger.info(
-                "Block start found at word %d (byte %d). Skipping to sample data at word %d (byte %d).",
-                block_start, block_start * 2, data_start, data_start * 2
-            )
-            raw_words = raw_words[data_start:]
-        else:
-            logger.warning("Drive scope buffer is all zeros — capture may have failed")
-
         # Expected useful data: NUM_CHANNELS * SAMPLES_PER_CHANNEL (8000 words)
         expected_words = NUM_CHANNELS * SAMPLES_PER_CHANNEL
         if len(raw_words) < expected_words:
@@ -513,9 +497,9 @@ class DriveScopeEngine:
             padded = np.zeros(expected_words, dtype=np.uint16)
             padded[:len(raw_words)] = raw_words
             raw_words = padded
-
-        # Take only the words we need (buffer may be larger)
-        raw_words = raw_words[:expected_words]
+        else:
+            # Take only the first 8000 words (the actual captured domain data)
+            raw_words = raw_words[:expected_words]
 
         # Reshape to (1000, 8) — each row is one sample across 8 channels
         data_2d = raw_words.reshape(SAMPLES_PER_CHANNEL, NUM_CHANNELS)
