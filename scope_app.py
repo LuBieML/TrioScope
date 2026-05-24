@@ -4425,13 +4425,17 @@ class ParameterScopeOscilloscope(QMainWindow):
                     curve.setDownsampling(auto=True, method='subsample')
                     self.curves[trace_id] = curve
 
-                # Skip setData when sample count hasn't grown (e.g. paused/stopped)
+                # Skip setData when the rendered window has not changed. During
+                # capture auto-scroll may leave the curve holding only the last
+                # visible slice; stopping must redraw the full buffer even when
+                # the sample count is unchanged.
                 cur_len = len(values)
-                prev_len = self._stats_cache.get(('len', trace_id), -1)
-                data_changed = cur_len != prev_len
+                render_key = (cur_len, slice_idx, len(render_time_arr))
+                prev_render_key = self._stats_cache.get(('render', trace_id))
+                data_changed = render_key != prev_render_key
                 if data_changed:
                     self.curves[trace_id].setData(render_time_arr, render_values, skipFiniteCheck=True)
-                    self._stats_cache[('len', trace_id)] = cur_len
+                    self._stats_cache[('render', trace_id)] = render_key
 
                 # ── Reference (pinned) trace overlay ──
                 if trace.has_ref_data():
