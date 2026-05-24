@@ -103,6 +103,7 @@ from plot.viewbox import ScopeViewBox
 from ui.trace_control import TraceControl
 from ui.profile_dialog import _ProfileManagerDialog
 from ui.compare_window import CompareWindow, _CompareTracePicker
+from ui.measurement_panel import MeasurementPanel
 from scope.parameters import (
     CHANNEL_PARAMETERS,
     SCOPE_PARAMETERS,
@@ -1612,6 +1613,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Classical Tuner
         self._tuner_panel = None
 
+        # Measurement panel
+        self._measurement_panel = None
+
         # EtherCAT map window
         self._ethercat_map = None
 
@@ -1983,6 +1987,12 @@ class ParameterScopeOscilloscope(QMainWindow):
             "Open a new compare window for 2 or more enabled scopes")
         self.btn_compare.clicked.connect(self._open_compare)
         status_layout.addWidget(self.btn_compare)
+
+        self.btn_measurements = QPushButton("\u25a3 Measurements")
+        self.btn_measurements.setFixedWidth(130)
+        self.btn_measurements.setToolTip("Open the live measurement panel")
+        self.btn_measurements.clicked.connect(self._toggle_measurement_panel)
+        status_layout.addWidget(self.btn_measurements)
 
         status_layout.addStretch()
 
@@ -2557,6 +2567,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._remove_cursors_from_plots()
             self.cursor_readout.hide()
             self.btn_cursors.setStyleSheet("")
+        self._sync_measurement_panel(force=True)
         # Re-render FFT traces with/without cursor window
         if any(t.is_fft() for t in self.get_enabled_traces()) and self.accumulated_data is not None:
             self.curves = {}
@@ -2649,6 +2660,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         finally:
             self._cursor_updating = False
         self._update_cursor_readout()
+        self._sync_measurement_panel()
         # Mark FFT dirty so the next timer tick re-renders (avoid per-pixel recompute)
         if any(t.is_fft() for t in self.get_enabled_traces()):
             self._fft_dirty = True
@@ -3068,6 +3080,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Re-render captured data when scope is stopped (e.g. toggling FFT)
         if not self.is_running and self.accumulated_data is not None:
             self._render_plots()
+            self._sync_measurement_panel(force=True)
 
     def _on_pin_toggled(self, trace, checked):
         """Pin or unpin the current trace data as a reference."""
@@ -4118,6 +4131,8 @@ class ParameterScopeOscilloscope(QMainWindow):
             if param_name in all_params and len(all_params[param_name]) > 0:
                 trace.update_value(all_params[param_name][-1])
 
+        self._sync_measurement_panel()
+
     def _render_plots(self):
         """Update all plot curves with current accumulated data"""
         if self.accumulated_data is None:
@@ -4699,6 +4714,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.status_label.setText("Data cleared")
         if self._cursors_enabled:
             self._update_cursor_readout()
+        self._sync_measurement_panel(force=True)
 
     def take_screenshot(self):
         """Take a screenshot of the main application window and save as PNG."""
@@ -4820,6 +4836,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 pi.setXRange(t_min - padding, t_max + padding, padding=0)
 
             self._render_plots()
+            self._sync_measurement_panel(force=True)
 
             self.status_label.setText(
                 f"Imported {len(time_arr)} samples, {len(params)} params from {Path(path).name}")
@@ -5073,6 +5090,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         act_tuner.triggered.connect(self._toggle_tuner_panel)
         view_menu.addAction(act_tuner)
 
+        act_measurements = QAction("&Measurements", self)
+        act_measurements.triggered.connect(self._toggle_measurement_panel)
+        view_menu.addAction(act_measurements)
+
         act_ecat = QAction("&EtherCAT Map", self)
         act_ecat.setShortcut(QKeySequence("Ctrl+M"))
         act_ecat.triggered.connect(self._open_ethercat_map)
@@ -5196,6 +5217,51 @@ class ParameterScopeOscilloscope(QMainWindow):
             QTimer.singleShot(0, lambda: self.setMaximumWidth(16777215))
         else:
             self._tuner_panel.setVisible(not self._tuner_panel.isVisible())
+
+    # ─── Measurements ─────────────────────────────────────────────
+
+    def _toggle_measurement_panel(self):
+        """Show/hide the live measurements dock panel."""
+        if self._measurement_panel is None:
+            self._measurement_panel = MeasurementPanel(self)
+            saved_size = self.size()
+            self.setFixedWidth(saved_size.width())
+            self.addDockWidget(Qt.RightDockWidgetArea, self._measurement_panel)
+            QTimer.singleShot(0, lambda: self.setMaximumWidth(16777215))
+            self._sync_measurement_panel(force=True)
+        else:
+            self._measurement_panel.setVisible(not self._measurement_panel.isVisible())
+            if self._measurement_panel.isVisible():
+                self._sync_measurement_panel(force=True)
+
+    def _sync_measurement_panel(self, force=False):
+        """Push the latest capture buffer into the measurements dock."""
+        if self._measurement_panel is None:
+            return
+        if not self._measurement_panel.isVisible() and not force:
+            return
+        if self.accumulated_data is None:
+            self._measurement_panel.clear()
+            return
+
+        trace_names = [
+            t.get_display_name()
+            for t in self.get_enabled_traces()
+            if t.get_display_name() in self.accumulated_data.get('params', {})
+        ]
+        cursor_window = None
+        if self._cursors_enabled and self.plot_mode == 'time':
+            cursor_window = (
+                float(self._cursor_pos['c1']),
+                float(self._cursor_pos['c2']),
+            )
+        self._measurement_panel.set_capture_data(
+            self.accumulated_data.get('time'),
+            self.accumulated_data.get('params'),
+            trace_names=trace_names,
+            cursor_window=cursor_window,
+            segment_breaks=self.accumulated_data.get('segment_breaks', []),
+        )
 
     # ─── EtherCAT Map ───────────────────────────────────────────────
 
