@@ -68,100 +68,52 @@ try:
 except ImportError:
     HelpWindow = None
 
-logging.basicConfig(level=logging.INFO)
+# Setup detailed logging to a file in the workspace
+log_file = "trio_scope.log"
+try:
+    file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s"
+    ))
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+    
+    # Ensure standard handlers default to INFO (so they aren't flooded with DEBUG)
+    for handler in root_logger.handlers:
+        if handler != file_handler:
+            handler.setLevel(logging.INFO)
+except Exception as e:
+    print(f"Failed to initialize file logger: {e}", file=sys.stderr)
+
 logger = logging.getLogger(__name__)
+logger.info("=========================================")
+logger.info("TrioScope app starting. Version: %s", getattr(sys.modules.get('version'), '__version__', 'unknown'))
+logger.info("Current working directory: %s", Path.cwd())
+logger.info("Python interpreter: %s", sys.executable)
+logger.info("Python version: %s", sys.version)
+logger.info("=========================================")
 
 
-class _LogWindow(QDialog):
-    """Scrollable log viewer — opened when the user clicks the log bar."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Log")
-        self.resize(860, 380)
-        self.setStyleSheet(
-            "QDialog { background-color: #1a1a1a; color: #d4d4d4; }"
-            "QPlainTextEdit { background-color: #1a1a1a; color: #d4d4d4;"
-            " font-family: Consolas, monospace; font-size: 8pt;"
-            " border: none; }"
-            "QPushButton { background-color: #4b4a4a; color: #d4d4d4;"
-            " border: 1px solid #606060; border-radius: 3px; padding: 3px 10px; }"
-            "QPushButton:hover { background-color: #5a5a5a; }"
-        )
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
-
-        self._view = QPlainTextEdit()
-        self._view.setReadOnly(True)
-        self._view.setMaximumBlockCount(2000)
-        layout.addWidget(self._view, 1)
-
-        btn_clear = QPushButton("Clear")
-        btn_clear.setFixedWidth(70)
-        btn_clear.clicked.connect(self._view.clear)
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_row.addWidget(btn_clear)
-        layout.addLayout(btn_row)
-
-    @Slot(str)
-    def append(self, html: str):
-        """Append a pre-formatted HTML line (called from main thread via invokeMethod)."""
-        self._view.appendHtml(html)
-        sb = self._view.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-
-class _LogBarHandler(logging.Handler):
-    """Logging handler that updates the status bar label and feeds the log window."""
-
-    _COLOURS = {
-        logging.DEBUG:    "#888888",
-        logging.INFO:     "#aaaaaa",
-        logging.WARNING:  "#FFB74D",
-        logging.ERROR:    "#f14c4c",
-        logging.CRITICAL: "#ff0000",
-    }
-
-    def __init__(self, label, log_window: _LogWindow):
-        super().__init__()
-        self._label = label
-        self._window = log_window
-        self.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-8s  %(message)s",
-                                            datefmt="%H:%M:%S"))
-
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            colour = self._COLOURS.get(record.levelno, "#aaaaaa")
-            bar_style = (
-                f"background-color: #1a1a1a; color: {colour}; font-size: 8pt;"
-                " border-top: 1px solid #444;"
-            )
-            # Short version for the bar (no timestamp)
-            bar_msg = f"{record.levelname}  {record.getMessage()}"
-            html_line = f'<span style="color:{colour};">{msg}</span>'
-
-            from PySide6.QtCore import QMetaObject, Qt, Q_ARG
-            QMetaObject.invokeMethod(
-                self._label, "setText",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, bar_msg),
-            )
-            QMetaObject.invokeMethod(
-                self._label, "setStyleSheet",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, bar_style),
-            )
-            QMetaObject.invokeMethod(
-                self._window, "append",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, html_line),
-            )
-        except Exception:
-            pass
+from ui.logging_widgets import _LogWindow, _LogBarHandler
+from ui.theme import DARK_STYLESHEET, TRACE_COLORS, CURSOR_COLORS
+from plot.viewbox import ScopeViewBox
+from ui.trace_control import TraceControl
+from ui.profile_dialog import _ProfileManagerDialog
+from ui.compare_window import CompareWindow, _CompareTracePicker
+from scope.parameters import (
+    CHANNEL_PARAMETERS,
+    SCOPE_PARAMETERS,
+    CHANNEL_PARAMETERS_SET,
+    _VIRTUAL_PARAM_MAP,
+)
+from storage.settings_store import SettingsStore
+from storage.profiles import ProfileStore
+from storage.csv_io import CSVStorage
+from models.app_settings import AppSettings
+from models.trace_config import TraceConfig
 
 
 def _int_or_none(value) -> int | None:
@@ -174,6 +126,7 @@ def _int_or_none(value) -> int | None:
         return None
 
 
+<<<<<<< HEAD
 # Channel-type parameters that use CHANNEL(n) instead of AXIS(n)
 CHANNEL_PARAMETERS = [
     "AIN", "AINBI", "AOUT",
@@ -1344,6 +1297,8 @@ class _CompareTracePicker(QDialog):
                 if cb.isChecked()]
 
 
+=======
+>>>>>>> DriveScopeInvestigation
 class ParameterScopeOscilloscope(QMainWindow):
     """Main application with oscilloscope-style UI — pyqtgraph version"""
 
@@ -1821,11 +1776,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         )
 
         self._log_bar.mousePressEvent = lambda _: self._log_window.show()
-        outer_layout.addWidget(self._log_bar)
-
         # Wire Python logging into the bar and window
         self._log_handler = _LogBarHandler(self._log_bar, self._log_window)
+        self._log_handler.setLevel(logging.INFO)
         logging.getLogger().addHandler(self._log_handler)
+        outer_layout.addWidget(self._log_bar)
 
     # ─── Plot management ────────────────────────────────────────────
 
@@ -2850,7 +2805,8 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _watchdog_loop(self):
         """Heartbeat loop — polls VR(66) every 0.5s, 5s timeout on dead socket."""
-        while not self._watchdog_stop.wait(0.5):
+        stop_event = self._watchdog_stop
+        while not stop_event.wait(0.5):
             if not (self.trio_connection and self.trio_connected):
                 continue
             try:
@@ -2870,12 +2826,18 @@ class ParameterScopeOscilloscope(QMainWindow):
                 t = threading.Thread(target=_heartbeat, name="ScopeWatchdog", daemon=True)
                 t.start()
                 if not heartbeat_done.wait(timeout=5.0):
+                    if stop_event.is_set():
+                        break
                     logger.warning("Watchdog heartbeat timed out after 5s")
                     self._mark_connection_lost()
+                    break
+                if stop_event.is_set():
                     break
                 if heartbeat_error:
                     raise heartbeat_error[0]
             except Exception as exc:
+                if stop_event.is_set():
+                    break
                 if 'Disconnected' in str(exc) or 'No connection' in str(exc):
                     logger.warning(f"Watchdog detected connection loss: {exc}")
                     self._mark_connection_lost()
@@ -2896,7 +2858,6 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._watchdog_stop.set()
         self._watchdog_thread.join(timeout=1.0)
         self._watchdog_thread = None
-        self._watchdog_stop = threading.Event()
 
     def _mark_connection_lost(self):
         """Called by watchdog when connection is lost — thread-safe."""
@@ -3354,6 +3315,15 @@ class ParameterScopeOscilloscope(QMainWindow):
             capture_timeout = max(30.0, engine.capture_duration_sec * 3)
             wait_start = time.monotonic()
             completed = False
+            started_sampling = bool(getattr(engine, "last_start_saw_sampling", False))
+            if started_sampling:
+                logger.info(
+                    "Drive scope start already observed sampling; status sequence=%s",
+                    getattr(engine, "last_start_status_sequence", []),
+                )
+
+            # Small initial sleep to allow the start command to execute on the controller
+            time.sleep(0.05)
 
             while (time.monotonic() - wait_start) < capture_timeout:
                 if not self.is_running:
@@ -3364,11 +3334,25 @@ class ParameterScopeOscilloscope(QMainWindow):
                 with self._conn_lock:
                     status = engine.get_status()
 
-                if status == 2:
+                # Status: 0/2 (idle/done from previous), 1 (sampling), 2 (done)
+                if status == 1:
+                    started_sampling = True
+
+                if status == 2 and started_sampling:
                     completed = True
                     break
 
                 elapsed = time.monotonic() - wait_start
+                if (
+                    status == 2
+                    and not started_sampling
+                    and elapsed >= engine.capture_duration_sec + 0.5
+                ):
+                    raise RuntimeError(
+                        "Drive scope did not report a fresh sampling state; "
+                        "refusing to download stale drive scope data."
+                    )
+
                 if engine.capture_duration_sec > 0:
                     pct = min(0.99, elapsed / engine.capture_duration_sec)
                     self.sig_capture_progress.emit(f"Sampling: {pct*100:.0f}%")
@@ -3412,6 +3396,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             def _download_cb(pct, msg):
                 self.sig_capture_progress.emit(msg)
 
+<<<<<<< HEAD
             with self._conn_lock:
                 data = engine.read_data(
                     progress_callback=_download_cb,
@@ -3420,6 +3405,15 @@ class ParameterScopeOscilloscope(QMainWindow):
 
             # Restart the watchdog now that the long operation is done
             self._start_watchdog()
+=======
+            try:
+                with self._conn_lock:
+                    data = engine.read_data(progress_callback=_download_cb)
+            finally:
+                # Restart the watchdog now that the long operation is done,
+                # even if the FIFO transfer raises.
+                self._start_watchdog()
+>>>>>>> DriveScopeInvestigation
 
             if not self.is_running:
                 return
@@ -3587,6 +3581,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self._update_timer.stop()
+        # Force final update to consolidate and render all captured/downloaded data
+        self._on_update_timer()
         # Final render: show all captured data so panning works immediately
         if self.auto_scroll:
             self.auto_scroll = False
@@ -4280,14 +4276,8 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         try:
             data = self.accumulated_data
-            param_names = list(data['params'].keys())
-            with open(path, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(['Time'] + param_names)
-                for i in range(len(data['time'])):
-                    row = [round(data['time'][i], 6)] + [data['params'][p][i] for p in param_names]
-                    writer.writerow(row)
-            self.status_label.setText(f"Exported {len(param_names)} channel(s) to {path}")
+            CSVStorage.export_data(path, data['time'], data['params'])
+            self.status_label.setText(f"Exported {len(data['params'])} channel(s) to {path}")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
@@ -4305,31 +4295,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             return
 
         try:
-            with open(path, 'r', newline='') as f:
-                reader = csv.reader(f)
-                header = next(reader)
-
-                if not header or header[0] != 'Time':
-                    QMessageBox.critical(self, "Import Error",
-                                         "Invalid CSV format — expected 'Time' as first column")
-                    return
-
-                param_names = header[1:]
-                if not param_names:
-                    QMessageBox.critical(self, "Import Error", "No parameter columns found")
-                    return
-
-                # Read all data rows
-                rows = list(reader)
-
-            if not rows:
-                QMessageBox.warning(self, "Import", "CSV file contains no data rows")
-                return
-
-            time_arr = np.array([float(row[0]) for row in rows])
-            params = {}
-            for col_idx, pname in enumerate(param_names, start=1):
-                params[pname] = np.array([float(row[col_idx]) for row in rows])
+            time_arr, params, traces_data = CSVStorage.import_data(path)
 
             # --- Reconfigure traces to match imported columns ---
             # Remove all existing traces
@@ -4338,21 +4304,12 @@ class ParameterScopeOscilloscope(QMainWindow):
                 t.deleteLater()
             self.traces.clear()
 
-            # Parse column names like "MPOS(0)" → param="MPOS", axis=0
-            param_pattern = re.compile(r'^(.+)\((\d+)\)$')
-
-            for pname in param_names:
-                m = param_pattern.match(pname)
+            for param, axis in traces_data:
                 self.add_trace()
                 trace = self.traces[-1]
                 trace.chk_enable.setChecked(True)
-                if m:
-                    trace.param_combo.setCurrentText(m.group(1))
-                    trace.axis_spin.setValue(int(m.group(2)))
-                else:
-                    # Fallback: use full name as parameter, axis 0
-                    trace.param_combo.setCurrentText(pname)
-                    trace.axis_spin.setValue(0)
+                trace.param_combo.setCurrentText(param)
+                trace.axis_spin.setValue(axis)
 
             # --- Load data ---
             self.accumulated_data = {
@@ -4394,7 +4351,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._render_plots()
 
             self.status_label.setText(
-                f"Imported {len(time_arr)} samples, {len(param_names)} params from {Path(path).name}")
+                f"Imported {len(time_arr)} samples, {len(params)} params from {Path(path).name}")
 
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
@@ -4405,51 +4362,27 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _get_profile_names(self):
         """Return a list of all saved profile names."""
-        s = QSettings("TrioScope", "ParameterScope")
-        count = int(s.value("profiles/count", 0))
-        names = []
-        for i in range(count):
-            name = s.value(f"profiles/{i}/name", None)
-            if name:
-                names.append(name)
-        return names
+        return ProfileStore().get_profile_names()
 
     def _save_profile(self, name):
         """Save the current trace configuration as a named profile."""
-        s = QSettings("TrioScope", "ParameterScope")
-        names = self._get_profile_names()
-
-        # Overwrite if exists, else append
-        if name in names:
-            idx = names.index(name)
-        else:
-            idx = len(names)
-            names.append(name)
-
-        # Save the full names list
-        s.setValue("profiles/count", len(names))
-        for i, n in enumerate(names):
-            s.setValue(f"profiles/{i}/name", n)
-
-        # Save traces for this profile
-        enabled_traces = [t for t in self.traces if t.parent() is not None]
-        s.setValue(f"profiles/data/{name}/count", len(enabled_traces))
-        for i, t in enumerate(enabled_traces):
-            s.setValue(f"profiles/data/{name}/{i}/param", t.param_combo.currentText())
-            s.setValue(f"profiles/data/{name}/{i}/axis", t.axis_spin.value())
-            s.setValue(f"profiles/data/{name}/{i}/enabled",
-                       "true" if t.chk_enable.isChecked() else "false")
-            s.setValue(f"profiles/data/{name}/{i}/fft",
-                       "true" if t.is_fft() else "false")
-
+        enabled_traces = [
+            TraceConfig(
+                param=t.param_combo.currentText(),
+                axis=t.axis_spin.value(),
+                enabled=t.chk_enable.isChecked(),
+                fft=t.is_fft()
+            )
+            for t in self.traces if t.parent() is not None
+        ]
+        ProfileStore().save_profile(name, enabled_traces)
         self._rebuild_profiles_menu()
         logger.info(f"Profile '{name}' saved with {len(enabled_traces)} trace(s)")
 
     def _load_profile(self, name):
         """Load a named profile, replacing all current traces."""
-        s = QSettings("TrioScope", "ParameterScope")
-        count = int(s.value(f"profiles/data/{name}/count", 0))
-        if count == 0:
+        traces_config = ProfileStore().load_profile(name)
+        if not traces_config:
             logger.warning(f"Profile '{name}' is empty or not found")
             return
 
@@ -4460,38 +4393,20 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.traces.clear()
 
         # Recreate traces from profile
-        for i in range(count):
-            param = str(s.value(f"profiles/data/{name}/{i}/param", "MPOS"))
-            axis = int(s.value(f"profiles/data/{name}/{i}/axis", 0))
-            enabled = s.value(f"profiles/data/{name}/{i}/enabled", "true") == "true"
-            fft = s.value(f"profiles/data/{name}/{i}/fft", "false") == "true"
-
+        for t_cfg in traces_config:
             self.add_trace()
             t = self.traces[-1]
-            t.param_combo.setCurrentText(param)
-            t.axis_spin.setValue(axis)
-            t.chk_enable.setChecked(enabled)
-            t.set_fft(fft)
+            t.param_combo.setCurrentText(t_cfg.param)
+            t.axis_spin.setValue(t_cfg.axis)
+            t.chk_enable.setChecked(t_cfg.enabled)
+            t.set_fft(t_cfg.fft)
 
         self.on_trace_changed()
-        logger.info(f"Profile '{name}' loaded with {count} trace(s)")
+        logger.info(f"Profile '{name}' loaded with {len(traces_config)} trace(s)")
 
     def _delete_profile(self, name):
         """Delete a saved profile."""
-        s = QSettings("TrioScope", "ParameterScope")
-        names = self._get_profile_names()
-        if name in names:
-            names.remove(name)
-
-        # Rewrite names list
-        s.setValue("profiles/count", len(names))
-        for i, n in enumerate(names):
-            s.setValue(f"profiles/{i}/name", n)
-
-        # Remove profile data
-        count = int(s.value(f"profiles/data/{name}/count", 0))
-        s.remove(f"profiles/data/{name}")
-
+        ProfileStore().delete_profile(name)
         self._rebuild_profiles_menu()
         logger.info(f"Profile '{name}' deleted")
 
@@ -4499,29 +4414,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         """Rename a saved profile."""
         if old_name == new_name:
             return
-        s = QSettings("TrioScope", "ParameterScope")
-        names = self._get_profile_names()
-        if old_name not in names:
-            return
-
-        # Copy profile data to new name
-        count = int(s.value(f"profiles/data/{old_name}/count", 0))
-        s.setValue(f"profiles/data/{new_name}/count", count)
-        for i in range(count):
-            for key in ("param", "axis", "enabled", "fft"):
-                val = s.value(f"profiles/data/{old_name}/{i}/{key}")
-                if val is not None:
-                    s.setValue(f"profiles/data/{new_name}/{i}/{key}", val)
-
-        # Remove old data
-        s.remove(f"profiles/data/{old_name}")
-
-        # Update names list
-        idx = names.index(old_name)
-        names[idx] = new_name
-        for i, n in enumerate(names):
-            s.setValue(f"profiles/{i}/name", n)
-
+        ProfileStore().rename_profile(old_name, new_name)
         self._rebuild_profiles_menu()
         logger.info(f"Profile renamed: '{old_name}' → '{new_name}'")
 
@@ -4820,27 +4713,9 @@ class ParameterScopeOscilloscope(QMainWindow):
             if self.trio_connected and self.trio_connection:
                 self._tuner_panel.set_connection(self.trio_connection, self._conn_lock)
             # Restore saved per-axis drive profiles
-            s = QSettings("TrioScope", "ParameterScope")
-            num_profiles = int(s.value("ai/drive_profiles/count", 0))
-            saved_profiles = {}
-            for i in range(num_profiles):
-                axis = s.value(f"ai/drive_profiles/{i}/axis", None)
-                if axis is None:
-                    continue
-                axis = int(axis)
-                saved_profiles[axis] = {
-                    "drive_type": s.value(f"ai/drive_profiles/{i}/drive_type", "None"),
-                    "pn100": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn100")),
-                    "pn101": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn101")),
-                    "pn102": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn102")),
-                    "pn103": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn103")),
-                    "pn104": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn104")),
-                    "pn105": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn105")),
-                    "pn106": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn106")),
-                    "pn112": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn112")),
-                }
-            if saved_profiles:
-                self._tuner_panel.set_all_profiles(saved_profiles)
+            app_settings = SettingsStore().load()
+            if app_settings.drive_profiles:
+                self._tuner_panel.set_all_profiles(app_settings.drive_profiles)
             # Preserve window geometry — adding the dock triggers a deferred
             # layout pass that inflates the main window's minimumSizeHint.
             saved_size = self.size()
@@ -5004,97 +4879,92 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     def _load_settings(self):
         """Restore saved settings from QSettings."""
-        s = QSettings("TrioScope", "ParameterScope")
+        app_settings = SettingsStore().load()
 
         # Connection
-        self.ip_edit.setText(str(s.value("connection/ip", "192.168.0.245")))
+        self.ip_edit.setText(app_settings.connection.ip)
 
         # Configuration
-        self.period_edit.setText(str(s.value("config/sample_period", "1")))
-        self.duration_edit.setText(str(s.value("config/duration", "5.0")))
-        self.table_start_edit.setText(str(s.value("config/table_start", "0")))
-        self.use_end_of_table = s.value("config/use_end_of_table", "true") == "true"
-        if s.value("config/capture_mode", "continuous") == "single":
+        self.period_edit.setText(app_settings.capture.sample_period)
+        self.duration_edit.setText(app_settings.capture.duration)
+        self.table_start_edit.setText(app_settings.capture.table_start)
+        self.use_end_of_table = app_settings.capture.use_end_of_table
+        if app_settings.capture.capture_mode == "single":
             self.radio_single.setChecked(True)
         else:
             self.radio_continuous.setChecked(True)
 
         # Display / plot settings
-        self.plot_mode = str(s.value("display/plot_mode", "time"))
-        # Migration: old 'fft' global mode → 'time' with per-trace FFT
-        migrate_global_fft = (self.plot_mode == 'fft')
-        if migrate_global_fft:
-            self.plot_mode = 'time'
-        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(str(self.plot_mode), 0)
+        self.plot_mode = app_settings.display.plot_mode
+        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(self.plot_mode, 0)
         self.plot_mode_combo.setCurrentIndex(mode_index)
-        self.window_duration = float(s.value("display/window_duration", 5.0))
-        self.lock_x_axis = s.value("display/lock_x_axis", "true") == "true"
+        self.window_duration = app_settings.display.window_duration
+        self.lock_x_axis = app_settings.display.lock_x_axis
         self.chk_lock_x.setChecked(self.lock_x_axis)
-        self.line_width = float(s.value("plot/line_width", 1))
-        self.grid_alpha = float(s.value("plot/grid_alpha", 0.3))
-        self.plot_bg_color = s.value("plot/bg_color", "#0A0A0A")
+        self.line_width = app_settings.plot.line_width
+        self.grid_alpha = app_settings.plot.grid_alpha
+        self.plot_bg_color = app_settings.plot.bg_color
 
         # Traces
-        num_traces = int(s.value("traces/count", 1))
-        for i in range(num_traces):
+        if not app_settings.traces:
+            app_settings.traces.append(TraceConfig(param="MPOS", axis=0, enabled=True, fft=False))
+
+        # Recreate traces in UI
+        for i, trace_config in enumerate(app_settings.traces):
             if i >= len(self.traces):
                 self.add_trace()
             t = self.traces[i]
-            param = str(s.value(f"traces/{i}/param", "MPOS"))
-            axis = int(s.value(f"traces/{i}/axis", 0))
-            enabled = s.value(f"traces/{i}/enabled", "true") == "true"
-            t.param_combo.setCurrentText(param)
-            t.axis_spin.setValue(axis)
-            t.chk_enable.setChecked(enabled)
-            fft = s.value(f"traces/{i}/fft", "false") == "true" or migrate_global_fft
-            t.set_fft(fft)
+            t.param_combo.setCurrentText(trace_config.param)
+            t.axis_spin.setValue(trace_config.axis)
+            t.chk_enable.setChecked(trace_config.enabled)
+            t.set_fft(trace_config.fft)
 
-        # If no traces were saved, add default
-        if not self.traces:
-            self.add_trace()
+        # Remove extra UI trace controls if there are any
+        while len(self.traces) > len(app_settings.traces):
+            t = self.traces.pop()
+            t.setParent(None)
+            t.deleteLater()
 
     def _save_settings(self):
         """Persist current settings to QSettings."""
-        s = QSettings("TrioScope", "ParameterScope")
+        app_settings = AppSettings()
 
         # Connection
-        s.setValue("connection/ip", self.ip_edit.text())
+        app_settings.connection.ip = self.ip_edit.text()
 
         # Configuration
-        s.setValue("config/sample_period", self.period_edit.text())
-        s.setValue("config/duration", self.duration_edit.text())
-        s.setValue("config/table_start", self.table_start_edit.text())
-        s.setValue("config/use_end_of_table", "true" if self.use_end_of_table else "false")
-        s.setValue("config/capture_mode",
-                   "single" if self.radio_single.isChecked() else "continuous")
+        app_settings.capture.sample_period = self.period_edit.text()
+        app_settings.capture.duration = self.duration_edit.text()
+        app_settings.capture.table_start = self.table_start_edit.text()
+        app_settings.capture.use_end_of_table = self.use_end_of_table
+        app_settings.capture.capture_mode = "single" if self.radio_single.isChecked() else "continuous"
 
         # Display / plot settings
-        s.setValue("display/plot_mode", self.plot_mode)
-        s.setValue("display/window_duration", self.window_duration)
-        s.setValue("display/lock_x_axis", "true" if self.lock_x_axis else "false")
-        s.setValue("plot/line_width", self.line_width)
-        s.setValue("plot/grid_alpha", self.grid_alpha)
-        s.setValue("plot/bg_color", self.plot_bg_color)
+        app_settings.display.plot_mode = self.plot_mode
+        app_settings.display.window_duration = self.window_duration
+        app_settings.display.lock_x_axis = self.lock_x_axis
+        app_settings.plot.line_width = self.line_width
+        app_settings.plot.grid_alpha = self.grid_alpha
+        app_settings.plot.bg_color = self.plot_bg_color
 
         # Traces
-        s.setValue("traces/count", len(self.traces))
-        for i, t in enumerate(self.traces):
-            s.setValue(f"traces/{i}/param", t.param_combo.currentText())
-            s.setValue(f"traces/{i}/axis", t.axis_spin.value())
-            s.setValue(f"traces/{i}/enabled",
-                       "true" if t.chk_enable.isChecked() else "false")
-            s.setValue(f"traces/{i}/fft",
-                       "true" if t.is_fft() else "false")
+        for t in self.traces:
+            app_settings.traces.append(TraceConfig(
+                param=t.param_combo.currentText(),
+                axis=t.axis_spin.value(),
+                enabled=t.chk_enable.isChecked(),
+                fft=t.is_fft()
+            ))
 
         # Per-axis drive profiles (from tuner panel if open)
         if self._tuner_panel is not None:
-            profiles = self._tuner_panel.get_all_profiles()
-            s.setValue("ai/drive_profiles/count", len(profiles))
-            for i, (axis, profile_dict) in enumerate(profiles.items()):
-                s.setValue(f"ai/drive_profiles/{i}/axis", axis)
-                for key, val in profile_dict.items():
-                    s.setValue(f"ai/drive_profiles/{i}/{key}",
-                               "" if val is None else val)
+            app_settings.drive_profiles = self._tuner_panel.get_all_profiles()
+        else:
+            # We should load the existing ones from settings so we don't overwrite them with empty
+            existing = SettingsStore().load()
+            app_settings.drive_profiles = existing.drive_profiles
+
+        SettingsStore().save(app_settings)
 
     # ─── Cleanup ────────────────────────────────────────────────────
 

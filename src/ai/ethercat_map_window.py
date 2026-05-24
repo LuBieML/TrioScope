@@ -48,17 +48,21 @@ _MARG       = 8    # outer margin
 
 
 def _state_colour(state) -> QColor:
-    if state == TUA.EthercatState.Operational:
+    try:
+        val = int(state)
+    except (ValueError, TypeError):
+        val = 0
+    if val in (3, 8):
         return _CLR_GREEN
-    if state == TUA.EthercatState.SafeOperational:
+    if val == 4:
         return _CLR_ACCENT
-    if state == TUA.EthercatState.PreOperational:
+    if val == 2:
         return QColor("#cccc00")
     return _CLR_RED
 
 
 def _drive_type_label(raw: int) -> str:
-    known = {0: "", 41: "DX3", 42: "DX4"}
+    known = {0: "", 41: "DX3", 42: "DX4", 43: "DX1", 45: "DX5"}
     return known.get(raw, f"T{raw}")
 
 
@@ -325,6 +329,14 @@ class EthercatMapWindow(QDialog):
 
         conn_lock = self._conn_lock
 
+        # Stop connection watchdog during network scan to prevent timeout/disconnect
+        parent = self.parent()
+        if parent and hasattr(parent, "_stop_watchdog"):
+            try:
+                parent._stop_watchdog()
+            except Exception as exc:
+                logger.debug("Failed to stop watchdog: %s", exc)
+
         def _worker():
             try:
                 net = scan_network(self._connection, conn_lock=conn_lock)
@@ -341,9 +353,35 @@ class EthercatMapWindow(QDialog):
         self._status_label.setText("")
         self._rebuild_map()
 
+        # Restart connection watchdog
+        parent = self.parent()
+        if parent and hasattr(parent, "_start_watchdog"):
+            try:
+                parent._start_watchdog()
+            except Exception as exc:
+                logger.debug("Failed to start watchdog: %s", exc)
+
     def _on_scan_error(self, msg: str):
         self._btn_scan.setEnabled(True)
         self._status_label.setText(f"Scan error: {msg}")
+
+        # Restart connection watchdog
+        parent = self.parent()
+        if parent and hasattr(parent, "_start_watchdog"):
+            try:
+                parent._start_watchdog()
+            except Exception as exc:
+                logger.debug("Failed to start watchdog: %s", exc)
+
+    def closeEvent(self, event):
+        # Ensure watchdog is running when the window is closed
+        parent = self.parent()
+        if parent and hasattr(parent, "_start_watchdog"):
+            try:
+                parent._start_watchdog()
+            except Exception as exc:
+                logger.debug("Failed to start watchdog on close: %s", exc)
+        super().closeEvent(event)
 
     # ----- map rendering ---------------------------------------------------
 

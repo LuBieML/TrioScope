@@ -1,0 +1,40 @@
+2026-05-24 06:43:53,955 [INFO] __main__ (scope_app.py:91): =========================================
+2026-05-24 06:43:53,955 [INFO] __main__ (scope_app.py:92): TrioScope app starting. Version: 0.0.2
+2026-05-24 06:43:53,955 [INFO] __main__ (scope_app.py:93): Current working directory: E:\SynologySynchro\Projects\TrioScope
+2026-05-24 06:43:53,955 [INFO] __main__ (scope_app.py:94): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
+2026-05-24 06:43:53,955 [INFO] __main__ (scope_app.py:95): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
+2026-05-24 06:43:53,955 [INFO] __main__ (scope_app.py:96): =========================================
+2026-05-24 06:43:57,604 [INFO] scope.scope_engine (scope_engine.py:197): Servo period: 1000 μs (1.000 ms)
+2026-05-24 06:43:57,606 [INFO] scope.scope_engine (scope_engine.py:215): TABLE size: 512000
+2026-05-24 06:44:01,401 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:300): Drive scope axis 0 reports DRIVE_TYPE=0; cannot confirm drive protocol compatibility
+2026-05-24 06:44:01,447 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[1] = 0
+2026-05-24 06:44:01,470 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[2] = 0
+2026-05-24 06:44:01,493 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[3] = 0
+2026-05-24 06:44:01,516 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[4] = 0
+2026-05-24 06:44:01,539 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[5] = 0
+2026-05-24 06:44:01,563 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[6] = 1
+2026-05-24 06:44:01,586 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[7] = 8
+2026-05-24 06:44:01,609 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[8] = 3856
+2026-05-24 06:44:01,632 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[9] = 0
+2026-05-24 06:44:01,656 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[10] = 0
+2026-05-24 06:44:01,679 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[11] = 0
+2026-05-24 06:44:01,701 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[12] = 0
+2026-05-24 06:44:01,724 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[13] = 0
+2026-05-24 06:44:01,747 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[14] = 0
+2026-05-24 06:44:01,770 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:425): Setup 0x368C[15] = 0
+2026-05-24 06:44:03,778 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:441): Could not read back drive scope setup: SDO read timed out: axis 0, 0x368C sub 1
+2026-05-24 06:44:03,778 [INFO] scope.drive_scope_engine (drive_scope_engine.py:456): Drive scope configured: 1 ch, sample_time=8 (1000.0 μs), trigger=Free Run (no trigger), duration=1.000 s
+2026-05-24 06:44:03,778 [INFO] __main__ (scope_app.py:2106): Drive scope: {'active_channels': 1, 'sample_time_units': 8, 'sample_period_us': 1000, 'sample_period_ms': 1.0, 'capture_duration_sec': 1.0, 'samples_per_channel': 1000, 'trigger_mode': 'Free Run (no trigger)', 'channel_addresses': ['0x0F10']}
+2026-05-24 06:44:05,836 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:555): Typed status read failed; falling back to Execute: SDO read timed out: axis 0, 0x3680 sub 0
+2026-05-24 06:44:07,848 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:571): Status read timed out
+2026-05-24 06:44:07,848 [INFO] scope.drive_scope_engine (drive_scope_engine.py:478): Drive scope status after stop/re-arm: 0
+2026-05-24 06:44:09,239 [WARNING] __main__ (scope_app.py:1657): Watchdog heartbeat timed out after 5s
+2026-05-24 06:44:09,856 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:555): Typed status read failed; falling back to Execute: SDO read timed out: axis 0, 0x3680 sub 0
+2026-05-24 06:44:11,870 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:571): Status read timed out
+2026-05-24 06:44:11,890 [INFO] scope.drive_scope_engine (drive_scope_engine.py:504): Drive scope capture started; start status sequence=[0, 0], saw_sampling=False
+2026-05-24 06:44:13,945 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:555): Typed status read failed; falling back to Execute: SDO read timed out: axis 0, 0x3680 sub 0
+2026-05-24 06:44:15,950 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:571): Status read timed out
+2026-05-24 06:44:18,004 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:555): Typed status read failed; falling back to Execute: SDO read timed out: axis 0, 0x3680 sub 0
+2026-05-24 06:44:20,014 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:571): Status read timed out
+2026-05-24 06:44:22,072 [DEBUG] scope.drive_scope_engine (drive_scope_engine.py:555): Typed status read failed; falling back to Execute: SDO read timed out: axis 0, 0x3680 sub 0
+2026-05-24 06:44:24,085 [WARNING] scope.drive_scope_engine (drive_scope_engine.py:571): Status read timed out
