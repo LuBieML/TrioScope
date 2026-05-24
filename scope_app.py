@@ -1587,8 +1587,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._ref_set = {}          # {trace_id: id(ref_data_tuple)} — skip re-setData on static refs
         self._stats_pos_cache = {}  # {trace_id: (x, y)} — skip redundant TextItem.setPos
         self._last_render_data_len = 0  # last length passed to setData; skip if unchanged
-        # Compare companion window - None when closed
-        self._compare_window = None
+        # Compare companion windows.
+        self._compare_windows = []
+        self._compare_window_counter = 0
 
         # Pan/zoom debounce: sigRangeChanged fires per mouse event × N linked views (O(N²))
         self._stats_reposition_scheduled = False
@@ -1936,7 +1937,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_compare = QPushButton("\u29c9 Compare")
         self.btn_compare.setFixedWidth(110)
         self.btn_compare.setToolTip(
-            "Compare 2 or more enabled scopes in a separate window")
+            "Open a new compare window for 2 or more enabled scopes")
         self.btn_compare.clicked.connect(self._open_compare)
         status_layout.addWidget(self.btn_compare)
 
@@ -2323,15 +2324,10 @@ class ParameterScopeOscilloscope(QMainWindow):
             else:
                 label.hide()
 
-    # ─── Compare window ──────────────────────────────────────────
+    # ─── Compare windows ─────────────────────────────────────────
 
     def _open_compare(self):
-        """Open a resizable compare window with 2 or more selected live scopes."""
-        if self._compare_window is not None:
-            self._compare_window.raise_()
-            self._compare_window.activateWindow()
-            return
-
+        """Open another resizable compare window with selected live scopes."""
         if self.accumulated_data is None or not self.accumulated_data['params']:
             QMessageBox.information(
                 self, "Compare",
@@ -2376,38 +2372,50 @@ class ParameterScopeOscilloscope(QMainWindow):
         if len(chosen) < 2:
             return
 
-        self._compare_window = CompareWindow(chosen, fft_mode, parent=self)
-        self._compare_window.closed.connect(self._on_compare_closed)
-        self._compare_window.show()
-        self._compare_window.raise_()
-        self._compare_window.activateWindow()
+        self._compare_window_counter += 1
+        compare_window = CompareWindow(chosen, fft_mode, parent=self)
+        compare_window.setWindowTitle(
+            f"Compare Scopes {self._compare_window_counter}")
+        compare_window.closed.connect(
+            lambda w=compare_window: self._on_compare_closed(w))
+        self._compare_windows.append(compare_window)
+        compare_window.show()
+        compare_window.raise_()
+        compare_window.activateWindow()
         # Push current data immediately so the view isn't blank until next tick
-        self._push_compare_data()
+        self._push_compare_data(compare_window)
 
-    def _on_compare_closed(self):
-        self._compare_window = None
+    def _on_compare_closed(self, compare_window):
+        if compare_window in self._compare_windows:
+            self._compare_windows.remove(compare_window)
 
-    def _push_compare_data(self):
-        """Send latest accumulated data into the compare window."""
-        if self._compare_window is None or self.accumulated_data is None:
+    def _push_compare_data(self, compare_window=None):
+        """Send latest accumulated data into one or all compare windows."""
+        if self.accumulated_data is None:
             return
         data = self.accumulated_data
-        if self._compare_window.fft_mode:
-            # Reuse FFT cache if available; rebuild freqs from first cached mag
-            mags = {}
-            freqs = None
-            for trace in self._compare_window.traces:
-                cached = self._fft_cache.get(id(trace))
-                if cached and 'magnitude' in cached:
-                    mags[trace.get_display_name()] = cached['magnitude']
-                    if freqs is None and len(data['time']) > 1:
-                        sample_dt = float(data['time'][1] - data['time'][0])
-                        n_fft = len(cached['magnitude']) * 2 - 2
-                        freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
-            self._compare_window.update_data(
-                None, None, fft_freqs=freqs, fft_magnitudes=mags)
-        else:
-            self._compare_window.update_data(data['time'], data['params'])
+        windows = (
+            [compare_window]
+            if compare_window is not None
+            else list(self._compare_windows)
+        )
+        for window in windows:
+            if window.fft_mode:
+                # Reuse FFT cache if available; rebuild freqs from first cached mag
+                mags = {}
+                freqs = None
+                for trace in window.traces:
+                    cached = self._fft_cache.get(id(trace))
+                    if cached and 'magnitude' in cached:
+                        mags[trace.get_display_name()] = cached['magnitude']
+                        if freqs is None and len(data['time']) > 1:
+                            sample_dt = float(data['time'][1] - data['time'][0])
+                            n_fft = len(cached['magnitude']) * 2 - 2
+                            freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
+                window.update_data(
+                    None, None, fft_freqs=freqs, fft_magnitudes=mags)
+            else:
+                window.update_data(data['time'], data['params'])
 
     # ─── Cursor / measurement tool ───────────────────────────────
 
@@ -2918,9 +2926,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._stats_cache = {}
         self._ref_set = {}
         self._stats_pos_cache = {}
-        # Close compare window if any of its traces got deleted/disabled/retyped
-        if self._compare_window is not None:
-            cw = self._compare_window
+        # Close compare windows whose selected traces were deleted/disabled/retyped.
+        for cw in list(self._compare_windows):
             still_valid = all(
                 t in self.traces and t.is_enabled()
                 and t.is_fft() == cw.fft_mode
@@ -3962,8 +3969,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Update plots
         self._render_plots()
 
-        # Mirror live data into the compare window if it's open
-        if self._compare_window is not None:
+        # Mirror live data into every compare window if any are open.
+        if self._compare_windows:
             self._push_compare_data()
 
         # Update trace value labels
@@ -5297,9 +5304,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.is_running = False
         self._update_timer.stop()
         self._stop_watchdog()
-        if self._compare_window is not None:
-            self._compare_window.close()
-            self._compare_window = None
+        for compare_window in list(self._compare_windows):
+            compare_window.close()
+        self._compare_windows.clear()
         if self.trio_connected and self.trio_connection:
             # Close with 5s timeout — don't block app exit on dead socket
             close_done = threading.Event()

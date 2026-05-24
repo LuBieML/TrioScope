@@ -1,6 +1,8 @@
-2026-05-24 16:38:28,574 [INFO] __main__ (scope_app.py:92): =========================================
-2026-05-24 16:38:28,574 [INFO] __main__ (scope_app.py:93): TrioScope app starting. Version: 0.0.2
-2026-05-24 16:38:28,574 [INFO] __main__ (scope_app.py:94): Current working directory: E:\SynologySynchro\Projects\TrioScope
-2026-05-24 16:38:28,574 [INFO] __main__ (scope_app.py:95): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
-2026-05-24 16:38:28,574 [INFO] __main__ (scope_app.py:96): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
-2026-05-24 16:38:28,574 [INFO] __main__ (scope_app.py:97): =========================================
+2026-05-24 16:43:02,809 [INFO] __main__ (scope_app.py:92): =========================================
+2026-05-24 16:43:02,810 [INFO] __main__ (scope_app.py:93): TrioScope app starting. Version: 0.0.2
+2026-05-24 16:43:02,810 [INFO] __main__ (scope_app.py:94): Current working directory: E:\SynologySynchro\Projects\TrioScope
+2026-05-24 16:43:02,810 [INFO] __main__ (scope_app.py:95): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
+2026-05-24 16:43:02,810 [INFO] __main__ (scope_app.py:96): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
+2026-05-24 16:43:02,810 [INFO] __main__ (scope_app.py:97): =========================================
+2026-05-24 16:43:05,219 [INFO] scope.scope_engine (scope_engine.py:203): Servo period: 1000 μs (1.000 ms)
+2026-05-24 16:43:05,220 [INFO] scope.scope_engine (scope_engine.py:221): TABLE size: 512000
