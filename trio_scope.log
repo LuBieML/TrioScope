@@ -4,3 +4,5 @@
 2026-05-24 10:17:28,114 [INFO] __main__ (scope_app.py:95): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
 2026-05-24 10:17:28,114 [INFO] __main__ (scope_app.py:96): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
 2026-05-24 10:17:28,114 [INFO] __main__ (scope_app.py:97): =========================================
+2026-05-24 10:17:33,386 [INFO] scope.scope_engine (scope_engine.py:197): Servo period: 1000 μs (1.000 ms)
+2026-05-24 10:17:33,388 [INFO] scope.scope_engine (scope_engine.py:215): TABLE size: 512000
