@@ -13,6 +13,7 @@ class CaptureSettings:
     table_start: str = "0"
     use_end_of_table: bool = True
     capture_mode: str = "continuous"  # "single" or "continuous"
+    external_trigger: bool = False
 
 @dataclass
 class PlotSettings:

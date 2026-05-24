@@ -14,14 +14,18 @@ This mode uses the Trio controller's built-in `SCOPE` command. It can capture
 |---|---|
 | **Sample Period** | Number of servo cycles between samples. `1` = every servo cycle (highest rate). `2` = every other cycle, etc. |
 | **Duration** | How many seconds of data to capture in one shot. |
-| **Capture Mode** | **Single** stops after one buffer is filled. **Continuous** automatically restarts captures and accumulates data into one long timeline. |
+| **Capture Mode** | **Single** stops after one buffer is filled. **Continuous** automatically restarts captures into one long timeline. |
+| **External TRIGGER** | When enabled, **RUN** arms `SCOPE(ON, ...)` and waits for a `TRIGGER` command from the Trio controller program. It can be combined with **Single** or **Continuous**. |
 
 ### How it works
 
 The controller fills its internal `TABLE` memory with parameter samples and
-TrioScope reads back the data once the buffer is full. In **Continuous** mode,
-TrioScope chains captures back-to-back so the plot scrolls indefinitely. Small
-gaps between buffers are visible as **segment breaks** (vertical guides).
+TrioScope reads back the data once capture has started. With **External TRIGGER**
+enabled, pressing **RUN** only arms the controller-side SCOPE; sampling starts
+when a Trio BASIC program executes `TRIGGER`. For external continuous capture,
+use `TRIGGER(1)` in the BASIC program so the controller auto-retriggers. In
+normal **Continuous** mode, TrioScope starts this auto-retrigger internally.
+Small gaps between buffers are visible as **segment breaks** (vertical guides).
 
 ### When to use
 

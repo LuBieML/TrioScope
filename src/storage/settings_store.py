@@ -26,6 +26,10 @@ class SettingsStore:
         app_settings.capture.table_start = str(s.value("config/table_start", "0"))
         app_settings.capture.use_end_of_table = s.value("config/use_end_of_table", "true") == "true"
         app_settings.capture.capture_mode = str(s.value("config/capture_mode", "continuous"))
+        app_settings.capture.external_trigger = s.value("config/external_trigger", "false") == "true"
+        if app_settings.capture.capture_mode == "external":
+            app_settings.capture.capture_mode = "single"
+            app_settings.capture.external_trigger = True
 
         # Display / plot settings
         app_settings.display.plot_mode = str(s.value("display/plot_mode", "time"))
@@ -97,6 +101,7 @@ class SettingsStore:
         s.setValue("config/table_start", settings.capture.table_start)
         s.setValue("config/use_end_of_table", "true" if settings.capture.use_end_of_table else "false")
         s.setValue("config/capture_mode", settings.capture.capture_mode)
+        s.setValue("config/external_trigger", "true" if settings.capture.external_trigger else "false")
 
         # Display / plot settings
         s.setValue("display/plot_mode", settings.display.plot_mode)

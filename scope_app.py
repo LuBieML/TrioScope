@@ -973,7 +973,7 @@ class _ProfileManagerDialog(QDialog):
 
 
 class CompareWindow(QMainWindow):
-    """Fullscreen overlay window for comparing up to 3 live traces on one plot.
+    """Separate window for comparing two or more live traces on one plot.
 
     Each trace draws on its own ViewBox stacked on a shared main PlotItem so
     Y-scales stay independent (traces can have different units). X axis is
@@ -982,14 +982,16 @@ class CompareWindow(QMainWindow):
 
     closed = Signal()
 
-    MAX_TRACES = 3
+    MIN_TRACES = 2
 
     def __init__(self, traces, fft_mode, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Compare Traces")
+        super().__init__(parent, Qt.Window)
+        self.setWindowTitle("Compare Scopes")
         self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setMinimumSize(760, 480)
+        self.resize(1180, 720)
         self.fft_mode = fft_mode
-        self.traces = list(traces)  # TraceControl refs (up to 3)
+        self.traces = list(traces)  # TraceControl refs
 
         central = QWidget()
         central.setStyleSheet("background-color: #0A0A0A;")
@@ -1002,11 +1004,15 @@ class CompareWindow(QMainWindow):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         names = ", ".join(t.get_display_name() for t in self.traces)
-        title_text = f"Comparing {'FFT' if fft_mode else 'time-domain'}: {names}"
+        mode = "FFT" if fft_mode else "time-domain"
+        title_names = names if len(self.traces) <= 3 else f"{len(self.traces)} scopes"
+        title_text = f"Comparing {mode}: {title_names}"
         title = QLabel(title_text)
+        title.setToolTip(names)
+        title.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         title.setStyleSheet("color: #d4d4d4; font-size: 10pt; font-weight: bold;")
-        top.addWidget(title)
-        top.addStretch()
+        top.addWidget(title, 1)
         self.btn_link_y = QPushButton("\U0001f517 Unify Y")
         self.btn_link_y.setCheckable(True)
         self.btn_link_y.setToolTip(
@@ -1020,7 +1026,7 @@ class CompareWindow(QMainWindow):
         )
         self.btn_link_y.toggled.connect(self._on_link_y_toggled)
         top.addWidget(self.btn_link_y)
-        hint = QLabel("Esc to close")
+        hint = QLabel("Esc closes window")
         hint.setStyleSheet("color: #888888; font-size: 9pt; margin-left: 10px;")
         top.addWidget(hint)
         layout.addLayout(top)
@@ -1240,7 +1246,7 @@ class CompareWindow(QMainWindow):
 
 
 class _CompareTracePicker(QDialog):
-    """Small modal: pick up to 3 same-type enabled traces to compare."""
+    """Small modal: pick two or more same-type enabled traces to compare."""
 
     def __init__(self, candidates, fft_mode, parent=None):
         super().__init__(parent)
@@ -1258,14 +1264,14 @@ class _CompareTracePicker(QDialog):
 
         layout = QVBoxLayout(self)
         kind = "FFT" if fft_mode else "time-domain"
-        header = QLabel(f"Select 2–3 {kind} traces to overlay:")
+        header = QLabel(f"Select 2 or more {kind} scopes to overlay:")
         header.setStyleSheet("font-weight: bold;")
         layout.addWidget(header)
 
         for t in candidates:
             cb = QCheckBox(t.get_display_name())
             cb.setStyleSheet(f"color: {t.get_color()}; font-weight: bold;")
-            cb.toggled.connect(self._enforce_limit)
+            cb.toggled.connect(self._update_ok_state)
             self.checks.append(cb)
             layout.addWidget(cb)
 
@@ -1280,17 +1286,9 @@ class _CompareTracePicker(QDialog):
         btns.addWidget(cancel)
         layout.addLayout(btns)
 
-    def _enforce_limit(self):
-        selected = [cb for cb in self.checks if cb.isChecked()]
-        if len(selected) > CompareWindow.MAX_TRACES:
-            # Uncheck the most recent (the one that triggered us is the last toggled)
-            sender = self.sender()
-            if sender in selected:
-                sender.blockSignals(True)
-                sender.setChecked(False)
-                sender.blockSignals(False)
-                selected = [cb for cb in self.checks if cb.isChecked()]
-        self.btn_ok.setEnabled(2 <= len(selected) <= CompareWindow.MAX_TRACES)
+    def _update_ok_state(self):
+        selected_count = sum(cb.isChecked() for cb in self.checks)
+        self.btn_ok.setEnabled(selected_count >= CompareWindow.MIN_TRACES)
 
     def selected_traces(self):
         return [t for t, cb in zip(self.candidates, self.checks)
@@ -1405,7 +1403,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._ref_set = {}          # {trace_id: id(ref_data_tuple)} — skip re-setData on static refs
         self._stats_pos_cache = {}  # {trace_id: (x, y)} — skip redundant TextItem.setPos
         self._last_render_data_len = 0  # last length passed to setData; skip if unchanged
-        # Compare overlay (fullscreen) — None when closed
+        # Compare companion window - None when closed
         self._compare_window = None
 
         # Pan/zoom debounce: sigRangeChanged fires per mouse event × N linked views (O(N²))
@@ -1529,6 +1527,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         mode_layout.addWidget(self.radio_continuous)
         self.ctrl_mode_widget = mode_widget
         config_layout.addWidget(mode_widget, 3, 1, 1, 2)
+
+        self.external_trigger_chk = QCheckBox("External TRIGGER")
+        self.external_trigger_chk.setToolTip(
+            "Arm SCOPE and wait for a TRIGGER command from the Trio controller program"
+        )
+        config_layout.addWidget(self.external_trigger_chk, 4, 1, 1, 2)
 
         # -- Drive Scope config widgets (hidden by default) --
         self.drv_sample_label = QLabel("Capture Duration:")
@@ -1748,7 +1752,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_compare = QPushButton("\u29c9 Compare")
         self.btn_compare.setFixedWidth(110)
         self.btn_compare.setToolTip(
-            "Overlay 2\u20133 enabled traces in a fullscreen compare view")
+            "Compare 2 or more enabled scopes in a separate window")
         self.btn_compare.clicked.connect(self._open_compare)
         status_layout.addWidget(self.btn_compare)
 
@@ -2135,10 +2139,10 @@ class ParameterScopeOscilloscope(QMainWindow):
             else:
                 label.hide()
 
-    # ─── Compare overlay ─────────────────────────────────────────
+    # ─── Compare window ──────────────────────────────────────────
 
     def _open_compare(self):
-        """Open fullscreen compare window with 2\u20133 selected live traces."""
+        """Open a resizable compare window with 2 or more selected live scopes."""
         if self._compare_window is not None:
             self._compare_window.raise_()
             self._compare_window.activateWindow()
@@ -2190,7 +2194,9 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         self._compare_window = CompareWindow(chosen, fft_mode, parent=self)
         self._compare_window.closed.connect(self._on_compare_closed)
-        self._compare_window.showFullScreen()
+        self._compare_window.show()
+        self._compare_window.raise_()
+        self._compare_window.activateWindow()
         # Push current data immediately so the view isn't blank until next tick
         self._push_compare_data()
 
@@ -2563,7 +2569,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Controller SCOPE widgets
         for w in (self.ctrl_period_label, self.period_edit, self.ctrl_period_unit,
                   self.ctrl_duration_label, self.duration_edit, self.ctrl_duration_unit,
-                  self.ctrl_mode_label, self.ctrl_mode_widget):
+                  self.ctrl_mode_label, self.ctrl_mode_widget, self.external_trigger_chk):
             w.setVisible(not is_drive)
 
         # Drive Scope widgets
@@ -3192,7 +3198,11 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._update_timer.start()
 
             # Start capture thread
-            if self.radio_single.isChecked():
+            if self.external_trigger_chk.isChecked() and self.radio_single.isChecked():
+                self.scope_thread = threading.Thread(target=self._scope_single_external_trigger_thread, daemon=True)
+            elif self.external_trigger_chk.isChecked():
+                self.scope_thread = threading.Thread(target=self._scope_continuous_external_trigger_thread, daemon=True)
+            elif self.radio_single.isChecked():
                 self.scope_thread = threading.Thread(target=self._scope_single_shot_thread, daemon=True)
             else:
                 self.scope_thread = threading.Thread(target=self._scope_continuous_thread, daemon=True)
@@ -3428,6 +3438,140 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.is_running = False
             self.sig_capture_stopped.emit()
 
+    def _arm_and_wait_for_external_trigger(self) -> bool:
+        """Arm controller SCOPE and wait until SCOPE_POS shows TRIGGER activity."""
+        self.scope_engine.arm_capture()
+        self.sig_capture_status.emit("SCOPE armed; waiting for external TRIGGER...")
+        self.sig_capture_progress.emit("Waiting for TRIGGER")
+
+        try:
+            initial_scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
+        except Exception as exc:
+            logger.debug("Could not read initial SCOPE_POS after arming: %s", exc)
+            initial_scope_pos = 0
+
+        while self.is_running and self.trio_connected:
+            try:
+                scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
+            except Exception as exc:
+                logger.debug("Could not read SCOPE_POS while waiting for TRIGGER: %s", exc)
+                scope_pos = 0
+
+            if (
+                (initial_scope_pos == 0 and scope_pos > 0)
+                or (initial_scope_pos != 0 and scope_pos != initial_scope_pos)
+            ):
+                self.scope_engine.is_capturing = True
+                self.sig_capture_status.emit("External TRIGGER detected; capturing...")
+                return True
+
+            time.sleep(0.010)
+
+        try:
+            self.scope_engine.stop_capture()
+        except Exception:
+            pass
+        return False
+
+    def _scope_single_external_trigger_thread(self):
+        """Single-shot controller SCOPE started by a Trio BASIC TRIGGER command."""
+        try:
+            samples_per_param = (
+                (self.scope_engine.table_end - self.scope_engine.table_start + 1)
+                // self.scope_engine.num_params
+            )
+            sample_period = self.scope_engine.period_cycles * self.scope_engine.servo_period_sec
+            expected_duration = samples_per_param * sample_period
+
+            if not self._arm_and_wait_for_external_trigger():
+                return
+
+            last_sample_idx = 0
+            capture_start = time.monotonic()
+            timeout = max(10.0, expected_duration + 5.0)
+
+            while self.is_running and self.trio_connected:
+                batch_data, last_sample_idx = self.scope_engine.read_new_data(last_sample_idx, max_samples=0)
+                if batch_data and batch_data['num_samples'] > 0:
+                    self._push_data(batch_data)
+
+                pct = min(100.0, (last_sample_idx / samples_per_param) * 100.0)
+                self.sig_capture_progress.emit(f"Progress: {pct:.1f}%")
+
+                if last_sample_idx >= samples_per_param:
+                    break
+
+                if time.monotonic() - capture_start > timeout:
+                    self.sig_capture_status.emit("External-trigger capture timed out")
+                    logger.warning("External-trigger capture timed out")
+                    return
+
+                time.sleep(0.010)
+
+            if not self.is_running:
+                self.scope_engine.stop_capture()
+                return
+
+            self.scope_engine.stop_capture()
+            self.sig_capture_status.emit(f"Captured {last_sample_idx} samples")
+
+        except Exception as e:
+            self.sig_capture_status.emit(f"Error: {e}")
+            logger.exception("External-trigger single capture error")
+        finally:
+            self.is_running = False
+            self.sig_capture_stopped.emit()
+
+    def _scope_continuous_external_trigger_thread(self):
+        """Continuous controller SCOPE started by a Trio BASIC TRIGGER(1) command."""
+        try:
+            samples_per_param = (
+                (self.scope_engine.table_end - self.scope_engine.table_start + 1)
+                // self.scope_engine.num_params
+            )
+            sample_period = self.scope_engine.period_cycles * self.scope_engine.servo_period_sec
+
+            if not self._arm_and_wait_for_external_trigger():
+                return
+
+            last_sample_idx = 0
+            sample_offset = 0
+            self.sig_capture_status.emit("Capturing (external continuous)...")
+
+            while self.is_running and self.trio_connected:
+                batch_data, new_idx = self.scope_engine.read_new_data(last_sample_idx, max_samples=0)
+
+                if batch_data and batch_data['num_samples'] > 0:
+                    time_shift = sample_offset * sample_period
+                    if time_shift > 0:
+                        batch_data['time'] = batch_data['time'] + time_shift
+                    self._push_data(batch_data)
+                    last_sample_idx = new_idx
+                else:
+                    try:
+                        scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
+                        if scope_pos < last_sample_idx and last_sample_idx > 0:
+                            sample_offset += samples_per_param
+                            last_sample_idx = 0
+                            continue
+                    except Exception:
+                        pass
+
+                time.sleep(0.010)
+
+            if not self.is_running:
+                try:
+                    self.scope_engine.stop_capture()
+                except Exception:
+                    pass
+
+        except Exception as e:
+            self.sig_capture_status.emit(f"Error: {e}")
+            logger.exception("External-trigger continuous capture error")
+        finally:
+            self.is_running = False
+            self.sig_capture_stopped.emit()
+
     def _scope_single_shot_thread(self):
         """Single-shot capture — background thread"""
         try:
@@ -3634,7 +3778,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Update plots
         self._render_plots()
 
-        # Mirror live data into the compare overlay if it's open
+        # Mirror live data into the compare window if it's open
         if self._compare_window is not None:
             self._push_compare_data()
 
@@ -4886,6 +5030,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.radio_single.setChecked(True)
         else:
             self.radio_continuous.setChecked(True)
+        self.external_trigger_chk.setChecked(app_settings.capture.external_trigger)
 
         # Display / plot settings
         self.plot_mode = app_settings.display.plot_mode
@@ -4931,6 +5076,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         app_settings.capture.table_start = self.table_start_edit.text()
         app_settings.capture.use_end_of_table = self.use_end_of_table
         app_settings.capture.capture_mode = "single" if self.radio_single.isChecked() else "continuous"
+        app_settings.capture.external_trigger = self.external_trigger_chk.isChecked()
 
         # Display / plot settings
         app_settings.display.plot_mode = self.plot_mode
@@ -4967,6 +5113,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.is_running = False
         self._update_timer.stop()
         self._stop_watchdog()
+        if self._compare_window is not None:
+            self._compare_window.close()
+            self._compare_window = None
         if self.trio_connected and self.trio_connection:
             # Close with 5s timeout — don't block app exit on dead socket
             close_done = threading.Event()

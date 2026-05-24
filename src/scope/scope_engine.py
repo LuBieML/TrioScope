@@ -157,6 +157,8 @@ class ScopeEngine:
         self.scope_params = []           # Formatted strings for ScopeOn
         self.display_names = []          # User-friendly names for plotting
         self.tsize = None                # Controller TABLE size
+        self.is_armed = False
+        self._armed_via_execute_fallback = False
 
     @staticmethod
     def _scope_command_param(param: str) -> str:
@@ -166,7 +168,7 @@ class ScopeEngine:
             return f"READ_OP({out_match.group(1)})"
         return param
 
-    def _execute_scope_on(self, auto_retrigger: bool) -> None:
+    def _execute_arm_scope(self) -> None:
         params_str = ", ".join(
             self._scope_command_param(param) for param in self.scope_params
         )
@@ -174,10 +176,14 @@ class ScopeEngine:
             f"SCOPE(ON, {self.period_cycles}, {self.table_start}, "
             f"{self.table_end}, {params_str})"
         )
-        trigger_command = "TRIGGER(1)" if auto_retrigger else "TRIGGER"
 
         logger.debug("Arming SCOPE via Execute fallback: %s", scope_command)
         self.connection.Execute(scope_command)
+
+    def _execute_trigger(self, auto_retrigger: bool) -> None:
+        trigger_command = "TRIGGER(1)" if auto_retrigger else "TRIGGER"
+
+        logger.debug("Starting SCOPE via Execute fallback: %s", trigger_command)
         self.connection.Execute(trigger_command)
 
     def read_servo_period(self) -> float:
@@ -256,6 +262,9 @@ class ScopeEngine:
         self.num_params = len(param_strings)
         self.period_cycles = period_cycles
         self.table_start = table_start
+        self.is_armed = False
+        self.is_capturing = False
+        self._armed_via_execute_fallback = False
 
         # Calculate TABLE range needed
         sample_period_sec = period_cycles * self.servo_period_sec
@@ -289,21 +298,16 @@ class ScopeEngine:
 
         return config_info
 
-    def start_capture(self, auto_retrigger=False):
+    def arm_capture(self):
         """
-        Start SCOPE capture to TABLE.
+        Arm SCOPE capture to TABLE without starting sampling.
 
         According to Trio documentation:
-        1. SCOPE(ON, ...) arms the scope
-        2. TRIGGER starts capturing (one-shot)
-        3. TRIGGER(1) starts capturing with auto-retrigger at end of each scan
-
-        Args:
-            auto_retrigger: If True, use TRIGGER(1) so the controller
-                           automatically restarts capture when the buffer fills.
+        1. SCOPE(ON, ...) loads/arms the scope.
+        2. TRIGGER starts sampling later.
 
         Raises:
-            Exception: If SCOPE or TRIGGER fails
+            Exception: If SCOPE fails
         """
         try:
             logger.debug(
@@ -320,7 +324,7 @@ class ScopeEngine:
                     self.table_end,
                     list(self.scope_params),
                 )
-                self.connection.Trigger(auto_retrigger)
+                self._armed_via_execute_fallback = False
             except RuntimeError as e:
                 if "std::basic_string_view" not in str(e):
                     raise
@@ -328,7 +332,39 @@ class ScopeEngine:
                     "ScopeOn string conversion failed; falling back to Execute: %s",
                     e,
                 )
-                self._execute_scope_on(auto_retrigger)
+                self._execute_arm_scope()
+                self._armed_via_execute_fallback = True
+            self.is_armed = True
+            self.is_capturing = False
+            logger.debug("SCOPE armed")
+
+        except Exception as e:
+            logger.error(f"Failed to arm SCOPE: {e}")
+            raise
+
+    def trigger_capture(self, auto_retrigger=False):
+        """
+        Start an already armed SCOPE capture.
+
+        Args:
+            auto_retrigger: If True, use TRIGGER(1) so the controller
+                           automatically restarts capture when the buffer fills.
+
+        Raises:
+            RuntimeError: If SCOPE has not been armed.
+            Exception: If TRIGGER fails.
+        """
+        if not self.is_armed:
+            raise RuntimeError("SCOPE is not armed — call arm_capture() first")
+
+        try:
+            if self._armed_via_execute_fallback:
+                self._execute_trigger(auto_retrigger)
+            else:
+                try:
+                    self.connection.Trigger(auto_retrigger)
+                except AttributeError:
+                    self._execute_trigger(auto_retrigger)
             self.is_capturing = True
 
             if auto_retrigger:
@@ -339,6 +375,16 @@ class ScopeEngine:
         except Exception as e:
             logger.error(f"Failed to start SCOPE: {e}")
             raise
+
+    def start_capture(self, auto_retrigger=False):
+        """
+        Arm and immediately start SCOPE capture to TABLE.
+
+        This preserves the original TrioScope RUN behaviour. Use
+        arm_capture() when an external Trio BASIC program will issue TRIGGER.
+        """
+        self.arm_capture()
+        self.trigger_capture(auto_retrigger)
 
     def stop_capture(self):
         """
@@ -351,7 +397,9 @@ class ScopeEngine:
         """
         try:
             self.connection.ScopeOff()
+            self.is_armed = False
             self.is_capturing = False
+            self._armed_via_execute_fallback = False
             logger.debug("SCOPE capture stopped")
         except Exception as e:
             logger.error(f"Failed to stop SCOPE: {e}")

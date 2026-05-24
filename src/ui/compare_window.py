@@ -1,12 +1,15 @@
 import numpy as np
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDialog, QCheckBox
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QCheckBox, QSizePolicy,
+)
 from PySide6.QtCore import Signal, Qt
 import pyqtgraph as pg
 
 from plot.viewbox import ScopeViewBox
 
 class CompareWindow(QMainWindow):
-    """Fullscreen overlay window for comparing up to 3 live traces on one plot.
+    """Separate window for comparing two or more live traces on one plot.
 
     Each trace draws on its own ViewBox stacked on a shared main PlotItem so
     Y-scales stay independent (traces can have different units). X axis is
@@ -15,14 +18,16 @@ class CompareWindow(QMainWindow):
 
     closed = Signal()
 
-    MAX_TRACES = 3
+    MIN_TRACES = 2
 
     def __init__(self, traces, fft_mode, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Compare Traces")
+        super().__init__(parent, Qt.Window)
+        self.setWindowTitle("Compare Scopes")
         self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setMinimumSize(760, 480)
+        self.resize(1180, 720)
         self.fft_mode = fft_mode
-        self.traces = list(traces)  # TraceControl refs (up to 3)
+        self.traces = list(traces)  # TraceControl refs
 
         central = QWidget()
         central.setStyleSheet("background-color: #0A0A0A;")
@@ -35,11 +40,15 @@ class CompareWindow(QMainWindow):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         names = ", ".join(t.get_display_name() for t in self.traces)
-        title_text = f"Comparing {'FFT' if fft_mode else 'time-domain'}: {names}"
+        mode = "FFT" if fft_mode else "time-domain"
+        title_names = names if len(self.traces) <= 3 else f"{len(self.traces)} scopes"
+        title_text = f"Comparing {mode}: {title_names}"
         title = QLabel(title_text)
+        title.setToolTip(names)
+        title.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         title.setStyleSheet("color: #d4d4d4; font-size: 10pt; font-weight: bold;")
-        top.addWidget(title)
-        top.addStretch()
+        top.addWidget(title, 1)
         self.btn_link_y = QPushButton("\U0001f517 Unify Y")
         self.btn_link_y.setCheckable(True)
         self.btn_link_y.setToolTip(
@@ -53,7 +62,7 @@ class CompareWindow(QMainWindow):
         )
         self.btn_link_y.toggled.connect(self._on_link_y_toggled)
         top.addWidget(self.btn_link_y)
-        hint = QLabel("Esc to close")
+        hint = QLabel("Esc closes window")
         hint.setStyleSheet("color: #888888; font-size: 9pt; margin-left: 10px;")
         top.addWidget(hint)
         layout.addLayout(top)
@@ -271,7 +280,7 @@ class CompareWindow(QMainWindow):
 
 
 class _CompareTracePicker(QDialog):
-    """Small modal: pick up to 3 same-type enabled traces to compare."""
+    """Small modal: pick two or more same-type enabled traces to compare."""
 
     def __init__(self, candidates, fft_mode, parent=None):
         super().__init__(parent)
@@ -289,14 +298,14 @@ class _CompareTracePicker(QDialog):
 
         layout = QVBoxLayout(self)
         kind = "FFT" if fft_mode else "time-domain"
-        header = QLabel(f"Select 2–3 {kind} traces to overlay:")
+        header = QLabel(f"Select 2 or more {kind} scopes to overlay:")
         header.setStyleSheet("font-weight: bold;")
         layout.addWidget(header)
 
         for t in candidates:
             cb = QCheckBox(t.get_display_name())
             cb.setStyleSheet(f"color: {t.get_color()}; font-weight: bold;")
-            cb.toggled.connect(self._enforce_limit)
+            cb.toggled.connect(self._update_ok_state)
             self.checks.append(cb)
             layout.addWidget(cb)
 
@@ -311,17 +320,9 @@ class _CompareTracePicker(QDialog):
         btns.addWidget(cancel)
         layout.addLayout(btns)
 
-    def _enforce_limit(self):
-        selected = [cb for cb in self.checks if cb.isChecked()]
-        if len(selected) > CompareWindow.MAX_TRACES:
-            # Uncheck the most recent (the one that triggered us is the last toggled)
-            sender = self.sender()
-            if sender in selected:
-                sender.blockSignals(True)
-                sender.setChecked(False)
-                sender.blockSignals(False)
-                selected = [cb for cb in self.checks if cb.isChecked()]
-        self.btn_ok.setEnabled(2 <= len(selected) <= CompareWindow.MAX_TRACES)
+    def _update_ok_state(self):
+        selected_count = sum(cb.isChecked() for cb in self.checks)
+        self.btn_ok.setEnabled(selected_count >= CompareWindow.MIN_TRACES)
 
     def selected_traces(self):
         return [t for t, cb in zip(self.candidates, self.checks)
