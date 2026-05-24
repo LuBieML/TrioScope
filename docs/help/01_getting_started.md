@@ -52,6 +52,10 @@ See [Capture Modes](02_capture_modes.md) for the full comparison.
 6. Use the mouse to zoom, pan, and inspect (see
    [Navigation & Cursors](05_navigation.md)).
 
+For controller-program synchronisation, choose **External** capture mode before
+pressing **RUN**. TrioScope arms the controller SCOPE and waits until your Trio
+BASIC program executes `TRIGGER`.
+
 ## Saving Your Work
 
 - **Export CSV** — saves the entire captured buffer as a CSV file with one

@@ -24,6 +24,58 @@ class FakeScopeConnection:
 
 
 class ScopeEngineStartCaptureTests(unittest.TestCase):
+    def test_arm_capture_uses_scope_api_without_trigger(self):
+        connection = FakeScopeConnection()
+        engine = ScopeEngine(connection)
+        engine.servo_period_sec = 0.001
+        engine.tsize = 1000
+        engine.configure(
+            ["MPOS AXIS(0)"],
+            ["MPOS(0)"],
+            period_cycles=1,
+            duration_seconds=0.01,
+            table_start=30,
+        )
+
+        engine.arm_capture()
+
+        self.assertEqual(
+            connection.calls,
+            [("ScopeOn", (1, 30, 39, ["MPOS AXIS(0)"]))],
+        )
+        self.assertTrue(engine.is_armed)
+        self.assertFalse(engine.is_capturing)
+
+    def test_trigger_capture_starts_already_armed_scope(self):
+        connection = FakeScopeConnection()
+        engine = ScopeEngine(connection)
+        engine.servo_period_sec = 0.001
+        engine.tsize = 1000
+        engine.configure(
+            ["MPOS AXIS(0)"],
+            ["MPOS(0)"],
+            period_cycles=1,
+            duration_seconds=0.01,
+            table_start=30,
+        )
+        engine.arm_capture()
+        connection.calls.clear()
+
+        engine.trigger_capture(auto_retrigger=True)
+
+        self.assertEqual(connection.calls, [("Trigger", True)])
+        self.assertTrue(engine.is_armed)
+        self.assertTrue(engine.is_capturing)
+
+    def test_trigger_capture_requires_armed_scope(self):
+        connection = FakeScopeConnection()
+        engine = ScopeEngine(connection)
+
+        with self.assertRaisesRegex(RuntimeError, "SCOPE is not armed"):
+            engine.trigger_capture()
+
+        self.assertEqual(connection.calls, [])
+
     def test_start_capture_uses_scope_api_not_execute(self):
         connection = FakeScopeConnection()
         engine = ScopeEngine(connection)

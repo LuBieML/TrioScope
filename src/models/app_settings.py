@@ -12,7 +12,7 @@ class CaptureSettings:
     duration: str = "5.0"
     table_start: str = "0"
     use_end_of_table: bool = True
-    capture_mode: str = "continuous"  # "single" or "continuous"
+    capture_mode: str = "continuous"  # "single", "continuous", or "external"
 
 @dataclass
 class PlotSettings:

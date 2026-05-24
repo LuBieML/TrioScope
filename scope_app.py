@@ -1521,12 +1521,18 @@ class ParameterScopeOscilloscope(QMainWindow):
         mode_layout.setContentsMargins(0, 0, 0, 0)
         self.radio_single = QRadioButton("Single")
         self.radio_continuous = QRadioButton("Continuous")
+        self.radio_external = QRadioButton("External")
+        self.radio_external.setToolTip(
+            "Arm SCOPE and wait for a TRIGGER command from the Trio controller program"
+        )
         self.radio_continuous.setChecked(True)
         self.mode_group = QButtonGroup()
         self.mode_group.addButton(self.radio_single)
         self.mode_group.addButton(self.radio_continuous)
+        self.mode_group.addButton(self.radio_external)
         mode_layout.addWidget(self.radio_single)
         mode_layout.addWidget(self.radio_continuous)
+        mode_layout.addWidget(self.radio_external)
         self.ctrl_mode_widget = mode_widget
         config_layout.addWidget(mode_widget, 3, 1, 1, 2)
 
@@ -3192,7 +3198,9 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._update_timer.start()
 
             # Start capture thread
-            if self.radio_single.isChecked():
+            if self.radio_external.isChecked():
+                self.scope_thread = threading.Thread(target=self._scope_external_trigger_thread, daemon=True)
+            elif self.radio_single.isChecked():
                 self.scope_thread = threading.Thread(target=self._scope_single_shot_thread, daemon=True)
             else:
                 self.scope_thread = threading.Thread(target=self._scope_continuous_thread, daemon=True)
@@ -3424,6 +3432,88 @@ class ParameterScopeOscilloscope(QMainWindow):
         except Exception as e:
             self.sig_capture_status.emit(f"Drive scope error: {e}")
             logger.exception("Drive scope capture error")
+        finally:
+            self.is_running = False
+            self.sig_capture_stopped.emit()
+
+    def _scope_external_trigger_thread(self):
+        """Arm controller SCOPE and wait for TRIGGER from a Trio BASIC program."""
+        try:
+            samples_per_param = (
+                (self.scope_engine.table_end - self.scope_engine.table_start + 1)
+                // self.scope_engine.num_params
+            )
+            sample_period = self.scope_engine.period_cycles * self.scope_engine.servo_period_sec
+            expected_duration = samples_per_param * sample_period
+
+            self.scope_engine.arm_capture()
+            self.sig_capture_status.emit("SCOPE armed; waiting for external TRIGGER...")
+            self.sig_capture_progress.emit("Waiting for TRIGGER")
+
+            last_sample_idx = 0
+            triggered = False
+            try:
+                initial_scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
+            except Exception as exc:
+                logger.debug("Could not read initial SCOPE_POS after arming: %s", exc)
+                initial_scope_pos = 0
+
+            while self.is_running and self.trio_connected:
+                try:
+                    scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
+                except Exception as exc:
+                    logger.debug("Could not read SCOPE_POS while waiting for TRIGGER: %s", exc)
+                    scope_pos = 0
+
+                if (
+                    (initial_scope_pos == 0 and scope_pos > 0)
+                    or (initial_scope_pos != 0 and scope_pos != initial_scope_pos)
+                ):
+                    triggered = True
+                    self.scope_engine.is_capturing = True
+                    self.sig_capture_status.emit("External TRIGGER detected; capturing...")
+                    break
+
+                time.sleep(0.010)
+
+            if not triggered:
+                try:
+                    self.scope_engine.stop_capture()
+                except Exception:
+                    pass
+                return
+
+            capture_start = time.monotonic()
+            timeout = max(10.0, expected_duration + 5.0)
+
+            while self.is_running and self.trio_connected:
+                batch_data, last_sample_idx = self.scope_engine.read_new_data(last_sample_idx, max_samples=0)
+                if batch_data and batch_data['num_samples'] > 0:
+                    self._push_data(batch_data)
+
+                pct = min(100.0, (last_sample_idx / samples_per_param) * 100.0)
+                self.sig_capture_progress.emit(f"Progress: {pct:.1f}%")
+
+                if last_sample_idx >= samples_per_param:
+                    break
+
+                if time.monotonic() - capture_start > timeout:
+                    self.sig_capture_status.emit("External-trigger capture timed out")
+                    logger.warning("External-trigger capture timed out")
+                    return
+
+                time.sleep(0.010)
+
+            if not self.is_running:
+                self.scope_engine.stop_capture()
+                return
+
+            self.scope_engine.stop_capture()
+            self.sig_capture_status.emit(f"Captured {last_sample_idx} samples")
+
+        except Exception as e:
+            self.sig_capture_status.emit(f"Error: {e}")
+            logger.exception("External-trigger capture error")
         finally:
             self.is_running = False
             self.sig_capture_stopped.emit()
@@ -4884,6 +4974,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.use_end_of_table = app_settings.capture.use_end_of_table
         if app_settings.capture.capture_mode == "single":
             self.radio_single.setChecked(True)
+        elif app_settings.capture.capture_mode == "external":
+            self.radio_external.setChecked(True)
         else:
             self.radio_continuous.setChecked(True)
 
@@ -4930,7 +5022,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         app_settings.capture.duration = self.duration_edit.text()
         app_settings.capture.table_start = self.table_start_edit.text()
         app_settings.capture.use_end_of_table = self.use_end_of_table
-        app_settings.capture.capture_mode = "single" if self.radio_single.isChecked() else "continuous"
+        if self.radio_single.isChecked():
+            app_settings.capture.capture_mode = "single"
+        elif self.radio_external.isChecked():
+            app_settings.capture.capture_mode = "external"
+        else:
+            app_settings.capture.capture_mode = "continuous"
 
         # Display / plot settings
         app_settings.display.plot_mode = self.plot_mode
