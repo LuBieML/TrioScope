@@ -1,31 +1,6 @@
-2026-05-24 17:00:31,061 [INFO] __main__ (scope_app.py:92): =========================================
-2026-05-24 17:00:31,061 [INFO] __main__ (scope_app.py:93): TrioScope app starting. Version: 0.0.2
-2026-05-24 17:00:31,061 [INFO] __main__ (scope_app.py:94): Current working directory: E:\SynologySynchro\Projects\TrioScope
-2026-05-24 17:00:31,061 [INFO] __main__ (scope_app.py:95): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
-2026-05-24 17:00:31,061 [INFO] __main__ (scope_app.py:96): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
-2026-05-24 17:00:31,061 [INFO] __main__ (scope_app.py:97): =========================================
-2026-05-24 17:00:35,861 [INFO] scope.scope_engine (scope_engine.py:203): Servo period: 1000 μs (1.000 ms)
-2026-05-24 17:00:35,863 [INFO] scope.scope_engine (scope_engine.py:221): TABLE size: 512000
-2026-05-24 17:00:38,832 [INFO] ai.ethercat_scan (ethercat_scan.py:248): Slot 0: state=Operational, 4 slave(s)
-2026-05-24 17:00:38,877 [INFO] ai.ethercat_scan (ethercat_scan.py:282):   Slave 0: addr=2000, axis=-1, online=True, drive_type=0
-2026-05-24 17:00:38,959 [INFO] ai.ethercat_scan (ethercat_scan.py:282):   Slave 1: addr=1, axis=0, online=True, drive_type=0
-2026-05-24 17:00:39,040 [INFO] ai.ethercat_scan (ethercat_scan.py:282):   Slave 2: addr=2, axis=1, online=True, drive_type=0
-2026-05-24 17:00:39,123 [INFO] ai.ethercat_scan (ethercat_scan.py:282):   Slave 3: addr=3, axis=2, online=True, drive_type=0
-2026-05-24 17:00:46,335 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (30000 TABLE entries)
-2026-05-24 17:00:46,335 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=482000..511999, params=['MPOS AXIS(0)', 'MPOS AXIS(1)', 'MPOS AXIS(2)']
-2026-05-24 17:00:46,335 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
-2026-05-24 17:00:46,336 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 482000, 511999, MPOS AXIS(0), MPOS AXIS(1), MPOS AXIS(2))
-2026-05-24 17:00:46,337 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
-2026-05-24 17:00:46,337 [DEBUG] scope.scope_engine (scope_engine.py:186): Starting SCOPE via Execute fallback: TRIGGER(1)
-2026-05-24 17:00:46,339 [DEBUG] scope.scope_engine (scope_engine.py:371): SCOPE capture started (auto-retrigger)
-2026-05-24 17:00:48,740 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
-2026-05-24 17:00:48,746 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
-2026-05-24 17:00:56,979 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 5000 samples @ 1.000 ms (15000 TABLE entries)
-2026-05-24 17:00:56,980 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=497000..511999, params=['MPOS AXIS(0)', 'MPOS AXIS(1)', 'MPOS AXIS(2)']
-2026-05-24 17:00:56,980 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
-2026-05-24 17:00:56,980 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 497000, 511999, MPOS AXIS(0), MPOS AXIS(1), MPOS AXIS(2))
-2026-05-24 17:00:56,982 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
-2026-05-24 17:00:56,982 [DEBUG] scope.scope_engine (scope_engine.py:186): Starting SCOPE via Execute fallback: TRIGGER(1)
-2026-05-24 17:00:56,984 [DEBUG] scope.scope_engine (scope_engine.py:371): SCOPE capture started (auto-retrigger)
-2026-05-24 17:01:14,149 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
-2026-05-24 17:01:14,149 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 17:17:22,797 [INFO] scope_app (scope_app.py:92): =========================================
+2026-05-24 17:17:22,797 [INFO] scope_app (scope_app.py:93): TrioScope app starting. Version: 0.0.2
+2026-05-24 17:17:22,797 [INFO] scope_app (scope_app.py:94): Current working directory: E:\SynologySynchro\Projects\TrioScope
+2026-05-24 17:17:22,797 [INFO] scope_app (scope_app.py:95): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
+2026-05-24 17:17:22,797 [INFO] scope_app (scope_app.py:96): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
+2026-05-24 17:17:22,797 [INFO] scope_app (scope_app.py:97): =========================================

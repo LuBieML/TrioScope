@@ -123,6 +123,30 @@ class TraceControl(QFrame):
         self.btn_show_drive_vars.setVisible(False)
         row0.addWidget(self.btn_show_drive_vars)
 
+        self.btn_popout = QPushButton("\u2197")
+        self.btn_popout.setFixedSize(28, 22)
+        self.btn_popout.setToolTip("Open this trace in a separate window")
+        self.btn_popout.setEnabled(False)
+        self.btn_popout.setStyleSheet("""
+            QPushButton {
+                background-color: #4b4a4a;
+                color: #d4d4d4;
+                border: 1px solid #606060;
+                border-radius: 2px;
+                font-size: 10pt;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QPushButton:hover { background-color: #5a5a5a; }
+            QPushButton:disabled {
+                color: #666;
+                background-color: #3a3a3a;
+                border-color: #4a4a4a;
+            }
+        """)
+        self.chk_enable.toggled.connect(self.btn_popout.setEnabled)
+        row0.addWidget(self.btn_popout)
+
         self._drive_mode = False
 
         self.btn_delete = QPushButton("X")
@@ -247,7 +271,7 @@ class TraceControl(QFrame):
 
     def _on_param_changed(self, index=None):
         """Update axis/channel label and range based on selected parameter."""
-        is_ch = self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
+        is_ch = self.param_combo.currentText().strip() in CHANNEL_PARAMETERS_SET
         if is_ch:
             self.axis_label.setText("Ch")
             self.axis_spin.setRange(0, 1024)
@@ -260,7 +284,7 @@ class TraceControl(QFrame):
 
     def is_channel_parameter(self):
         """Return True if the currently selected parameter is a channel-type."""
-        return self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
+        return self.param_combo.currentText().strip() in CHANNEL_PARAMETERS_SET
 
     def _on_delete(self):
         self.setParent(None)
@@ -268,22 +292,20 @@ class TraceControl(QFrame):
         self.changed.emit()
 
     def _show_all_params(self):
-        """Clear search text and show full parameter dropdown."""
-        self.param_combo.setCurrentText(self.param_combo.currentText())
-        self.param_combo.lineEdit().clear()
+        """Show full parameter dropdown without clearing the selected value."""
         self.param_combo.showPopup()
 
     def _show_all_drive_vars(self):
-        """Clear search text and show full drive variable dropdown."""
-        self.drive_var_combo.setCurrentText(self.drive_var_combo.currentText())
-        self.drive_var_combo.lineEdit().clear()
+        """Show full drive variable dropdown without clearing the selected value."""
         self.drive_var_combo.showPopup()
 
     def is_enabled(self):
         return self.chk_enable.isChecked()
 
     def get_parameter_string(self):
-        param = self.param_combo.currentText()
+        param = self.param_combo.currentText().strip()
+        if not param:
+            return ""
         # Virtual params capture their underlying Trio parameter from the controller
         trio_param = _VIRTUAL_PARAM_MAP.get(param, param)
         idx = self.axis_spin.value()
@@ -294,7 +316,9 @@ class TraceControl(QFrame):
     def get_display_name(self):
         if self._drive_mode:
             return self.get_drive_display_name()
-        param = self.param_combo.currentText()
+        param = self.param_combo.currentText().strip()
+        if not param:
+            return f"Trace {self.trace_number + 1} (no parameter)"
         idx = self.axis_spin.value()
         if param in CHANNEL_PARAMETERS_SET:
             return f"{param} Ch({idx})"

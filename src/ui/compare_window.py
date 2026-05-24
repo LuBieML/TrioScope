@@ -21,14 +21,16 @@ class CompareWindow(QMainWindow):
 
     MIN_TRACES = 2
 
-    def __init__(self, traces, fft_mode, parent=None):
+    def __init__(self, traces, fft_mode, parent=None, single_trace=False):
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle("Compare Scopes")
+        self.single_trace = single_trace
+        self.setWindowTitle("Trace Scope" if single_trace else "Compare Scopes")
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setMinimumSize(760, 480)
         self.resize(1180, 720)
         self.fft_mode = fft_mode
         self.traces = list(traces)  # TraceControl refs
+        self.trace_keys = [t.get_display_name() for t in self.traces]
 
         central = QWidget()
         central.setStyleSheet("background-color: #0A0A0A;")
@@ -42,8 +44,11 @@ class CompareWindow(QMainWindow):
         top.setContentsMargins(0, 0, 0, 0)
         names = ", ".join(t.get_display_name() for t in self.traces)
         mode = "FFT" if fft_mode else "time-domain"
-        title_names = names if len(self.traces) <= 3 else f"{len(self.traces)} scopes"
-        title_text = f"Comparing {mode}: {title_names}"
+        if single_trace:
+            title_text = f"{mode}: {names}"
+        else:
+            title_names = names if len(self.traces) <= 3 else f"{len(self.traces)} scopes"
+            title_text = f"Comparing {mode}: {title_names}"
         title = QLabel(title_text)
         title.setToolTip(names)
         title.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -63,6 +68,7 @@ class CompareWindow(QMainWindow):
         )
         self.btn_link_y.toggled.connect(self._on_link_y_toggled)
         top.addWidget(self.btn_link_y)
+        self.btn_link_y.setVisible(len(self.traces) > 1)
         self.btn_cursors = QPushButton("\u2295 Cursors")
         self.btn_cursors.setCheckable(True)
         self.btn_cursors.setToolTip("Show draggable C1/C2 measurement cursors")
@@ -348,7 +354,8 @@ class CompareWindow(QMainWindow):
             self.cursor_readout.setText("")
             return
         if self._last_x is None or len(self._last_x) == 0:
-            self.cursor_readout.setText("No compare data available.")
+            msg = "No trace data available." if self.single_trace else "No compare data available."
+            self.cursor_readout.setText(msg)
             return
 
         x1 = self._cursor_pos['c1']
@@ -512,3 +519,10 @@ class _CompareTracePicker(QDialog):
     def selected_traces(self):
         return [t for t, cb in zip(self.candidates, self.checks)
                 if cb.isChecked()]
+
+
+class TraceWindow(CompareWindow):
+    """Single-trace companion window using the compare plot/cursor tools."""
+
+    def __init__(self, trace, fft_mode, parent=None):
+        super().__init__([trace], fft_mode, parent=parent, single_trace=True)

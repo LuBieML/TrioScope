@@ -56,6 +56,8 @@ class ScopeParameterParser:
             ValueError: If parameter format is invalid
         """
         param_str = param_str.strip()
+        if not param_str:
+            raise ValueError("Parameter cannot be empty")
 
         # Remove leading '?' if present
         if param_str.startswith('?'):
@@ -163,6 +165,9 @@ class ScopeEngine:
     @staticmethod
     def _scope_command_param(param: str) -> str:
         """Return a SCOPE command-line compatible parameter token."""
+        param = param.strip()
+        if not param:
+            raise ValueError("SCOPE parameter cannot be empty")
         out_match = re.match(r'^OUT\s*\(\s*(\d+)\s*\)$', param, re.IGNORECASE)
         if out_match:
             return f"READ_OP({out_match.group(1)})"
@@ -248,8 +253,15 @@ class ScopeEngine:
         Raises:
             ValueError: If TABLE range exceeds TSIZE or parameters invalid
         """
-        if not param_strings:
+        clean_params = [
+            str(param).strip() if param is not None else ""
+            for param in param_strings
+        ]
+        if not clean_params:
             raise ValueError("No parameters specified")
+        for idx, param in enumerate(clean_params, start=1):
+            if not param:
+                raise ValueError(f"SCOPE parameter {idx} is empty")
 
         if self.servo_period_sec is None:
             raise ValueError("Servo period not read. Call read_servo_period() first.")
@@ -257,9 +269,9 @@ class ScopeEngine:
         if self.tsize is None:
             raise ValueError("TABLE size not read. Call read_table_size() first.")
 
-        self.scope_params = param_strings
+        self.scope_params = clean_params
         self.display_names = display_names
-        self.num_params = len(param_strings)
+        self.num_params = len(clean_params)
         self.period_cycles = period_cycles
         self.table_start = table_start
         self.is_armed = False

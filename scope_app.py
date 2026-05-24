@@ -546,6 +546,30 @@ class TraceControl(QFrame):
         self.btn_show_drive_vars.setVisible(False)
         row0.addWidget(self.btn_show_drive_vars)
 
+        self.btn_popout = QPushButton("\u2197")
+        self.btn_popout.setFixedSize(28, 22)
+        self.btn_popout.setToolTip("Open this trace in a separate window")
+        self.btn_popout.setEnabled(False)
+        self.btn_popout.setStyleSheet("""
+            QPushButton {
+                background-color: #4b4a4a;
+                color: #d4d4d4;
+                border: 1px solid #606060;
+                border-radius: 2px;
+                font-size: 10pt;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QPushButton:hover { background-color: #5a5a5a; }
+            QPushButton:disabled {
+                color: #666;
+                background-color: #3a3a3a;
+                border-color: #4a4a4a;
+            }
+        """)
+        self.chk_enable.toggled.connect(self.btn_popout.setEnabled)
+        row0.addWidget(self.btn_popout)
+
         self._drive_mode = False
 
         self.btn_delete = QPushButton("X")
@@ -670,7 +694,7 @@ class TraceControl(QFrame):
 
     def _on_param_changed(self, index=None):
         """Update axis/channel label and range based on selected parameter."""
-        is_ch = self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
+        is_ch = self.param_combo.currentText().strip() in CHANNEL_PARAMETERS_SET
         if is_ch:
             self.axis_label.setText("Ch")
             self.axis_spin.setRange(0, 1024)
@@ -683,7 +707,7 @@ class TraceControl(QFrame):
 
     def is_channel_parameter(self):
         """Return True if the currently selected parameter is a channel-type."""
-        return self.param_combo.currentText() in CHANNEL_PARAMETERS_SET
+        return self.param_combo.currentText().strip() in CHANNEL_PARAMETERS_SET
 
     def _on_delete(self):
         self.setParent(None)
@@ -691,22 +715,20 @@ class TraceControl(QFrame):
         self.changed.emit()
 
     def _show_all_params(self):
-        """Clear search text and show full parameter dropdown."""
-        self.param_combo.setCurrentText(self.param_combo.currentText())
-        self.param_combo.lineEdit().clear()
+        """Show full parameter dropdown without clearing the selected value."""
         self.param_combo.showPopup()
 
     def _show_all_drive_vars(self):
-        """Clear search text and show full drive variable dropdown."""
-        self.drive_var_combo.setCurrentText(self.drive_var_combo.currentText())
-        self.drive_var_combo.lineEdit().clear()
+        """Show full drive variable dropdown without clearing the selected value."""
         self.drive_var_combo.showPopup()
 
     def is_enabled(self):
         return self.chk_enable.isChecked()
 
     def get_parameter_string(self):
-        param = self.param_combo.currentText()
+        param = self.param_combo.currentText().strip()
+        if not param:
+            return ""
         # Virtual params capture their underlying Trio parameter from the controller
         trio_param = _VIRTUAL_PARAM_MAP.get(param, param)
         idx = self.axis_spin.value()
@@ -717,7 +739,9 @@ class TraceControl(QFrame):
     def get_display_name(self):
         if self._drive_mode:
             return self.get_drive_display_name()
-        param = self.param_combo.currentText()
+        param = self.param_combo.currentText().strip()
+        if not param:
+            return f"Trace {self.trace_number + 1} (no parameter)"
         idx = self.axis_spin.value()
         if param in CHANNEL_PARAMETERS_SET:
             return f"{param} Ch({idx})"
@@ -984,14 +1008,16 @@ class CompareWindow(QMainWindow):
 
     MIN_TRACES = 2
 
-    def __init__(self, traces, fft_mode, parent=None):
+    def __init__(self, traces, fft_mode, parent=None, single_trace=False):
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle("Compare Scopes")
+        self.single_trace = single_trace
+        self.setWindowTitle("Trace Scope" if single_trace else "Compare Scopes")
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setMinimumSize(760, 480)
         self.resize(1180, 720)
         self.fft_mode = fft_mode
         self.traces = list(traces)  # TraceControl refs
+        self.trace_keys = [t.get_display_name() for t in self.traces]
 
         central = QWidget()
         central.setStyleSheet("background-color: #0A0A0A;")
@@ -1005,8 +1031,11 @@ class CompareWindow(QMainWindow):
         top.setContentsMargins(0, 0, 0, 0)
         names = ", ".join(t.get_display_name() for t in self.traces)
         mode = "FFT" if fft_mode else "time-domain"
-        title_names = names if len(self.traces) <= 3 else f"{len(self.traces)} scopes"
-        title_text = f"Comparing {mode}: {title_names}"
+        if single_trace:
+            title_text = f"{mode}: {names}"
+        else:
+            title_names = names if len(self.traces) <= 3 else f"{len(self.traces)} scopes"
+            title_text = f"Comparing {mode}: {title_names}"
         title = QLabel(title_text)
         title.setToolTip(names)
         title.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -1026,6 +1055,7 @@ class CompareWindow(QMainWindow):
         )
         self.btn_link_y.toggled.connect(self._on_link_y_toggled)
         top.addWidget(self.btn_link_y)
+        self.btn_link_y.setVisible(len(self.traces) > 1)
         self.btn_cursors = QPushButton("\u2295 Cursors")
         self.btn_cursors.setCheckable(True)
         self.btn_cursors.setToolTip("Show draggable C1/C2 measurement cursors")
@@ -1313,7 +1343,8 @@ class CompareWindow(QMainWindow):
             self.cursor_readout.setText("")
             return
         if self._last_x is None or len(self._last_x) == 0:
-            self.cursor_readout.setText("No compare data available.")
+            msg = "No trace data available." if self.single_trace else "No compare data available."
+            self.cursor_readout.setText(msg)
             return
 
         x1 = self._cursor_pos['c1']
@@ -1479,6 +1510,13 @@ class _CompareTracePicker(QDialog):
                 if cb.isChecked()]
 
 
+class TraceWindow(CompareWindow):
+    """Single-trace companion window using the compare plot/cursor tools."""
+
+    def __init__(self, trace, fft_mode, parent=None):
+        super().__init__([trace], fft_mode, parent=parent, single_trace=True)
+
+
 
 class ParameterScopeOscilloscope(QMainWindow):
     """Main application with oscilloscope-style UI — pyqtgraph version"""
@@ -1587,9 +1625,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._ref_set = {}          # {trace_id: id(ref_data_tuple)} — skip re-setData on static refs
         self._stats_pos_cache = {}  # {trace_id: (x, y)} — skip redundant TextItem.setPos
         self._last_render_data_len = 0  # last length passed to setData; skip if unchanged
-        # Compare companion windows.
+        # Compare/single-trace companion windows.
         self._compare_windows = []
         self._compare_window_counter = 0
+        self._trace_window_counter = 0
 
         # Pan/zoom debounce: sigRangeChanged fires per mouse event × N linked views (O(N²))
         self._stats_reposition_scheduled = False
@@ -2326,6 +2365,42 @@ class ParameterScopeOscilloscope(QMainWindow):
 
     # ─── Compare windows ─────────────────────────────────────────
 
+    def _open_trace_window(self, trace):
+        """Open a resizable companion window for one enabled trace."""
+        if trace not in self.traces or trace.parent() is None:
+            return
+
+        trace_name = trace.get_display_name()
+        if not trace.is_enabled():
+            QMessageBox.information(
+                self, "Trace Window",
+                "Enable this trace before opening it in a separate window.")
+            return
+
+        if self.accumulated_data is None or not self.accumulated_data['params']:
+            QMessageBox.information(
+                self, "Trace Window",
+                "Start a capture first - the trace window needs live data.")
+            return
+
+        if trace_name not in self.accumulated_data['params']:
+            QMessageBox.information(
+                self, "Trace Window",
+                f"No captured data is available for {trace_name}.")
+            return
+
+        self._trace_window_counter += 1
+        trace_window = TraceWindow(trace, trace.is_fft(), parent=self)
+        trace_window.setWindowTitle(
+            f"Trace Scope {self._trace_window_counter}: {trace_name}")
+        trace_window.closed.connect(
+            lambda w=trace_window: self._on_compare_closed(w))
+        self._compare_windows.append(trace_window)
+        trace_window.show()
+        trace_window.raise_()
+        trace_window.activateWindow()
+        self._push_compare_data(trace_window)
+
     def _open_compare(self):
         """Open another resizable compare window with selected live scopes."""
         if self.accumulated_data is None or not self.accumulated_data['params']:
@@ -2401,21 +2476,63 @@ class ParameterScopeOscilloscope(QMainWindow):
         )
         for window in windows:
             if window.fft_mode:
-                # Reuse FFT cache if available; rebuild freqs from first cached mag
+                # Reuse FFT cache if available; compute locally for pop-outs
+                # that are open while the main plot is in a non-FFT mode.
                 mags = {}
                 freqs = None
                 for trace in window.traces:
                     cached = self._fft_cache.get(id(trace))
+                    trace_freqs = None
+                    magnitude = None
                     if cached and 'magnitude' in cached:
-                        mags[trace.get_display_name()] = cached['magnitude']
-                        if freqs is None and len(data['time']) > 1:
+                        magnitude = cached['magnitude']
+                        if len(data['time']) > 1:
                             sample_dt = float(data['time'][1] - data['time'][0])
-                            n_fft = len(cached['magnitude']) * 2 - 2
-                            freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
+                            if sample_dt > 0:
+                                n_fft = max(1, len(magnitude) * 2 - 2)
+                                trace_freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
+                    if magnitude is None or trace_freqs is None:
+                        trace_freqs, magnitude = self._compute_fft_payload_for_trace(
+                            trace, data)
+                    if trace_freqs is None or magnitude is None:
+                        continue
+                    if freqs is None:
+                        freqs = trace_freqs
+                    if len(trace_freqs) != len(freqs):
+                        continue
+                    mags[trace.get_display_name()] = magnitude
                 window.update_data(
                     None, None, fft_freqs=freqs, fft_magnitudes=mags)
             else:
                 window.update_data(data['time'], data['params'])
+
+    def _compute_fft_payload_for_trace(self, trace, data):
+        """Compute FFT data for a companion window when the main cache is absent."""
+        time_arr = data['time']
+        values = data['params'].get(trace.get_display_name())
+        if values is None or len(time_arr) < 2 or len(values) < 2:
+            return None, None
+
+        sample_dt = float(time_arr[1] - time_arr[0])
+        if sample_dt <= 0:
+            return None, None
+
+        fft_values = values
+        if len(fft_values) > self._fft_max_samples:
+            fft_values = fft_values[-self._fft_max_samples:]
+
+        n_fft = len(fft_values)
+        freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
+        window = np.hanning(n_fft)
+        window_sum = np.sum(window)
+        if window_sum <= 0:
+            window = np.ones(n_fft)
+            window_sum = n_fft
+        centered = fft_values - np.mean(fft_values)
+        fft_vals = np.fft.rfft(centered * window)
+        magnitude = np.abs(fft_vals) * 2.0 / window_sum
+        magnitude[0] /= 2.0
+        return freqs, magnitude
 
     # ─── Cursor / measurement tool ───────────────────────────────
 
@@ -2898,6 +3015,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         trace = TraceControl(trace_idx, parent=self.traces_container)
         trace.changed.connect(self.on_trace_changed)
         trace.btn_pin.toggled.connect(lambda checked, t=trace: self._on_pin_toggled(t, checked))
+        trace.btn_popout.clicked.connect(
+            lambda checked=False, t=trace: self._open_trace_window(t))
         # Set drive mode if currently in drive scope source
         if self.capture_source == 'drive':
             trace.set_drive_mode(True)
@@ -2928,10 +3047,14 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._stats_pos_cache = {}
         # Close compare windows whose selected traces were deleted/disabled/retyped.
         for cw in list(self._compare_windows):
-            still_valid = all(
-                t in self.traces and t.is_enabled()
-                and t.is_fft() == cw.fft_mode
-                for t in cw.traces
+            current_keys = [t.get_display_name() for t in cw.traces]
+            expected_keys = getattr(cw, 'trace_keys', current_keys)
+            still_valid = (
+                current_keys == expected_keys and all(
+                    t in self.traces and t.is_enabled()
+                    and t.is_fft() == cw.fft_mode
+                    for t in cw.traces
+                )
             )
             if not still_valid:
                 cw.close()
@@ -3307,6 +3430,18 @@ class ParameterScopeOscilloscope(QMainWindow):
             QMessageBox.warning(self, "No Traces", "Enable at least one trace")
             return
 
+        missing_params = [
+            f"Trace {t.trace_number + 1}"
+            for t in enabled_traces
+            if not t._drive_mode and not t.param_combo.currentText().strip()
+        ]
+        if missing_params:
+            QMessageBox.warning(
+                self, "Missing Parameter",
+                "Select a parameter before starting capture for:\n\n"
+                + "\n".join(missing_params))
+            return
+
         # Deduplicate parameters — Trio SCOPE supports max 8 unique params
         seen = {}
         unique_params = []
@@ -3314,7 +3449,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         for t in enabled_traces:
             ps = t.get_parameter_string()
             if ps not in seen:
-                raw_param = t.param_combo.currentText() if not t._drive_mode else None
+                raw_param = t.param_combo.currentText().strip() if not t._drive_mode else None
                 if raw_param in _VIRTUAL_PARAM_MAP:
                     # Virtual params map to an underlying Trio param.  Store raw data under
                     # the display-name format of the underlying param (e.g. "DEMAND_SPEED(0)")
@@ -4640,7 +4775,7 @@ class ParameterScopeOscilloscope(QMainWindow):
                 self.add_trace()
                 trace = self.traces[-1]
                 trace.chk_enable.setChecked(True)
-                trace.param_combo.setCurrentText(param)
+                trace.param_combo.setCurrentText((param or "MPOS").strip() or "MPOS")
                 trace.axis_spin.setValue(axis)
 
             # --- Load data ---
@@ -4700,7 +4835,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         """Save the current trace configuration as a named profile."""
         enabled_traces = [
             TraceConfig(
-                param=t.param_combo.currentText(),
+                param=t.param_combo.currentText().strip() or "MPOS",
                 axis=t.axis_spin.value(),
                 enabled=t.chk_enable.isChecked(),
                 fft=t.is_fft()
@@ -4728,7 +4863,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         for t_cfg in traces_config:
             self.add_trace()
             t = self.traces[-1]
-            t.param_combo.setCurrentText(t_cfg.param)
+            t.param_combo.setCurrentText((t_cfg.param or "MPOS").strip() or "MPOS")
             t.axis_spin.setValue(t_cfg.axis)
             t.chk_enable.setChecked(t_cfg.enabled)
             t.set_fft(t_cfg.fft)
@@ -5247,7 +5382,7 @@ class ParameterScopeOscilloscope(QMainWindow):
             if i >= len(self.traces):
                 self.add_trace()
             t = self.traces[i]
-            t.param_combo.setCurrentText(trace_config.param)
+            t.param_combo.setCurrentText((trace_config.param or "MPOS").strip() or "MPOS")
             t.axis_spin.setValue(trace_config.axis)
             t.chk_enable.setChecked(trace_config.enabled)
             t.set_fft(trace_config.fft)
@@ -5284,7 +5419,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Traces
         for t in self.traces:
             app_settings.traces.append(TraceConfig(
-                param=t.param_combo.currentText(),
+                param=t.param_combo.currentText().strip() or "MPOS",
                 axis=t.axis_spin.value(),
                 enabled=t.chk_enable.isChecked(),
                 fft=t.is_fft()

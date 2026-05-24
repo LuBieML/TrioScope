@@ -47,7 +47,7 @@ class SettingsStore:
         # Traces
         num_traces = int(s.value("traces/count", 0))
         for i in range(num_traces):
-            param = str(s.value(f"traces/{i}/param", "MPOS"))
+            param = str(s.value(f"traces/{i}/param", "MPOS")).strip() or "MPOS"
             axis = int(s.value(f"traces/{i}/axis", 0))
             enabled = s.value(f"traces/{i}/enabled", "true") == "true"
             fft = s.value(f"traces/{i}/fft", "false") == "true" or migrate_global_fft
@@ -114,7 +114,7 @@ class SettingsStore:
         # Traces
         s.setValue("traces/count", len(settings.traces))
         for i, t in enumerate(settings.traces):
-            s.setValue(f"traces/{i}/param", t.param)
+            s.setValue(f"traces/{i}/param", str(t.param or "MPOS").strip() or "MPOS")
             s.setValue(f"traces/{i}/axis", t.axis)
             s.setValue(f"traces/{i}/enabled", "true" if t.enabled else "false")
             s.setValue(f"traces/{i}/fft", "true" if t.fft else "false")

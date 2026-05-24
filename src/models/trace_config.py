@@ -19,7 +19,7 @@ class TraceConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "TraceConfig":
         """Reconstruct trace configuration from a dictionary."""
         return cls(
-            param=data.get("param", "MPOS"),
+            param=str(data.get("param", "MPOS") or "MPOS").strip() or "MPOS",
             axis=int(data.get("axis", 0)),
             enabled=data.get("enabled", True) in (True, "true", "True", 1),
             fft=data.get("fft", False) in (True, "true", "True", 1),
