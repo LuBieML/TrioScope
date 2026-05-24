@@ -52,7 +52,7 @@ See [Capture Modes](02_capture_modes.md) for the full comparison.
 6. Use the mouse to zoom, pan, and inspect (see
    [Navigation & Cursors](05_navigation.md)).
 
-For controller-program synchronisation, choose **External** capture mode before
+For controller-program synchronisation, enable **External TRIGGER** before
 pressing **RUN**. TrioScope arms the controller SCOPE and waits until your Trio
 BASIC program executes `TRIGGER`.
 

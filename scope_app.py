@@ -1519,20 +1519,20 @@ class ParameterScopeOscilloscope(QMainWindow):
         mode_layout.setContentsMargins(0, 0, 0, 0)
         self.radio_single = QRadioButton("Single")
         self.radio_continuous = QRadioButton("Continuous")
-        self.radio_external = QRadioButton("External")
-        self.radio_external.setToolTip(
-            "Arm SCOPE and wait for a TRIGGER command from the Trio controller program"
-        )
         self.radio_continuous.setChecked(True)
         self.mode_group = QButtonGroup()
         self.mode_group.addButton(self.radio_single)
         self.mode_group.addButton(self.radio_continuous)
-        self.mode_group.addButton(self.radio_external)
         mode_layout.addWidget(self.radio_single)
         mode_layout.addWidget(self.radio_continuous)
-        mode_layout.addWidget(self.radio_external)
         self.ctrl_mode_widget = mode_widget
         config_layout.addWidget(mode_widget, 3, 1, 1, 2)
+
+        self.external_trigger_chk = QCheckBox("External TRIGGER")
+        self.external_trigger_chk.setToolTip(
+            "Arm SCOPE and wait for a TRIGGER command from the Trio controller program"
+        )
+        config_layout.addWidget(self.external_trigger_chk, 4, 1, 1, 2)
 
         # -- Drive Scope config widgets (hidden by default) --
         self.drv_sample_label = QLabel("Capture Duration:")
@@ -2569,7 +2569,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Controller SCOPE widgets
         for w in (self.ctrl_period_label, self.period_edit, self.ctrl_period_unit,
                   self.ctrl_duration_label, self.duration_edit, self.ctrl_duration_unit,
-                  self.ctrl_mode_label, self.ctrl_mode_widget):
+                  self.ctrl_mode_label, self.ctrl_mode_widget, self.external_trigger_chk):
             w.setVisible(not is_drive)
 
         # Drive Scope widgets
@@ -3198,8 +3198,10 @@ class ParameterScopeOscilloscope(QMainWindow):
             self._update_timer.start()
 
             # Start capture thread
-            if self.radio_external.isChecked():
-                self.scope_thread = threading.Thread(target=self._scope_external_trigger_thread, daemon=True)
+            if self.external_trigger_chk.isChecked() and self.radio_single.isChecked():
+                self.scope_thread = threading.Thread(target=self._scope_single_external_trigger_thread, daemon=True)
+            elif self.external_trigger_chk.isChecked():
+                self.scope_thread = threading.Thread(target=self._scope_continuous_external_trigger_thread, daemon=True)
             elif self.radio_single.isChecked():
                 self.scope_thread = threading.Thread(target=self._scope_single_shot_thread, daemon=True)
             else:
@@ -3436,8 +3438,43 @@ class ParameterScopeOscilloscope(QMainWindow):
             self.is_running = False
             self.sig_capture_stopped.emit()
 
-    def _scope_external_trigger_thread(self):
-        """Arm controller SCOPE and wait for TRIGGER from a Trio BASIC program."""
+    def _arm_and_wait_for_external_trigger(self) -> bool:
+        """Arm controller SCOPE and wait until SCOPE_POS shows TRIGGER activity."""
+        self.scope_engine.arm_capture()
+        self.sig_capture_status.emit("SCOPE armed; waiting for external TRIGGER...")
+        self.sig_capture_progress.emit("Waiting for TRIGGER")
+
+        try:
+            initial_scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
+        except Exception as exc:
+            logger.debug("Could not read initial SCOPE_POS after arming: %s", exc)
+            initial_scope_pos = 0
+
+        while self.is_running and self.trio_connected:
+            try:
+                scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
+            except Exception as exc:
+                logger.debug("Could not read SCOPE_POS while waiting for TRIGGER: %s", exc)
+                scope_pos = 0
+
+            if (
+                (initial_scope_pos == 0 and scope_pos > 0)
+                or (initial_scope_pos != 0 and scope_pos != initial_scope_pos)
+            ):
+                self.scope_engine.is_capturing = True
+                self.sig_capture_status.emit("External TRIGGER detected; capturing...")
+                return True
+
+            time.sleep(0.010)
+
+        try:
+            self.scope_engine.stop_capture()
+        except Exception:
+            pass
+        return False
+
+    def _scope_single_external_trigger_thread(self):
+        """Single-shot controller SCOPE started by a Trio BASIC TRIGGER command."""
         try:
             samples_per_param = (
                 (self.scope_engine.table_end - self.scope_engine.table_start + 1)
@@ -3446,43 +3483,10 @@ class ParameterScopeOscilloscope(QMainWindow):
             sample_period = self.scope_engine.period_cycles * self.scope_engine.servo_period_sec
             expected_duration = samples_per_param * sample_period
 
-            self.scope_engine.arm_capture()
-            self.sig_capture_status.emit("SCOPE armed; waiting for external TRIGGER...")
-            self.sig_capture_progress.emit("Waiting for TRIGGER")
-
-            last_sample_idx = 0
-            triggered = False
-            try:
-                initial_scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
-            except Exception as exc:
-                logger.debug("Could not read initial SCOPE_POS after arming: %s", exc)
-                initial_scope_pos = 0
-
-            while self.is_running and self.trio_connected:
-                try:
-                    scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
-                except Exception as exc:
-                    logger.debug("Could not read SCOPE_POS while waiting for TRIGGER: %s", exc)
-                    scope_pos = 0
-
-                if (
-                    (initial_scope_pos == 0 and scope_pos > 0)
-                    or (initial_scope_pos != 0 and scope_pos != initial_scope_pos)
-                ):
-                    triggered = True
-                    self.scope_engine.is_capturing = True
-                    self.sig_capture_status.emit("External TRIGGER detected; capturing...")
-                    break
-
-                time.sleep(0.010)
-
-            if not triggered:
-                try:
-                    self.scope_engine.stop_capture()
-                except Exception:
-                    pass
+            if not self._arm_and_wait_for_external_trigger():
                 return
 
+            last_sample_idx = 0
             capture_start = time.monotonic()
             timeout = max(10.0, expected_duration + 5.0)
 
@@ -3513,7 +3517,57 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         except Exception as e:
             self.sig_capture_status.emit(f"Error: {e}")
-            logger.exception("External-trigger capture error")
+            logger.exception("External-trigger single capture error")
+        finally:
+            self.is_running = False
+            self.sig_capture_stopped.emit()
+
+    def _scope_continuous_external_trigger_thread(self):
+        """Continuous controller SCOPE started by a Trio BASIC TRIGGER(1) command."""
+        try:
+            samples_per_param = (
+                (self.scope_engine.table_end - self.scope_engine.table_start + 1)
+                // self.scope_engine.num_params
+            )
+            sample_period = self.scope_engine.period_cycles * self.scope_engine.servo_period_sec
+
+            if not self._arm_and_wait_for_external_trigger():
+                return
+
+            last_sample_idx = 0
+            sample_offset = 0
+            self.sig_capture_status.emit("Capturing (external continuous)...")
+
+            while self.is_running and self.trio_connected:
+                batch_data, new_idx = self.scope_engine.read_new_data(last_sample_idx, max_samples=0)
+
+                if batch_data and batch_data['num_samples'] > 0:
+                    time_shift = sample_offset * sample_period
+                    if time_shift > 0:
+                        batch_data['time'] = batch_data['time'] + time_shift
+                    self._push_data(batch_data)
+                    last_sample_idx = new_idx
+                else:
+                    try:
+                        scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
+                        if scope_pos < last_sample_idx and last_sample_idx > 0:
+                            sample_offset += samples_per_param
+                            last_sample_idx = 0
+                            continue
+                    except Exception:
+                        pass
+
+                time.sleep(0.010)
+
+            if not self.is_running:
+                try:
+                    self.scope_engine.stop_capture()
+                except Exception:
+                    pass
+
+        except Exception as e:
+            self.sig_capture_status.emit(f"Error: {e}")
+            logger.exception("External-trigger continuous capture error")
         finally:
             self.is_running = False
             self.sig_capture_stopped.emit()
@@ -4974,10 +5028,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.use_end_of_table = app_settings.capture.use_end_of_table
         if app_settings.capture.capture_mode == "single":
             self.radio_single.setChecked(True)
-        elif app_settings.capture.capture_mode == "external":
-            self.radio_external.setChecked(True)
         else:
             self.radio_continuous.setChecked(True)
+        self.external_trigger_chk.setChecked(app_settings.capture.external_trigger)
 
         # Display / plot settings
         self.plot_mode = app_settings.display.plot_mode
@@ -5022,12 +5075,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         app_settings.capture.duration = self.duration_edit.text()
         app_settings.capture.table_start = self.table_start_edit.text()
         app_settings.capture.use_end_of_table = self.use_end_of_table
-        if self.radio_single.isChecked():
-            app_settings.capture.capture_mode = "single"
-        elif self.radio_external.isChecked():
-            app_settings.capture.capture_mode = "external"
-        else:
-            app_settings.capture.capture_mode = "continuous"
+        app_settings.capture.capture_mode = "single" if self.radio_single.isChecked() else "continuous"
+        app_settings.capture.external_trigger = self.external_trigger_chk.isChecked()
 
         # Display / plot settings
         app_settings.display.plot_mode = self.plot_mode

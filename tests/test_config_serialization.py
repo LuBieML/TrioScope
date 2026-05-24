@@ -47,13 +47,14 @@ class TestConfigSerialization(unittest.TestCase):
     def test_app_settings_serialization(self):
         settings = AppSettings(
             connection=ConnectionSettings(ip="192.168.1.100"),
-            capture=CaptureSettings(duration="10.0"),
+            capture=CaptureSettings(duration="10.0", external_trigger=True),
             traces=[TraceConfig(param="MPOS", axis=0), TraceConfig(param="DPOS", axis=1)],
             drive_profiles={0: {"pn100": 1000, "drive_type": "EtherCAT"}}
         )
         d = settings.to_dict()
         self.assertEqual(d["connection"]["ip"], "192.168.1.100")
         self.assertEqual(d["capture"]["duration"], "10.0")
+        self.assertTrue(d["capture"]["external_trigger"])
         self.assertEqual(len(d["traces"]), 2)
         self.assertEqual(d["traces"][0]["param"], "MPOS")
         self.assertEqual(d["drive_profiles"][0]["pn100"], 1000)
@@ -72,7 +73,7 @@ class TestConfigSerialization(unittest.TestCase):
             # Save configuration
             settings = AppSettings(
                 connection=ConnectionSettings(ip="10.0.0.5"),
-                capture=CaptureSettings(duration="3.5", use_end_of_table=False),
+                capture=CaptureSettings(duration="3.5", use_end_of_table=False, external_trigger=True),
                 traces=[TraceConfig(param="FE", axis=2, enabled=False)]
             )
             store.save(settings)
@@ -82,10 +83,32 @@ class TestConfigSerialization(unittest.TestCase):
             self.assertEqual(loaded.connection.ip, "10.0.0.5")
             self.assertEqual(loaded.capture.duration, "3.5")
             self.assertFalse(loaded.capture.use_end_of_table)
+            self.assertTrue(loaded.capture.external_trigger)
             self.assertEqual(len(loaded.traces), 1)
             self.assertEqual(loaded.traces[0].param, "FE")
             self.assertEqual(loaded.traces[0].axis, 2)
             self.assertFalse(loaded.traces[0].enabled)
+        finally:
+            os.remove(tmp_name)
+
+    def test_settings_store_migrates_old_external_capture_mode(self):
+        import tempfile
+        import os
+        from PySide6.QtCore import QSettings
+        from src.storage.settings_store import SettingsStore
+
+        with tempfile.NamedTemporaryFile(suffix=".ini", delete=False) as tmp:
+            tmp_name = tmp.name
+
+        try:
+            qsettings = QSettings(tmp_name, QSettings.IniFormat)
+            qsettings.setValue("config/capture_mode", "external")
+            qsettings.sync()
+
+            loaded = SettingsStore(filename=tmp_name).load()
+
+            self.assertEqual(loaded.capture.capture_mode, "single")
+            self.assertTrue(loaded.capture.external_trigger)
         finally:
             os.remove(tmp_name)
 
