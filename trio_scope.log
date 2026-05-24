@@ -1,6 +1,27 @@
-2026-05-24 10:17:28,114 [INFO] __main__ (scope_app.py:92): =========================================
-2026-05-24 10:17:28,114 [INFO] __main__ (scope_app.py:93): TrioScope app starting. Version: 0.0.2
-2026-05-24 10:17:28,114 [INFO] __main__ (scope_app.py:94): Current working directory: E:\SynologySynchro\Projects\TrioScope
-2026-05-24 10:17:28,114 [INFO] __main__ (scope_app.py:95): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
-2026-05-24 10:17:28,114 [INFO] __main__ (scope_app.py:96): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
-2026-05-24 10:17:28,114 [INFO] __main__ (scope_app.py:97): =========================================
+2026-05-24 12:51:30,002 [INFO] __main__ (scope_app.py:92): =========================================
+2026-05-24 12:51:30,002 [INFO] __main__ (scope_app.py:93): TrioScope app starting. Version: 0.0.2
+2026-05-24 12:51:30,003 [INFO] __main__ (scope_app.py:94): Current working directory: E:\SynologySynchro\Projects\TrioScope
+2026-05-24 12:51:30,003 [INFO] __main__ (scope_app.py:95): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
+2026-05-24 12:51:30,003 [INFO] __main__ (scope_app.py:96): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
+2026-05-24 12:51:30,003 [INFO] __main__ (scope_app.py:97): =========================================
+2026-05-24 12:51:41,247 [INFO] scope.scope_engine (scope_engine.py:197): Servo period: 1000 μs (1.000 ms)
+2026-05-24 12:51:41,249 [INFO] scope.scope_engine (scope_engine.py:215): TABLE size: 512000
+2026-05-24 12:51:43,797 [INFO] ai.ethercat_scan (ethercat_scan.py:248): Slot 0: state=Operational, 4 slave(s)
+2026-05-24 12:51:43,844 [INFO] ai.ethercat_scan (ethercat_scan.py:282):   Slave 0: addr=2000, axis=-1, online=True, drive_type=0
+2026-05-24 12:51:43,929 [INFO] ai.ethercat_scan (ethercat_scan.py:282):   Slave 1: addr=1, axis=0, online=True, drive_type=0
+2026-05-24 12:51:44,011 [INFO] ai.ethercat_scan (ethercat_scan.py:282):   Slave 2: addr=2, axis=1, online=True, drive_type=0
+2026-05-24 12:51:44,094 [INFO] ai.ethercat_scan (ethercat_scan.py:282):   Slave 3: addr=3, axis=2, online=True, drive_type=0
+2026-05-24 12:51:48,071 [INFO] scope.scope_engine (scope_engine.py:287): SCOPE configured: 10000 samples @ 1.000 ms (10000 TABLE entries)
+2026-05-24 12:51:48,072 [DEBUG] scope.scope_engine (scope_engine.py:309): Arming SCOPE: period=1, table=502000..511999, params=['MPOS AXIS(6)']
+2026-05-24 12:51:48,072 [WARNING] scope.scope_engine (scope_engine.py:327): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 12:51:48,072 [DEBUG] scope.scope_engine (scope_engine.py:179): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 502000, 511999, MPOS AXIS(6))
+2026-05-24 12:51:48,077 [DEBUG] scope.scope_engine (scope_engine.py:335): SCOPE capture started (auto-retrigger)
+2026-05-24 12:51:49,383 [DEBUG] scope.scope_engine (scope_engine.py:355): SCOPE capture stopped
+2026-05-24 12:51:49,393 [DEBUG] scope.scope_engine (scope_engine.py:355): SCOPE capture stopped
+2026-05-24 12:51:53,202 [INFO] scope.scope_engine (scope_engine.py:287): SCOPE configured: 10000 samples @ 1.000 ms (10000 TABLE entries)
+2026-05-24 12:51:53,202 [DEBUG] scope.scope_engine (scope_engine.py:309): Arming SCOPE: period=1, table=502000..511999, params=['MPOS AXIS(1)']
+2026-05-24 12:51:53,203 [WARNING] scope.scope_engine (scope_engine.py:327): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 12:51:53,203 [DEBUG] scope.scope_engine (scope_engine.py:179): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 502000, 511999, MPOS AXIS(1))
+2026-05-24 12:51:53,207 [DEBUG] scope.scope_engine (scope_engine.py:335): SCOPE capture started (auto-retrigger)
+2026-05-24 12:51:55,073 [DEBUG] scope.scope_engine (scope_engine.py:355): SCOPE capture stopped
+2026-05-24 12:51:55,080 [DEBUG] scope.scope_engine (scope_engine.py:355): SCOPE capture stopped
