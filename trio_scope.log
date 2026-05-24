@@ -6,3 +6,48 @@
 2026-05-24 16:43:02,810 [INFO] __main__ (scope_app.py:97): =========================================
 2026-05-24 16:43:05,219 [INFO] scope.scope_engine (scope_engine.py:203): Servo period: 1000 μs (1.000 ms)
 2026-05-24 16:43:05,220 [INFO] scope.scope_engine (scope_engine.py:221): TABLE size: 512000
+2026-05-24 16:43:16,604 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (20000 TABLE entries)
+2026-05-24 16:43:16,605 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=492000..511999, params=['MPOS AXIS(0)', 'MPOS AXIS(1)']
+2026-05-24 16:43:16,605 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 16:43:16,605 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 492000, 511999, MPOS AXIS(0), MPOS AXIS(1))
+2026-05-24 16:43:16,607 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 16:43:16,607 [DEBUG] scope.scope_engine (scope_engine.py:186): Starting SCOPE via Execute fallback: TRIGGER(1)
+2026-05-24 16:43:16,609 [DEBUG] scope.scope_engine (scope_engine.py:371): SCOPE capture started (auto-retrigger)
+2026-05-24 16:43:20,125 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 16:43:20,137 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 16:43:20,545 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (30000 TABLE entries)
+2026-05-24 16:43:20,546 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=482000..511999, params=['MPOS AXIS(0)', 'MPOS AXIS(1)', 'MPOS AXIS(2)']
+2026-05-24 16:43:20,546 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 16:43:20,546 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 482000, 511999, MPOS AXIS(0), MPOS AXIS(1), MPOS AXIS(2))
+2026-05-24 16:43:20,547 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 16:43:20,547 [DEBUG] scope.scope_engine (scope_engine.py:186): Starting SCOPE via Execute fallback: TRIGGER(1)
+2026-05-24 16:43:20,550 [DEBUG] scope.scope_engine (scope_engine.py:371): SCOPE capture started (auto-retrigger)
+2026-05-24 16:43:25,605 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 16:43:25,607 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 16:45:30,997 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (30000 TABLE entries)
+2026-05-24 16:45:30,998 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=482000..511999, params=['MPOS AXIS(0)', 'MPOS AXIS(1)', 'MPOS AXIS(2)']
+2026-05-24 16:45:30,998 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 16:45:30,998 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 482000, 511999, MPOS AXIS(0), MPOS AXIS(1), MPOS AXIS(2))
+2026-05-24 16:45:31,001 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 16:45:31,001 [DEBUG] scope.scope_engine (scope_engine.py:186): Starting SCOPE via Execute fallback: TRIGGER(1)
+2026-05-24 16:45:31,002 [DEBUG] scope.scope_engine (scope_engine.py:371): SCOPE capture started (auto-retrigger)
+2026-05-24 16:45:35,327 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 16:45:35,330 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 16:45:35,942 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (30000 TABLE entries)
+2026-05-24 16:45:35,942 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=482000..511999, params=['MPOS AXIS(0)', 'MPOS AXIS(1)', 'MPOS AXIS(2)']
+2026-05-24 16:45:35,942 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 16:45:35,943 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 482000, 511999, MPOS AXIS(0), MPOS AXIS(1), MPOS AXIS(2))
+2026-05-24 16:45:35,945 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 16:45:35,945 [DEBUG] scope.scope_engine (scope_engine.py:186): Starting SCOPE via Execute fallback: TRIGGER(1)
+2026-05-24 16:45:35,947 [DEBUG] scope.scope_engine (scope_engine.py:371): SCOPE capture started (auto-retrigger)
+2026-05-24 16:45:51,257 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 16:45:51,274 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 16:45:53,457 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (30000 TABLE entries)
+2026-05-24 16:45:53,457 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=482000..511999, params=['MPOS AXIS(0)', 'MPOS AXIS(1)', 'MPOS AXIS(2)']
+2026-05-24 16:45:53,457 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 16:45:53,458 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 482000, 511999, MPOS AXIS(0), MPOS AXIS(1), MPOS AXIS(2))
+2026-05-24 16:45:53,459 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 16:45:53,460 [DEBUG] scope.scope_engine (scope_engine.py:186): Starting SCOPE via Execute fallback: TRIGGER(1)
+2026-05-24 16:45:53,462 [DEBUG] scope.scope_engine (scope_engine.py:371): SCOPE capture started (auto-retrigger)
+2026-05-24 16:46:06,491 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 16:46:06,497 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
