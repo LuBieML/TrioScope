@@ -1188,7 +1188,12 @@ class DriveScopeEngine:
         }
 
         # Extract each active channel with signed interpretation
+        skip_channels = 0
         for ch_idx in range(n_ch):
+            if skip_channels > 0:
+                skip_channels -= 1
+                continue
+
             addr = self.channel_addresses[ch_idx]
             if addr == 0:
                 continue
@@ -1203,11 +1208,32 @@ class DriveScopeEngine:
                 display_name = f"Ch{ch_idx+1} (0x{addr:04X})"
                 dtype_str = "Int16"
 
-            # Convert to signed if needed (C# does: (short)(hi<<8 | lo))
-            if dtype_str in ("Int16", "Int32", "Int64"):
-                values = raw_ch.astype(np.int16).astype(np.float64)
+            # Reconstruction Logic
+            if dtype_str == "Int32" and ch_idx + 1 < n_ch:
+                raw_high = data_2d[:, ch_idx+1]
+                combined = (raw_high.astype(np.uint32) << 16) | raw_ch.astype(np.uint32)
+                values = combined.astype(np.int32).astype(np.float64)
+                skip_channels = 1
+                display_name = display_name.replace("_L", "").replace("_L1", "")
+            elif dtype_str == "Int64" and ch_idx + 3 < n_ch:
+                raw_h1 = data_2d[:, ch_idx+1]
+                raw_l2 = data_2d[:, ch_idx+2]
+                raw_h2 = data_2d[:, ch_idx+3]
+                combined = (
+                    (raw_h2.astype(np.uint64) << 48) |
+                    (raw_l2.astype(np.uint64) << 32) |
+                    (raw_h1.astype(np.uint64) << 16) |
+                    raw_ch.astype(np.uint64)
+                )
+                values = combined.astype(np.int64).astype(np.float64)
+                skip_channels = 3
+                display_name = display_name.replace("_L1", "")
             else:
-                values = raw_ch.astype(np.float64)
+                # Convert to signed if needed (C# does: (short)(hi<<8 | lo))
+                if dtype_str in ("Int16", "Int32", "Int64"):
+                    values = raw_ch.astype(np.int16).astype(np.float64)
+                else:
+                    values = raw_ch.astype(np.float64)
 
             result['params'][display_name] = values
             logger.debug(
