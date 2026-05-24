@@ -6,3 +6,16 @@
 2026-05-24 14:36:14,003 [INFO] __main__ (scope_app.py:97): =========================================
 2026-05-24 14:36:16,609 [INFO] scope.scope_engine (scope_engine.py:203): Servo period: 1000 μs (1.000 ms)
 2026-05-24 14:36:16,611 [INFO] scope.scope_engine (scope_engine.py:221): TABLE size: 512000
+2026-05-24 14:36:30,035 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (10000 TABLE entries)
+2026-05-24 14:36:30,036 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=502000..511999, params=['MPOS AXIS(1)']
+2026-05-24 14:36:30,036 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 14:36:30,036 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 502000, 511999, MPOS AXIS(1))
+2026-05-24 14:36:30,038 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 14:36:51,519 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 14:37:01,748 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (10000 TABLE entries)
+2026-05-24 14:37:01,749 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=502000..511999, params=['MPOS AXIS(1)']
+2026-05-24 14:37:01,749 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 14:37:01,749 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 502000, 511999, MPOS AXIS(1))
+2026-05-24 14:37:01,752 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 14:37:15,123 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 14:37:15,135 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
