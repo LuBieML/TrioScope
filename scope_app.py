@@ -973,7 +973,7 @@ class _ProfileManagerDialog(QDialog):
 
 
 class CompareWindow(QMainWindow):
-    """Fullscreen overlay window for comparing up to 3 live traces on one plot.
+    """Separate window for comparing two or more live traces on one plot.
 
     Each trace draws on its own ViewBox stacked on a shared main PlotItem so
     Y-scales stay independent (traces can have different units). X axis is
@@ -982,14 +982,16 @@ class CompareWindow(QMainWindow):
 
     closed = Signal()
 
-    MAX_TRACES = 3
+    MIN_TRACES = 2
 
     def __init__(self, traces, fft_mode, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Compare Traces")
+        super().__init__(parent, Qt.Window)
+        self.setWindowTitle("Compare Scopes")
         self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setMinimumSize(760, 480)
+        self.resize(1180, 720)
         self.fft_mode = fft_mode
-        self.traces = list(traces)  # TraceControl refs (up to 3)
+        self.traces = list(traces)  # TraceControl refs
 
         central = QWidget()
         central.setStyleSheet("background-color: #0A0A0A;")
@@ -1002,11 +1004,15 @@ class CompareWindow(QMainWindow):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         names = ", ".join(t.get_display_name() for t in self.traces)
-        title_text = f"Comparing {'FFT' if fft_mode else 'time-domain'}: {names}"
+        mode = "FFT" if fft_mode else "time-domain"
+        title_names = names if len(self.traces) <= 3 else f"{len(self.traces)} scopes"
+        title_text = f"Comparing {mode}: {title_names}"
         title = QLabel(title_text)
+        title.setToolTip(names)
+        title.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         title.setStyleSheet("color: #d4d4d4; font-size: 10pt; font-weight: bold;")
-        top.addWidget(title)
-        top.addStretch()
+        top.addWidget(title, 1)
         self.btn_link_y = QPushButton("\U0001f517 Unify Y")
         self.btn_link_y.setCheckable(True)
         self.btn_link_y.setToolTip(
@@ -1020,7 +1026,7 @@ class CompareWindow(QMainWindow):
         )
         self.btn_link_y.toggled.connect(self._on_link_y_toggled)
         top.addWidget(self.btn_link_y)
-        hint = QLabel("Esc to close")
+        hint = QLabel("Esc closes window")
         hint.setStyleSheet("color: #888888; font-size: 9pt; margin-left: 10px;")
         top.addWidget(hint)
         layout.addLayout(top)
@@ -1240,7 +1246,7 @@ class CompareWindow(QMainWindow):
 
 
 class _CompareTracePicker(QDialog):
-    """Small modal: pick up to 3 same-type enabled traces to compare."""
+    """Small modal: pick two or more same-type enabled traces to compare."""
 
     def __init__(self, candidates, fft_mode, parent=None):
         super().__init__(parent)
@@ -1258,14 +1264,14 @@ class _CompareTracePicker(QDialog):
 
         layout = QVBoxLayout(self)
         kind = "FFT" if fft_mode else "time-domain"
-        header = QLabel(f"Select 2–3 {kind} traces to overlay:")
+        header = QLabel(f"Select 2 or more {kind} scopes to overlay:")
         header.setStyleSheet("font-weight: bold;")
         layout.addWidget(header)
 
         for t in candidates:
             cb = QCheckBox(t.get_display_name())
             cb.setStyleSheet(f"color: {t.get_color()}; font-weight: bold;")
-            cb.toggled.connect(self._enforce_limit)
+            cb.toggled.connect(self._update_ok_state)
             self.checks.append(cb)
             layout.addWidget(cb)
 
@@ -1280,17 +1286,9 @@ class _CompareTracePicker(QDialog):
         btns.addWidget(cancel)
         layout.addLayout(btns)
 
-    def _enforce_limit(self):
-        selected = [cb for cb in self.checks if cb.isChecked()]
-        if len(selected) > CompareWindow.MAX_TRACES:
-            # Uncheck the most recent (the one that triggered us is the last toggled)
-            sender = self.sender()
-            if sender in selected:
-                sender.blockSignals(True)
-                sender.setChecked(False)
-                sender.blockSignals(False)
-                selected = [cb for cb in self.checks if cb.isChecked()]
-        self.btn_ok.setEnabled(2 <= len(selected) <= CompareWindow.MAX_TRACES)
+    def _update_ok_state(self):
+        selected_count = sum(cb.isChecked() for cb in self.checks)
+        self.btn_ok.setEnabled(selected_count >= CompareWindow.MIN_TRACES)
 
     def selected_traces(self):
         return [t for t, cb in zip(self.candidates, self.checks)
@@ -1405,7 +1403,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._ref_set = {}          # {trace_id: id(ref_data_tuple)} — skip re-setData on static refs
         self._stats_pos_cache = {}  # {trace_id: (x, y)} — skip redundant TextItem.setPos
         self._last_render_data_len = 0  # last length passed to setData; skip if unchanged
-        # Compare overlay (fullscreen) — None when closed
+        # Compare companion window - None when closed
         self._compare_window = None
 
         # Pan/zoom debounce: sigRangeChanged fires per mouse event × N linked views (O(N²))
@@ -1754,7 +1752,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_compare = QPushButton("\u29c9 Compare")
         self.btn_compare.setFixedWidth(110)
         self.btn_compare.setToolTip(
-            "Overlay 2\u20133 enabled traces in a fullscreen compare view")
+            "Compare 2 or more enabled scopes in a separate window")
         self.btn_compare.clicked.connect(self._open_compare)
         status_layout.addWidget(self.btn_compare)
 
@@ -2141,10 +2139,10 @@ class ParameterScopeOscilloscope(QMainWindow):
             else:
                 label.hide()
 
-    # ─── Compare overlay ─────────────────────────────────────────
+    # ─── Compare window ──────────────────────────────────────────
 
     def _open_compare(self):
-        """Open fullscreen compare window with 2\u20133 selected live traces."""
+        """Open a resizable compare window with 2 or more selected live scopes."""
         if self._compare_window is not None:
             self._compare_window.raise_()
             self._compare_window.activateWindow()
@@ -2196,7 +2194,9 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         self._compare_window = CompareWindow(chosen, fft_mode, parent=self)
         self._compare_window.closed.connect(self._on_compare_closed)
-        self._compare_window.showFullScreen()
+        self._compare_window.show()
+        self._compare_window.raise_()
+        self._compare_window.activateWindow()
         # Push current data immediately so the view isn't blank until next tick
         self._push_compare_data()
 
@@ -3724,7 +3724,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Update plots
         self._render_plots()
 
-        # Mirror live data into the compare overlay if it's open
+        # Mirror live data into the compare window if it's open
         if self._compare_window is not None:
             self._push_compare_data()
 
@@ -5064,6 +5064,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.is_running = False
         self._update_timer.stop()
         self._stop_watchdog()
+        if self._compare_window is not None:
+            self._compare_window.close()
+            self._compare_window = None
         if self.trio_connected and self.trio_connection:
             # Close with 5s timeout — don't block app exit on dead socket
             close_done = threading.Event()
