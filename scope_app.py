@@ -1026,10 +1026,34 @@ class CompareWindow(QMainWindow):
         )
         self.btn_link_y.toggled.connect(self._on_link_y_toggled)
         top.addWidget(self.btn_link_y)
+        self.btn_cursors = QPushButton("\u2295 Cursors")
+        self.btn_cursors.setCheckable(True)
+        self.btn_cursors.setToolTip("Show draggable C1/C2 measurement cursors")
+        self.btn_cursors.setStyleSheet(
+            "QPushButton { background-color: #2e2e2e; color: #d4d4d4; "
+            "padding: 4px 10px; border: 1px solid #555; } "
+            "QPushButton:checked { background-color: #3a3a5c; color: #fff; "
+            "border: 1px solid #FFD700; font-weight: bold; } "
+            "QPushButton:hover { background-color: #3a3a3a; }"
+        )
+        self.btn_cursors.toggled.connect(self._toggle_cursors)
+        top.addWidget(self.btn_cursors)
         hint = QLabel("Esc closes window")
         hint.setStyleSheet("color: #888888; font-size: 9pt; margin-left: 10px;")
         top.addWidget(hint)
         layout.addLayout(top)
+
+        self.cursor_readout = QLabel("")
+        self.cursor_readout.setTextFormat(Qt.RichText)
+        self.cursor_readout.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.cursor_readout.setWordWrap(True)
+        self.cursor_readout.setStyleSheet(
+            "QLabel { background-color: #151515; color: #d4d4d4; "
+            "border: 1px solid #333; padding: 6px; "
+            "font-family: Consolas; font-size: 9pt; }"
+        )
+        self.cursor_readout.hide()
+        layout.addWidget(self.cursor_readout)
 
         # Graphics layout widget holding the single overlay plot
         self.glw = pg.GraphicsLayoutWidget()
@@ -1115,6 +1139,10 @@ class CompareWindow(QMainWindow):
         # Cache of latest x-array + per-trace y-array for interpolation
         self._last_x = None
         self._last_y = [None] * len(self.traces)
+        self._cursors_enabled = False
+        self._cursor_lines = {}
+        self._cursor_pos = {'c1': 0.0, 'c2': 1.0}
+        self._cursor_updating = False
 
         self.main_plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
 
@@ -1179,6 +1207,162 @@ class CompareWindow(QMainWindow):
                     continue
                 curve.setData(time_arr, values, skipFiniteCheck=True)
                 self._last_y[i] = values
+        if self._cursors_enabled:
+            self._update_cursor_readout()
+
+    def _toggle_cursors(self, checked):
+        self._cursors_enabled = checked
+        if checked:
+            self._init_cursor_positions()
+            self._add_cursor_lines()
+            self.cursor_readout.show()
+            self._update_cursor_readout()
+        else:
+            self._remove_cursor_lines()
+            self.cursor_readout.hide()
+
+    def _init_cursor_positions(self):
+        if self._last_x is None or len(self._last_x) == 0:
+            self._cursor_pos['c1'] = 0.0
+            self._cursor_pos['c2'] = 1.0
+            return
+        data_min = float(self._last_x[0])
+        data_max = float(self._last_x[-1])
+        x_min, x_max = self.main_plot.vb.viewRange()[0]
+        x_min = max(float(x_min), data_min)
+        x_max = min(float(x_max), data_max)
+        if x_max <= x_min:
+            x_min, x_max = data_min, data_max
+        span = x_max - x_min
+        self._cursor_pos['c1'] = x_min + span * 0.33
+        self._cursor_pos['c2'] = x_min + span * 0.67
+
+    def _add_cursor_lines(self):
+        self._remove_cursor_lines()
+        for cid in ('c1', 'c2'):
+            color = CURSOR_COLORS[cid]
+            line = pg.InfiniteLine(
+                pos=self._cursor_pos[cid],
+                angle=90,
+                movable=True,
+                pen=pg.mkPen(color, width=1.5, style=Qt.DashLine),
+                hoverPen=pg.mkPen(color, width=2.5),
+                label=cid.upper(),
+                labelOpts={
+                    'position': 0.95,
+                    'color': color,
+                    'fill': pg.mkBrush('#2B2B2BBB'),
+                    'movable': True,
+                },
+            )
+            line.setZValue(1200)
+            line._cursor_id = cid
+            line.sigPositionChanged.connect(self._on_cursor_line_moved)
+            self.main_plot.addItem(line, ignoreBounds=True)
+            self._cursor_lines[cid] = line
+
+    def _remove_cursor_lines(self):
+        for line in self._cursor_lines.values():
+            try:
+                self.main_plot.removeItem(line)
+            except Exception:
+                pass
+        self._cursor_lines.clear()
+
+    def _on_cursor_line_moved(self, line):
+        if self._cursor_updating:
+            return
+        cid = line._cursor_id
+        self._cursor_pos[cid] = float(line.value())
+        self._cursor_updating = True
+        try:
+            other = self._cursor_lines.get(cid)
+            if other is not None and other is not line:
+                other.setValue(self._cursor_pos[cid])
+        finally:
+            self._cursor_updating = False
+        self._update_cursor_readout()
+
+    def _sample_trace_at(self, y_values, x):
+        if self._last_x is None or y_values is None:
+            return None
+        xs = self._last_x
+        if len(xs) == 0 or len(y_values) != len(xs):
+            return None
+        if x < xs[0] or x > xs[-1]:
+            return None
+        return float(np.interp(x, xs, y_values))
+
+    def _format_x(self, value):
+        if self.fft_mode:
+            return f"{value:.6g} Hz"
+        return f"{value:.6f} s"
+
+    def _format_delta_x(self, value):
+        if self.fft_mode:
+            return f"{value:+.6g} Hz"
+        return f"{value:+.6f} s"
+
+    def _format_value(self, value):
+        if value is None:
+            return "---"
+        return f"{value:.6g}"
+
+    def _update_cursor_readout(self):
+        if not self._cursors_enabled:
+            self.cursor_readout.setText("")
+            return
+        if self._last_x is None or len(self._last_x) == 0:
+            self.cursor_readout.setText("No compare data available.")
+            return
+
+        x1 = self._cursor_pos['c1']
+        x2 = self._cursor_pos['c2']
+        dx = x2 - x1
+        rows = []
+        for trace, y_values in zip(self.traces, self._last_y):
+            v1 = self._sample_trace_at(y_values, x1)
+            v2 = self._sample_trace_at(y_values, x2)
+            dv = None if v1 is None or v2 is None else v2 - v1
+            color = trace.get_color()
+            name = trace.get_display_name()
+            rows.append(
+                "<tr>"
+                f"<td style='padding:2px 10px 2px 0; color:{color}; font-weight:bold;'>{name}</td>"
+                f"<td style='padding:2px 10px;'>{self._format_value(v1)}</td>"
+                f"<td style='padding:2px 10px;'>{self._format_value(v2)}</td>"
+                f"<td style='padding:2px 10px;'>{self._format_value(dv)}</td>"
+                "</tr>"
+            )
+
+        c1_color = CURSOR_COLORS['c1']
+        c2_color = CURSOR_COLORS['c2']
+        interval = (
+            f"&Delta;f = {self._format_delta_x(dx)}"
+            if self.fft_mode else
+            f"&Delta;t = {self._format_delta_x(dx)}"
+        )
+        if not self.fft_mode and abs(dx) > 1e-12:
+            interval += f" &nbsp; | &nbsp; f = {1.0 / abs(dx):.6g} Hz"
+
+        html = (
+            "<div>"
+            f"<span style='color:{c1_color}; font-weight:bold;'>C1</span> "
+            f"{self._format_x(x1)} &nbsp; | &nbsp; "
+            f"<span style='color:{c2_color}; font-weight:bold;'>C2</span> "
+            f"{self._format_x(x2)} &nbsp; | &nbsp; {interval}"
+            "</div>"
+            "<table cellspacing='0' cellpadding='0'>"
+            "<tr style='color:#999;'>"
+            "<td style='padding-right:10px;'>Signal</td>"
+            "<td style='padding:2px 10px;'>C1</td>"
+            "<td style='padding:2px 10px;'>C2</td>"
+            "<td style='padding:2px 10px;'>&Delta;</td>"
+            "</tr>"
+            + "".join(rows) +
+            "</table>"
+        )
+        self.cursor_readout.setText(html)
 
     def _reset_view(self):
         """Re-enable auto-range on all ViewBoxes after a double-click reset."""
