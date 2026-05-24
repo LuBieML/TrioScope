@@ -35,7 +35,7 @@ class TraceControl(QFrame):
 
         # Row 0: Enable checkbox + parameter dropdown + delete button
         row0 = QHBoxLayout()
-        row0.setSpacing(4)
+        row0.setSpacing(3)
 
         self.chk_enable = QCheckBox(f"Trace {trace_number + 1}")
         self.chk_enable.setStyleSheet(f"color: {self.color}; font-weight: bold;")
@@ -64,12 +64,14 @@ class TraceControl(QFrame):
         self.param_combo.setCurrentText("MPOS")
         self.param_combo.setMaxVisibleItems(20)
         self.param_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.param_combo.setMinimumWidth(95)
+        self.param_combo.setMaximumWidth(145)
         self.param_combo.currentIndexChanged.connect(self._on_param_changed)
         row0.addWidget(self.param_combo, 1)
 
         # "Show all" button for parameter combo
         self.btn_show_params = QPushButton("\u25bc")
-        self.btn_show_params.setFixedSize(20, 22)
+        self.btn_show_params.setFixedSize(18, 22)
         self.btn_show_params.setToolTip("Show all parameters")
         self.btn_show_params.setStyleSheet(
             "QPushButton { background-color: #4b4a4a; color: #ccc;"
@@ -104,13 +106,15 @@ class TraceControl(QFrame):
 
         self.drive_var_combo.setMaxVisibleItems(20)
         self.drive_var_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.drive_var_combo.setMinimumWidth(95)
+        self.drive_var_combo.setMaximumWidth(145)
         self.drive_var_combo.currentIndexChanged.connect(lambda: self.changed.emit())
         self.drive_var_combo.setVisible(False)
         row0.addWidget(self.drive_var_combo, 1)
 
         # "Show all" button for drive variable combo
         self.btn_show_drive_vars = QPushButton("\u25bc")
-        self.btn_show_drive_vars.setFixedSize(20, 22)
+        self.btn_show_drive_vars.setFixedSize(18, 22)
         self.btn_show_drive_vars.setToolTip("Show all drive variables")
         self.btn_show_drive_vars.setStyleSheet(
             "QPushButton { background-color: #4b4a4a; color: #ccc;"
@@ -124,7 +128,7 @@ class TraceControl(QFrame):
         row0.addWidget(self.btn_show_drive_vars)
 
         self.btn_popout = QPushButton("\u2197")
-        self.btn_popout.setFixedSize(28, 22)
+        self.btn_popout.setFixedSize(24, 22)
         self.btn_popout.setToolTip("Open this trace in a separate window")
         self.btn_popout.setEnabled(False)
         self.btn_popout.setStyleSheet("""
@@ -150,7 +154,7 @@ class TraceControl(QFrame):
         self._drive_mode = False
 
         self.btn_delete = QPushButton("X")
-        self.btn_delete.setFixedWidth(34)
+        self.btn_delete.setFixedSize(26, 22)
         self.btn_delete.setStyleSheet("color: #ff4d4d; font-weight: bold; font-size: 10pt;")
         self.btn_delete.clicked.connect(self._on_delete)
         row0.addWidget(self.btn_delete)
@@ -159,7 +163,7 @@ class TraceControl(QFrame):
 
         # Row 1: Axis selector + value display + FFT button
         row1 = QHBoxLayout()
-        row1.setSpacing(4)
+        row1.setSpacing(3)
 
         self.axis_label = QLabel("Axis")
         row1.addWidget(self.axis_label)
@@ -201,7 +205,7 @@ class TraceControl(QFrame):
             f"font-family: Consolas; font-size: 9pt; font-weight: bold;"
         )
         self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.value_label.setFixedWidth(140)
+        self.value_label.setFixedWidth(112)
         row1.addWidget(self.value_label)
 
         self.btn_fft = QPushButton("FFT")
