@@ -257,11 +257,8 @@ class DriveScopeEngine:
         trigger_value1: int = 0,
         trigger_value2: int = 0,
         ch1_data_type: int = 1,
-<<<<<<< HEAD
         display_names: Optional[List[str]] = None,
-=======
         drive_model: Optional[str] = None,
->>>>>>> DriveScopeInvestigation
     ) -> Dict[str, Any]:
         """
         Configure drive scope capture parameters.
@@ -275,11 +272,8 @@ class DriveScopeEngine:
             trigger_value1: First trigger threshold (32-bit, for modes 1-6).
             trigger_value2: Second trigger threshold (32-bit, for window modes 5-6).
             ch1_data_type: Data type code for channel 1 trigger comparison.
-<<<<<<< HEAD
             display_names: Custom display names corresponding to channels.
-=======
             drive_model: Optional manual override string ("DX3", "DX5", "DX1")
->>>>>>> DriveScopeInvestigation
 
         Returns:
             Configuration summary dict.

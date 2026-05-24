@@ -126,7 +126,7 @@ def _int_or_none(value) -> int | None:
         return None
 
 
-<<<<<<< HEAD
+
 # Channel-type parameters that use CHANNEL(n) instead of AXIS(n)
 CHANNEL_PARAMETERS = [
     "AIN", "AINBI", "AOUT",
@@ -1297,8 +1297,7 @@ class _CompareTracePicker(QDialog):
                 if cb.isChecked()]
 
 
-=======
->>>>>>> DriveScopeInvestigation
+
 class ParameterScopeOscilloscope(QMainWindow):
     """Main application with oscilloscope-style UI — pyqtgraph version"""
 
@@ -1485,15 +1484,17 @@ class ParameterScopeOscilloscope(QMainWindow):
         config_group = QGroupBox("Configuration")
         config_layout = QGridLayout(config_group)
 
-        # Capture source selector
-        config_layout.addWidget(QLabel("Source:"), 0, 0)
+        # Capture source selector (Drive Scope hidden — logic preserved in engine)
+        self._source_label = QLabel("Source:")
+        self._source_label.setVisible(False)
+        config_layout.addWidget(self._source_label, 0, 0)
         self.source_combo = QComboBox()
-        self.source_combo.addItems(["Controller SCOPE", "Drive Scope (SDO)"])
+        self.source_combo.addItems(["Controller SCOPE"])
         self.source_combo.setToolTip(
-            "Controller SCOPE: captures Trio axis parameters at servo rate\n"
-            "Drive Scope (SDO): captures internal drive variables at 125μs rate"
+            "Controller SCOPE: captures Trio axis parameters at servo rate"
         )
         self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        self.source_combo.setVisible(False)
         config_layout.addWidget(self.source_combo, 0, 1, 1, 2)
 
         # -- Controller SCOPE config widgets --
@@ -3396,24 +3397,16 @@ class ParameterScopeOscilloscope(QMainWindow):
             def _download_cb(pct, msg):
                 self.sig_capture_progress.emit(msg)
 
-<<<<<<< HEAD
-            with self._conn_lock:
-                data = engine.read_data(
-                    progress_callback=_download_cb,
-                    local_filename=abs_local_filename
-                )
-
-            # Restart the watchdog now that the long operation is done
-            self._start_watchdog()
-=======
             try:
                 with self._conn_lock:
-                    data = engine.read_data(progress_callback=_download_cb)
+                    data = engine.read_data(
+                        progress_callback=_download_cb,
+                        local_filename=abs_local_filename
+                    )
             finally:
                 # Restart the watchdog now that the long operation is done,
                 # even if the FIFO transfer raises.
                 self._start_watchdog()
->>>>>>> DriveScopeInvestigation
 
             if not self.is_running:
                 return
