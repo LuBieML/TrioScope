@@ -11,3 +11,18 @@
 2026-05-24 14:44:59,914 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
 2026-05-24 14:44:59,915 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 502000, 511999, MPOS AXIS(1))
 2026-05-24 14:44:59,917 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 14:45:18,400 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 14:45:45,019 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (20000 TABLE entries)
+2026-05-24 14:45:45,019 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=492000..511999, params=['MPOS AXIS(1)', 'MPOS AXIS(0)']
+2026-05-24 14:45:45,019 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 14:45:45,020 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 492000, 511999, MPOS AXIS(1), MPOS AXIS(0))
+2026-05-24 14:45:45,022 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 14:45:51,396 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 14:45:51,407 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 14:46:24,298 [INFO] scope.scope_engine (scope_engine.py:296): SCOPE configured: 10000 samples @ 1.000 ms (10000 TABLE entries)
+2026-05-24 14:46:24,298 [DEBUG] scope.scope_engine (scope_engine.py:313): Arming SCOPE: period=1, table=502000..511999, params=['MPOS AXIS(0)']
+2026-05-24 14:46:24,299 [WARNING] scope.scope_engine (scope_engine.py:331): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-24 14:46:24,299 [DEBUG] scope.scope_engine (scope_engine.py:180): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 502000, 511999, MPOS AXIS(0))
+2026-05-24 14:46:24,301 [DEBUG] scope.scope_engine (scope_engine.py:339): SCOPE armed
+2026-05-24 14:46:29,713 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
+2026-05-24 14:46:29,722 [DEBUG] scope.scope_engine (scope_engine.py:403): SCOPE capture stopped
