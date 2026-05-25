@@ -1,17 +1,26 @@
-2026-05-24 22:41:41,550 [INFO] __main__ (scope_app.py:92): =========================================
-2026-05-24 22:41:41,550 [INFO] __main__ (scope_app.py:93): TrioScope app starting. Version: 0.0.2
-2026-05-24 22:41:41,550 [INFO] __main__ (scope_app.py:94): Current working directory: E:\SynologySynchro\Projects\TrioScope
-2026-05-24 22:41:41,550 [INFO] __main__ (scope_app.py:95): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
-2026-05-24 22:41:41,550 [INFO] __main__ (scope_app.py:96): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
-2026-05-24 22:41:41,550 [INFO] __main__ (scope_app.py:97): =========================================
-2026-05-24 22:41:44,802 [INFO] scope.scope_engine (scope_engine.py:208): Servo period: 1000 μs (1.000 ms)
-2026-05-24 22:41:44,803 [INFO] scope.scope_engine (scope_engine.py:226): TABLE size: 512000
-2026-05-24 22:41:46,627 [INFO] scope.scope_engine (scope_engine.py:308): SCOPE configured: 5000 samples @ 1.000 ms (20000 TABLE entries)
-2026-05-24 22:41:46,628 [DEBUG] scope.scope_engine (scope_engine.py:325): Arming SCOPE: period=1, table=492000..511999, params=['DEMAND_SPEED AXIS(0)', 'MPOS AXIS(1)', 'FAST_JOG AXIS(1)', 'MPOS AXIS(2)']
-2026-05-24 22:41:46,628 [WARNING] scope.scope_engine (scope_engine.py:343): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
-2026-05-24 22:41:46,628 [DEBUG] scope.scope_engine (scope_engine.py:185): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 492000, 511999, DEMAND_SPEED AXIS(0), MPOS AXIS(1), FAST_JOG AXIS(1), MPOS AXIS(2))
-2026-05-24 22:41:46,630 [DEBUG] scope.scope_engine (scope_engine.py:351): SCOPE armed
-2026-05-24 22:41:46,630 [DEBUG] scope.scope_engine (scope_engine.py:191): Starting SCOPE via Execute fallback: TRIGGER(1)
-2026-05-24 22:41:46,632 [DEBUG] scope.scope_engine (scope_engine.py:383): SCOPE capture started (auto-retrigger)
-2026-05-24 22:41:57,749 [DEBUG] scope.scope_engine (scope_engine.py:415): SCOPE capture stopped
-2026-05-24 22:41:57,762 [DEBUG] scope.scope_engine (scope_engine.py:415): SCOPE capture stopped
+2026-05-25 05:15:40,349 [INFO] __main__ (scope_app.py:92): =========================================
+2026-05-25 05:15:40,349 [INFO] __main__ (scope_app.py:93): TrioScope app starting. Version: 0.0.2
+2026-05-25 05:15:40,349 [INFO] __main__ (scope_app.py:94): Current working directory: E:\SynologySynchro\Projects\TrioScope
+2026-05-25 05:15:40,349 [INFO] __main__ (scope_app.py:95): Python interpreter: E:\SynologySynchro\Projects\TrioScope\.venv\Scripts\python.exe
+2026-05-25 05:15:40,349 [INFO] __main__ (scope_app.py:96): Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
+2026-05-25 05:15:40,349 [INFO] __main__ (scope_app.py:97): =========================================
+2026-05-25 05:15:46,595 [INFO] scope.scope_engine (scope_engine.py:208): Servo period: 1000 μs (1.000 ms)
+2026-05-25 05:15:46,597 [INFO] scope.scope_engine (scope_engine.py:226): TABLE size: 512000
+2026-05-25 05:15:48,678 [INFO] scope.scope_engine (scope_engine.py:308): SCOPE configured: 5000 samples @ 1.000 ms (20000 TABLE entries)
+2026-05-25 05:15:48,679 [DEBUG] scope.scope_engine (scope_engine.py:325): Arming SCOPE: period=1, table=492000..511999, params=['DEMAND_SPEED AXIS(0)', 'MPOS AXIS(1)', 'FAST_JOG AXIS(1)', 'MPOS AXIS(2)']
+2026-05-25 05:15:48,679 [WARNING] scope.scope_engine (scope_engine.py:343): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-25 05:15:48,679 [DEBUG] scope.scope_engine (scope_engine.py:185): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 492000, 511999, DEMAND_SPEED AXIS(0), MPOS AXIS(1), FAST_JOG AXIS(1), MPOS AXIS(2))
+2026-05-25 05:15:48,681 [DEBUG] scope.scope_engine (scope_engine.py:351): SCOPE armed
+2026-05-25 05:15:48,681 [DEBUG] scope.scope_engine (scope_engine.py:191): Starting SCOPE via Execute fallback: TRIGGER(1)
+2026-05-25 05:15:48,684 [DEBUG] scope.scope_engine (scope_engine.py:383): SCOPE capture started (auto-retrigger)
+2026-05-25 05:15:57,068 [DEBUG] scope.scope_engine (scope_engine.py:415): SCOPE capture stopped
+2026-05-25 05:15:57,078 [DEBUG] scope.scope_engine (scope_engine.py:415): SCOPE capture stopped
+2026-05-25 05:16:09,040 [INFO] scope.scope_engine (scope_engine.py:308): SCOPE configured: 5000 samples @ 1.000 ms (20000 TABLE entries)
+2026-05-25 05:16:09,041 [DEBUG] scope.scope_engine (scope_engine.py:325): Arming SCOPE: period=1, table=492000..511999, params=['DEMAND_SPEED AXIS(0)', 'MPOS AXIS(1)', 'FAST_JOG AXIS(1)', 'MPOS AXIS(2)']
+2026-05-25 05:16:09,041 [WARNING] scope.scope_engine (scope_engine.py:343): ScopeOn string conversion failed; falling back to Execute: NumPy type info missing for class std::basic_string_view<char,struct std::char_traits<char> >
+2026-05-25 05:16:09,041 [DEBUG] scope.scope_engine (scope_engine.py:185): Arming SCOPE via Execute fallback: SCOPE(ON, 1, 492000, 511999, DEMAND_SPEED AXIS(0), MPOS AXIS(1), FAST_JOG AXIS(1), MPOS AXIS(2))
+2026-05-25 05:16:09,044 [DEBUG] scope.scope_engine (scope_engine.py:351): SCOPE armed
+2026-05-25 05:16:09,044 [DEBUG] scope.scope_engine (scope_engine.py:191): Starting SCOPE via Execute fallback: TRIGGER(1)
+2026-05-25 05:16:09,047 [DEBUG] scope.scope_engine (scope_engine.py:383): SCOPE capture started (auto-retrigger)
+2026-05-25 05:16:17,834 [DEBUG] scope.scope_engine (scope_engine.py:415): SCOPE capture stopped
+2026-05-25 05:16:17,834 [DEBUG] scope.scope_engine (scope_engine.py:415): SCOPE capture stopped

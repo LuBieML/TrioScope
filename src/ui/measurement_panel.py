@@ -115,7 +115,7 @@ class MeasurementPanel(QDockWidget):
         self.summary_frame = QFrame()
         self.summary_frame.setStyleSheet(
             f"QFrame {{ background-color: {_PANEL}; border: 1px solid {_BORDER};"
-            " border-radius: 4px; }}"
+            " border-radius: 4px; }"
             "QLabel { background: transparent; border: none; }"
         )
         summary_layout = QGridLayout(self.summary_frame)
