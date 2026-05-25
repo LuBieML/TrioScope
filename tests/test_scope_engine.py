@@ -143,6 +143,37 @@ class ScopeEngineStartCaptureTests(unittest.TestCase):
         )
         self.assertTrue(engine.is_capturing)
 
+    def test_scope_on_string_view_fallback_is_silent_and_cached(self):
+        connection = FakeScopeConnection(
+            RuntimeError(
+                "NumPy type info missing for class "
+                "std::basic_string_view<char,struct std::char_traits<char> >"
+            )
+        )
+        engine = ScopeEngine(connection)
+        engine.servo_period_sec = 0.001
+        engine.tsize = 1000
+        engine.configure(
+            ["OUT(0)"],
+            ["OUT Ch(0)"],
+            period_cycles=1,
+            duration_seconds=0.01,
+            table_start=20,
+        )
+
+        with self.assertNoLogs("src.scope.scope_engine", level="WARNING"):
+            engine.arm_capture()
+
+        connection.calls.clear()
+
+        with self.assertNoLogs("src.scope.scope_engine", level="WARNING"):
+            engine.arm_capture()
+
+        self.assertEqual(
+            connection.calls,
+            [("Execute", "SCOPE(ON, 1, 20, 29, READ_OP(0))")],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

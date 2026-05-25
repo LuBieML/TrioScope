@@ -161,6 +161,7 @@ class ScopeEngine:
         self.tsize = None                # Controller TABLE size
         self.is_armed = False
         self._armed_via_execute_fallback = False
+        self._scope_on_requires_execute_fallback = False
 
     @staticmethod
     def _scope_command_param(param: str) -> str:
@@ -329,23 +330,24 @@ class ScopeEngine:
                 self.table_end,
                 self.scope_params,
             )
-            try:
-                self.connection.ScopeOn(
-                    self.period_cycles,
-                    self.table_start,
-                    self.table_end,
-                    list(self.scope_params),
-                )
-                self._armed_via_execute_fallback = False
-            except RuntimeError as e:
-                if "std::basic_string_view" not in str(e):
-                    raise
-                logger.warning(
-                    "ScopeOn string conversion failed; falling back to Execute: %s",
-                    e,
-                )
+            if self._scope_on_requires_execute_fallback:
                 self._execute_arm_scope()
                 self._armed_via_execute_fallback = True
+            else:
+                try:
+                    self.connection.ScopeOn(
+                        self.period_cycles,
+                        self.table_start,
+                        self.table_end,
+                        list(self.scope_params),
+                    )
+                    self._armed_via_execute_fallback = False
+                except RuntimeError as e:
+                    if "std::basic_string_view" not in str(e):
+                        raise
+                    self._scope_on_requires_execute_fallback = True
+                    self._execute_arm_scope()
+                    self._armed_via_execute_fallback = True
             self.is_armed = True
             self.is_capturing = False
             logger.debug("SCOPE armed")
