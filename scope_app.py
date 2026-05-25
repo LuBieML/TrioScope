@@ -1990,7 +1990,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         self.btn_measurements = QPushButton("\u25a3 Measurements")
         self.btn_measurements.setFixedWidth(130)
-        self.btn_measurements.setToolTip("Open the live measurement panel")
+        self.btn_measurements.setToolTip("Open the live measurement window")
         self.btn_measurements.clicked.connect(self._toggle_measurement_panel)
         status_layout.addWidget(self.btn_measurements)
 
@@ -5221,21 +5221,24 @@ class ParameterScopeOscilloscope(QMainWindow):
     # ─── Measurements ─────────────────────────────────────────────
 
     def _toggle_measurement_panel(self):
-        """Show/hide the live measurements dock panel."""
+        """Show/hide the live measurements window."""
         if self._measurement_panel is None:
             self._measurement_panel = MeasurementPanel(self)
-            saved_size = self.size()
-            self.setFixedWidth(saved_size.width())
-            self.addDockWidget(Qt.RightDockWidgetArea, self._measurement_panel)
-            QTimer.singleShot(0, lambda: self.setMaximumWidth(16777215))
             self._sync_measurement_panel(force=True)
+            self._measurement_panel.show()
+            self._measurement_panel.raise_()
+            self._measurement_panel.activateWindow()
         else:
-            self._measurement_panel.setVisible(not self._measurement_panel.isVisible())
             if self._measurement_panel.isVisible():
+                self._measurement_panel.hide()
+            else:
                 self._sync_measurement_panel(force=True)
+                self._measurement_panel.show()
+                self._measurement_panel.raise_()
+                self._measurement_panel.activateWindow()
 
     def _sync_measurement_panel(self, force=False):
-        """Push the latest capture buffer into the measurements dock."""
+        """Push the latest capture buffer into the measurements window."""
         if self._measurement_panel is None:
             return
         if not self._measurement_panel.isVisible() and not force:
@@ -5262,6 +5265,8 @@ class ParameterScopeOscilloscope(QMainWindow):
             cursor_window=cursor_window,
             segment_breaks=self.accumulated_data.get('segment_breaks', []),
         )
+        if force:
+            self._measurement_panel.refresh_now()
 
     # ─── EtherCAT Map ───────────────────────────────────────────────
 
@@ -5513,6 +5518,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.is_running = False
         self._update_timer.stop()
         self._stop_watchdog()
+        if self._measurement_panel is not None:
+            self._measurement_panel.hide()
         for compare_window in list(self._compare_windows):
             compare_window.close()
         self._compare_windows.clear()

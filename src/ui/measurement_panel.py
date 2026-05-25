@@ -1,4 +1,4 @@
-"""Dockable measurement panel for TrioScope."""
+"""Separate measurement window for TrioScope."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDockWidget,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMainWindow,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -42,13 +42,15 @@ _CYAN = "#03DAC6"
 _ACCENT = "#FFA500"
 
 
-class MeasurementPanel(QDockWidget):
+class MeasurementPanel(QMainWindow):
     """Live measurement table for the current capture."""
 
     def __init__(self, parent=None):
-        super().__init__("Measurements", parent)
-        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.setMinimumWidth(620)
+        super().__init__(parent)
+        self.setWindowTitle("Measurements")
+        self.setWindowFlag(Qt.Window, True)
+        self.resize(920, 520)
+        self.setMinimumSize(700, 360)
 
         self._time_arr: np.ndarray | None = None
         self._params: dict[str, np.ndarray] = {}
@@ -185,7 +187,11 @@ class MeasurementPanel(QDockWidget):
         self.empty_label.setStyleSheet(f"color: {_DIM}; padding: 18px;")
         layout.addWidget(self.empty_label)
 
-        self.setWidget(container)
+        self.setCentralWidget(container)
+
+    def closeEvent(self, event):
+        self.hide()
+        event.ignore()
 
     def set_capture_data(
         self,
