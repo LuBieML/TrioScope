@@ -114,6 +114,7 @@ from scope.parameters import (
 from storage.settings_store import SettingsStore
 from storage.profiles import ProfileStore
 from storage.csv_io import CSVStorage
+from reports.html_report import write_html_report
 from models.app_settings import AppSettings
 from models.trace_config import TraceConfig
 
@@ -599,6 +600,13 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_measurements.setToolTip("Open the live measurement window")
         self.btn_measurements.clicked.connect(self._toggle_measurement_panel)
         status_layout.addWidget(self.btn_measurements)
+
+        self.btn_report = QPushButton("HTML Report")
+        self.btn_report.setFixedWidth(115)
+        self.btn_report.setToolTip(
+            "Create a self-contained commissioning report from the current capture")
+        self.btn_report.clicked.connect(self.export_html_report)
+        status_layout.addWidget(self.btn_report)
 
         status_layout.addStretch()
 
@@ -3374,6 +3382,231 @@ class ParameterScopeOscilloscope(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
+    def export_html_report(self):
+        """Create a self-contained HTML commissioning report."""
+        if self.accumulated_data is None:
+            QMessageBox.warning(self, "No Data", "No capture data to report")
+            return
+
+        request = self._show_html_report_dialog()
+        if request is None:
+            return
+        path, notes = request
+
+        try:
+            # Pull the latest buffered samples into accumulated_data before export.
+            self._on_update_timer()
+
+            data = self.accumulated_data
+            if data is None or len(data.get('time', [])) == 0:
+                QMessageBox.warning(self, "No Data", "No capture data to report")
+                return
+
+            trace_order, trace_colors, trace_fft_flags = self._report_trace_context()
+            report_path = write_html_report(
+                path,
+                time_arr=data['time'],
+                params=data['params'],
+                trace_order=trace_order,
+                trace_colors=trace_colors,
+                trace_fft_flags=trace_fft_flags,
+                controller_metadata=self._report_controller_metadata(),
+                drive_metadata=self._report_drive_metadata(),
+                drive_profiles=self._report_drive_profiles(),
+                user_notes=notes,
+                segment_breaks=data.get('segment_breaks', []),
+            )
+            self.status_label.setText(f"HTML report saved to {report_path}")
+            QMessageBox.information(
+                self,
+                "HTML Report",
+                f"Report created:\n{report_path}",
+            )
+        except Exception as e:
+            logger.exception("HTML report export failed")
+            QMessageBox.critical(self, "Report Error", str(e))
+
+    def _show_html_report_dialog(self):
+        """Ask for report path and optional notes."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("HTML Report")
+        dlg.setMinimumWidth(560)
+        dlg.setStyleSheet(DARK_STYLESHEET)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        path_label = QLabel("Output file:")
+        path_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(path_label)
+
+        path_row = QHBoxLayout()
+        default_dir = Path.cwd() / "reports"
+        default_path = default_dir / f"trioscope_report_{datetime.now():%Y%m%d_%H%M%S}.html"
+        path_edit = QLineEdit(str(default_path))
+        path_row.addWidget(path_edit, 1)
+        btn_browse = QPushButton("Browse...")
+        path_row.addWidget(btn_browse)
+        layout.addLayout(path_row)
+
+        notes_label = QLabel("User notes:")
+        notes_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(notes_label)
+
+        notes_edit = QPlainTextEdit()
+        notes_edit.setPlaceholderText(
+            "Customer, machine serial, axis, commissioning result, or support context")
+        notes_edit.setFixedHeight(140)
+        layout.addWidget(notes_edit)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton("Cancel")
+        btn_create = QPushButton("Create Report")
+        btn_create.setObjectName("accent")
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_create)
+        layout.addLayout(btn_row)
+
+        result = {}
+
+        def browse():
+            selected, _ = QFileDialog.getSaveFileName(
+                dlg,
+                "Save HTML Report",
+                path_edit.text(),
+                "HTML Files (*.html);;All Files (*)",
+            )
+            if selected:
+                path_edit.setText(selected)
+
+        def create():
+            selected = path_edit.text().strip()
+            if not selected:
+                QMessageBox.warning(dlg, "HTML Report", "Choose an output file.")
+                return
+            result["path"] = selected
+            result["notes"] = notes_edit.toPlainText()
+            dlg.accept()
+
+        btn_browse.clicked.connect(browse)
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_create.clicked.connect(create)
+
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        return result["path"], result["notes"]
+
+    def _report_trace_context(self):
+        """Return ordered trace names, colors, and FFT flags for report export."""
+        if self.accumulated_data is None:
+            return [], {}, {}
+
+        params = self.accumulated_data.get('params', {})
+        ordered = []
+        colors = {}
+        fft_flags = {}
+
+        for trace in self.get_enabled_traces():
+            name = trace.get_display_name()
+            if name in params and name not in ordered:
+                ordered.append(name)
+                colors[name] = trace.get_color()
+                fft_flags[name] = trace.is_fft()
+
+        for idx, name in enumerate(params.keys()):
+            if name in ordered:
+                continue
+            ordered.append(name)
+            colors[name] = TRACE_COLORS[idx % len(TRACE_COLORS)]
+            fft_flags[name] = False
+
+        return ordered, colors, fft_flags
+
+    def _report_controller_metadata(self):
+        """Build controller and capture metadata for report export."""
+        metadata = {
+            "Application": f"TrioScope v{__version__}",
+            "Capture Source": "Drive Scope" if self.capture_source == 'drive' else "Controller SCOPE",
+            "Controller IP": self.ip_edit.text().strip(),
+            "Connection": "Connected" if self.trio_connected else "Disconnected/imported",
+            "Plot Mode": self.plot_mode,
+            "Configured Sample Period": self.period_edit.text().strip(),
+            "Configured Duration": self.duration_edit.text().strip() + " s",
+            "Capture Mode": "Single" if self.radio_single.isChecked() else "Continuous",
+            "External Trigger": "Yes" if self.external_trigger_chk.isChecked() else "No",
+            "Table Start Mode": "End of TABLE" if self.use_end_of_table else "Manual",
+            "Manual Table Start": self.table_start_edit.text().strip(),
+            "Window Duration": f"{self.window_duration:g} s",
+            "Lock X Axis": "Yes" if self.lock_x_axis else "No",
+        }
+        if self.scope_engine is not None:
+            servo_period = getattr(self.scope_engine, "servo_period_sec", None)
+            if servo_period:
+                metadata["Servo Period"] = f"{servo_period * 1000:.4f} ms"
+            for attr, label in [
+                ("period_cycles", "SCOPE Period Cycles"),
+                ("tsize", "SCOPE Table Size"),
+                ("table_start", "SCOPE Table Start"),
+                ("table_end", "SCOPE Table End"),
+                ("num_params", "SCOPE Parameter Count"),
+            ]:
+                value = getattr(self.scope_engine, attr, None)
+                if value is not None:
+                    metadata[label] = value
+        return metadata
+
+    def _report_drive_metadata(self):
+        """Build drive-scope and drive-profile metadata for report export."""
+        profiles = self._report_drive_profiles()
+        metadata = {
+            "Configured Drive Profiles": len(profiles),
+        }
+
+        if self.capture_source == 'drive':
+            metadata.update({
+                "Drive Scope Axis": self.drv_axis_spin.value(),
+                "Drive Scope Trigger": self.drv_trigger_combo.currentText(),
+                "Drive Scope Duration Setting": self.drv_sample_edit.text().strip() + " s",
+                "Trigger Value 1": self.drv_trig_val1_edit.text().strip(),
+                "Trigger Value 2": self.drv_trig_val2_edit.text().strip(),
+            })
+            try:
+                metadata["Drive Scope Sample Time Units"] = self._get_drive_sample_time_units()
+            except Exception:
+                pass
+
+        if self.drive_scope_engine is not None:
+            for attr, label in [
+                ("drive_model", "Drive Model"),
+                ("axis", "Drive Axis"),
+                ("active_channels", "Drive Scope Channels"),
+                ("sample_time", "Drive Sample Time Units"),
+                ("sample_period_us", "Drive Sample Period us"),
+                ("capture_duration_sec", "Drive Capture Duration s"),
+                ("trigger_value1", "Drive Trigger Value 1"),
+                ("trigger_value2", "Drive Trigger Value 2"),
+                ("display_names", "Drive Scope Signals"),
+            ]:
+                value = getattr(self.drive_scope_engine, attr, None)
+                if value is not None:
+                    metadata[label] = value
+            trigger_mode = getattr(self.drive_scope_engine, "trigger_mode", None)
+            if trigger_mode is not None:
+                metadata["Drive Trigger Mode"] = TRIGGER_MODES.get(trigger_mode, trigger_mode)
+
+        return metadata
+
+    def _report_drive_profiles(self):
+        """Return the newest available drive profile dicts."""
+        if self._tuner_panel is not None:
+            try:
+                return self._tuner_panel.get_all_profiles()
+            except Exception:
+                logger.exception("Could not read drive profiles from tuner panel")
+        return SettingsStore().load().drive_profiles
+
     def import_from_csv(self):
         """Import data from a previously exported CSV file.
         Reconstructs traces from the column headers and loads all data."""
@@ -3662,6 +3895,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         act_export.setShortcut(QKeySequence("Ctrl+E"))
         act_export.triggered.connect(self.export_to_csv)
         file_menu.addAction(act_export)
+
+        act_report = QAction("HTML &Report...", self)
+        act_report.setShortcut(QKeySequence("Ctrl+R"))
+        act_report.triggered.connect(self.export_html_report)
+        file_menu.addAction(act_report)
 
         act_import = QAction("&Import CSV...", self)
         act_import.setShortcut(QKeySequence("Ctrl+O"))
