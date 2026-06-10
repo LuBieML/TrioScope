@@ -569,8 +569,26 @@ class ScopeEngine:
                 'params': {}
             }
 
-            # Read new data from each parameter's block
+            # Read new data from each parameter's block.
             samples_per_param = (self.table_end - self.table_start + 1) // self.num_params
+
+            # Each GetMultiTableValues call costs one controller round-trip,
+            # so when several parameters are due, prefer a single read that
+            # spans all their regions (including the gaps between blocks) and
+            # slice it locally. Worth it only when the gaps waste at most as
+            # much as the useful data — with small streaming batches the gaps
+            # dominate and per-parameter reads win.
+            span = (self.num_params - 1) * samples_per_param + new_samples
+            useful = self.num_params * new_samples
+            if self.num_params > 1 and span <= 2 * useful:
+                raw = np.empty(span, dtype=np.float64)
+                self.connection.GetMultiTableValues(
+                    self.table_start + last_read_pos, span, raw)
+                for i, (param_name, display_name) in enumerate(
+                        zip(self.scope_params, self.display_names)):
+                    offset = i * samples_per_param
+                    result['params'][display_name] = raw[offset:offset + new_samples]
+                return result, actual_end
 
             for i, (param_name, display_name) in enumerate(zip(self.scope_params, self.display_names)):
                 # Calculate position in this parameter's block
