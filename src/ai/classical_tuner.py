@@ -133,18 +133,20 @@ class ClassicalTuner:
             cruise_speed = float(np.mean(np.abs(dvel[cruise])))
             band = 0.05 * cruise_speed if cruise_speed > 1e-9 else 1e-9
             t_trans = time_arr[last_transition_idx]
-            for i in range(last_transition_idx, len(time_arr)):
-                if abs(verr[i]) <= band:
-                    settled = True
-                    for j in range(i, min(i + 10, len(time_arr))):
-                        if abs(verr[j]) > band:
-                            settled = False
-                            break
-                    if settled:
-                        metrics.accel_settle_time_ms = float(
-                            time_arr[i] - t_trans
-                        ) * 1000.0
-                        break
+            # Settled = first sample where the error stays within the band
+            # for 10 consecutive samples (window truncated at the array end).
+            # Vectorized: pad with True so truncated end-windows still match.
+            win = 10
+            within = np.abs(verr[last_transition_idx:]) <= band
+            padded = np.concatenate([within, np.ones(win - 1, dtype=bool)])
+            windows_ok = np.lib.stride_tricks.sliding_window_view(
+                padded, win).all(axis=1)
+            settle_offsets = np.nonzero(windows_ok)[0]
+            if settle_offsets.size > 0:
+                i = last_transition_idx + int(settle_offsets[0])
+                metrics.accel_settle_time_ms = float(
+                    time_arr[i] - t_trans
+                ) * 1000.0
 
         # Accel oscillation count — 200ms window after last transition
         if last_transition_idx is not None:

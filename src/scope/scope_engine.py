@@ -484,8 +484,8 @@ class ScopeEngine:
         try:
             # Bulk read TABLE data
             # GetMultiTableValues(start, count, output_array) fills output_array
-            # Create pre-allocated numpy array
-            raw = np.zeros(count, dtype=np.float64)
+            # Create pre-allocated numpy array (empty: fully overwritten below)
+            raw = np.empty(count, dtype=np.float64)
             self.connection.GetMultiTableValues(start, count, raw)
 
             # IMPORTANT: SCOPE stores data in SEQUENTIAL BLOCKS, not interleaved!
@@ -578,8 +578,8 @@ class ScopeEngine:
                 read_start = param_block_start + last_read_pos
                 read_count = new_samples
 
-                # Read this parameter's new data
-                param_data = np.zeros(read_count, dtype=np.float64)
+                # Read this parameter's new data (empty: fully overwritten)
+                param_data = np.empty(read_count, dtype=np.float64)
                 self.connection.GetMultiTableValues(read_start, read_count, param_data)
                 result['params'][display_name] = param_data
 
