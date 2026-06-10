@@ -19,7 +19,8 @@ class PlotRenderer(WindowBackedController):
         "_stats_pos_cache", "_last_render_data_len", "_stats_reposition_scheduled",
         "_pending_stats_vbs", "_pending_stats_vb_refs", "_detail_update_scheduled",
         "_pending_detail_vbs", "_pending_detail_vb_refs", "_hover_vlines",
-        "_hover_labels", "_last_freqs",
+        "_hover_labels", "_last_freqs", "_hover_pending_pos",
+        "_hover_update_scheduled",
     })
 
     def __init__(self, window):
@@ -43,6 +44,8 @@ class PlotRenderer(WindowBackedController):
         self._hover_vlines = {}
         self._hover_labels = {}
         self._last_freqs = None
+        self._hover_pending_pos = None
+        self._hover_update_scheduled = False
 
     def _create_scope_plot(self):
         """Add a PlotItem as a new row in the shared GraphicsLayoutWidget."""
@@ -314,6 +317,21 @@ class PlotRenderer(WindowBackedController):
         self._hover_labels[plot_key] = label
 
     def _on_main_plot_mouse_moved(self, scene_pos):
+        """Debounced: coalesce mouse-move events (can exceed 100Hz on
+        high-polling-rate mice) into at most one hover update per frame."""
+        self._hover_pending_pos = scene_pos
+        if not self._hover_update_scheduled:
+            self._hover_update_scheduled = True
+            QTimer.singleShot(16, self.window._flush_hover_update)
+
+    def _flush_hover_update(self):
+        self._hover_update_scheduled = False
+        scene_pos = self._hover_pending_pos
+        if scene_pos is None:
+            return
+        self._do_hover_update(scene_pos)
+
+    def _do_hover_update(self, scene_pos):
         """Update crosshair and value readout on all main window plots."""
         if self.plot_mode in ('xyz', 'xyzw') or not self.plot_layout_widget.isVisible():
             return
@@ -382,10 +400,14 @@ class PlotRenderer(WindowBackedController):
                     html_lines.append(f"<span style='color:{trace.get_color()};'>Cur: {values[idx]:.4f}</span>")
 
             if html_lines:
-                label.setHtml(
+                html = (
                     "<div style='font-family: Segoe UI; font-size: 8pt; text-align: right;'>"
                     "<br><br>" + "<br/>".join(html_lines) + "</div>"
                 )
+                # setHtml triggers a rich-text re-layout — skip when unchanged
+                if html != getattr(label, '_last_html', None):
+                    label.setHtml(html)
+                    label._last_html = html
                 x_range, y_range = vb.viewRange()
                 x_right = x_range[1]
                 y_top = y_range[1]
@@ -1042,8 +1064,21 @@ class PlotRenderer(WindowBackedController):
                 self.curves['xy_path'].setData(x_plot, y_plot)
                 self.curves['xy_cursor'].setData([x_vals[-1]], [y_vals[-1]])
                 margin = 0.05
-                x_min, x_max = float(np.min(x_vals)), float(np.max(x_vals))
-                y_min, y_max = float(np.min(y_vals)), float(np.max(y_vals))
+                # Incremental min/max — scan only newly appended samples
+                # (full-array min/max is O(n) per frame on a growing buffer)
+                prev_mm = self._stats_cache.get(('xy_minmax',))
+                if prev_mm is not None and prev_mm[0] <= n:
+                    mm_start, x_min, x_max, y_min, y_max = prev_mm
+                else:
+                    mm_start = 0
+                    x_min = y_min = np.inf
+                    x_max = y_max = -np.inf
+                if n > mm_start:
+                    x_min = min(x_min, float(np.min(x_vals[mm_start:])))
+                    x_max = max(x_max, float(np.max(x_vals[mm_start:])))
+                    y_min = min(y_min, float(np.min(y_vals[mm_start:])))
+                    y_max = max(y_max, float(np.max(y_vals[mm_start:])))
+                    self._stats_cache[('xy_minmax',)] = (n, x_min, x_max, y_min, y_max)
                 # Make X and Y spans equal so the view is symmetric
                 x_span = x_max - x_min
                 y_span = y_max - y_min
@@ -1338,10 +1373,25 @@ class PlotRenderer(WindowBackedController):
                             trace.ref_data['time'], trace.ref_data['values'])
                         self._ref_set[trace_id] = ref_key
 
-                # Update min/max stats text (only when new data arrived)
+                # Update min/max stats text (only when new data arrived).
+                # Incremental: scan only samples appended since the last tick —
+                # a full-buffer min/max here is O(n) per frame, O(n²) over a
+                # long capture. _stats_cache is cleared on trace change,
+                # import, and clear_data, which invalidates this too.
                 if data_changed and cur_len > 0:
-                    v_min_s = f"{float(np.min(values)):.4f}"
-                    v_max_s = f"{float(np.max(values)):.4f}"
+                    mm_key = ('minmax', trace_id)
+                    prev_mm = self._stats_cache.get(mm_key)
+                    if prev_mm is not None and prev_mm[0] <= cur_len:
+                        mm_start, v_min, v_max = prev_mm
+                    else:
+                        mm_start, v_min, v_max = 0, np.inf, -np.inf
+                    if cur_len > mm_start:
+                        new_vals = values[mm_start:]
+                        v_min = min(v_min, float(np.min(new_vals)))
+                        v_max = max(v_max, float(np.max(new_vals)))
+                        self._stats_cache[mm_key] = (cur_len, v_min, v_max)
+                    v_min_s = f"{v_min:.4f}"
+                    v_max_s = f"{v_max:.4f}"
                     prev_stats = self._stats_cache.get(trace_id)
                     if prev_stats != (v_min_s, v_max_s):
                         self._stats_cache[trace_id] = (v_min_s, v_max_s)
@@ -1403,6 +1453,8 @@ class PlotRenderer(WindowBackedController):
     def clear_data(self):
         self.accumulated_data = None
         self.total_samples = 0
+        self._last_consumed_state = None
+        self._virtual_buffers = {}
         with self._data_lock:
             self._buffer_len = 0
             self._segment_breaks = []

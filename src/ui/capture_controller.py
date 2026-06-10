@@ -184,6 +184,8 @@ class CaptureController(WindowBackedController):
             # Clear data
             self.accumulated_data = None
             self.total_samples = 0
+            self._last_consumed_state = None
+            self._virtual_buffers = {}
             with self._data_lock:
                 self._buffer_len = 0
                 self._segment_breaks = []
@@ -276,6 +278,8 @@ class CaptureController(WindowBackedController):
             # Clear data
             self.accumulated_data = None
             self.total_samples = 0
+            self._last_consumed_state = None
+            self._virtual_buffers = {}
             with self._data_lock:
                 self._buffer_len = 0
                 self._segment_breaks = []
@@ -505,7 +509,9 @@ class CaptureController(WindowBackedController):
                     logger.warning("External-trigger capture timed out")
                     return
 
-                time.sleep(0.010)
+                # Each poll costs one network round-trip per parameter; the UI
+                # renders at ~30fps, so polling faster than this buys nothing.
+                time.sleep(0.025)
 
             if not self.is_running:
                 self.scope_engine.stop_capture()
@@ -556,7 +562,7 @@ class CaptureController(WindowBackedController):
                     except Exception:
                         pass
 
-                time.sleep(0.010)
+                time.sleep(0.025)
 
             if not self.is_running:
                 try:
@@ -588,7 +594,7 @@ class CaptureController(WindowBackedController):
                 elapsed = time.time() - capture_start_time
                 pct = (elapsed / duration_sec) * 100
                 self.sig_capture_progress.emit(f"Progress: {pct:.1f}%")
-                time.sleep(0.010)
+                time.sleep(0.025)
 
             if not self.is_running:
                 self.scope_engine.stop_capture()
@@ -657,7 +663,7 @@ class CaptureController(WindowBackedController):
                     except Exception:
                         pass
 
-                time.sleep(0.010)
+                time.sleep(0.025)
 
             if not self.is_running:
                 try:
@@ -718,7 +724,7 @@ class CaptureController(WindowBackedController):
         self.btn_stop.setEnabled(False)
         self._update_timer.stop()
         # Force final update to consolidate and render all captured/downloaded data
-        self._on_update_timer()
+        self._on_update_timer(force=True)
         # Final render: show all captured data so panning works immediately
         if self.auto_scroll:
             self.auto_scroll = False
@@ -727,19 +733,25 @@ class CaptureController(WindowBackedController):
         # drive scope) deliver all their data in one _push_data right before
         # this handler runs, and stopping the timer can beat the next render
         # tick — so consolidate and render once here or the curves stay empty.
-        self._on_update_timer()
+        # Forced: auto-scroll just changed, so the full buffer must be redrawn
+        # even though the sample count is unchanged.
+        self._on_update_timer(force=True)
         self._fit_all_data()
 
-    def _on_update_timer(self):
+    def _on_update_timer(self, force=False):
         """Main-thread timer: consolidate data and update plots at ~30fps"""
         # Consolidate data chunks under lock
         with self._data_lock:
             if self._buffer_len == 0:
                 return
             n = self._buffer_len
+            consumed_state = (n, len(self._segment_breaks))
+            if not force and consumed_state == self._last_consumed_state:
+                return
             all_time = self._time_buffer[:n]
             all_params = {k: v[:n] for k, v in self._param_buffers.items()}
             seg_breaks = list(self._segment_breaks)
+        self._last_consumed_state = consumed_state
 
         # Inject virtual derived channels.
         # For each enabled virtual-param trace, compute its value from the underlying
@@ -763,7 +775,17 @@ class CaptureController(WindowBackedController):
                     src_key = f"{underlying}({idx})"
                 dst_key = trace.get_display_name()  # e.g. "DEMAND_SPEED_NORMALISED(0)"
                 if src_key in all_params:
-                    all_params[dst_key] = all_params[src_key] / sp
+                    # Divide only the newly arrived slice into a persistent
+                    # buffer — a full-array divide here is O(n) per tick.
+                    src = all_params[src_key]
+                    processed, buf = self._virtual_buffers.get(dst_key, (0, None))
+                    if buf is None or len(buf) < n or processed > n:
+                        buf = np.empty(max(n, self._buffer_capacity), dtype=np.float64)
+                        processed = 0
+                    if n > processed:
+                        np.divide(src[processed:n], sp, out=buf[processed:n])
+                        self._virtual_buffers[dst_key] = (n, buf)
+                    all_params[dst_key] = buf[:n]
 
         self.accumulated_data = {
             'time': all_time,

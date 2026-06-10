@@ -706,12 +706,13 @@ class DriveScopeEngine:
         self.connection.Execute(cmd)
 
         deadline = time.monotonic() + timeout
+        poll_s = _SDO_POLL_MS / 1000.0
         while time.monotonic() < deadline:
             val = self.connection.GetVrValue(vr)
             if val != _VR_SENTINEL:
                 logger.debug("BASIC command %s returned VR(%d)=%d", cmd, vr, int(val))
                 return int(val)
-            time.sleep(_SDO_POLL_MS / 1000.0)
+            time.sleep(poll_s)
 
         raise TimeoutError(f"{cmd} did not return a value")
 
@@ -1202,7 +1203,9 @@ class DriveScopeEngine:
             if addr == 0:
                 continue
 
-            raw_ch = data_2d[:, ch_idx].copy()
+            # No copy needed — the astype() calls below always allocate new
+            # arrays, and data_2d is never mutated.
+            raw_ch = data_2d[:, ch_idx]
 
             # Determine display name and data type
             if addr in DRIVE_VARIABLES:

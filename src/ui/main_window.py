@@ -117,6 +117,12 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._param_buffers = {}
         self._buffer_len = 0
         self._segment_breaks = []  # sample indices where capture restarted
+        # (buffer_len, segment_count) last consumed by _on_update_timer —
+        # lets the tick skip all work when no new samples have arrived
+        self._last_consumed_state = None
+        # Incrementally-filled buffers for virtual derived channels
+        # {dst_key: (processed_len, np.ndarray)}
+        self._virtual_buffers = {}
 
         # Scrolling window settings
         self.window_duration = 5.0
@@ -175,10 +181,10 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._create_ui()
         self._load_settings()
 
-        # Update timer — drives plot refresh at ~60fps
+        # Update timer — drives plot refresh at ~30fps
         self._update_timer = QTimer(self)
         self._update_timer.timeout.connect(self._on_update_timer)
-        self._update_timer.setInterval(16)
+        self._update_timer.setInterval(33)
 
         # Signal connections
         self.connection_controller.sig_connect_progress.connect(self._on_connect_progress)

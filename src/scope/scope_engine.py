@@ -484,8 +484,8 @@ class ScopeEngine:
         try:
             # Bulk read TABLE data
             # GetMultiTableValues(start, count, output_array) fills output_array
-            # Create pre-allocated numpy array
-            raw = np.zeros(count, dtype=np.float64)
+            # Create pre-allocated numpy array (empty: fully overwritten below)
+            raw = np.empty(count, dtype=np.float64)
             self.connection.GetMultiTableValues(start, count, raw)
 
             # IMPORTANT: SCOPE stores data in SEQUENTIAL BLOCKS, not interleaved!
@@ -569,8 +569,26 @@ class ScopeEngine:
                 'params': {}
             }
 
-            # Read new data from each parameter's block
+            # Read new data from each parameter's block.
             samples_per_param = (self.table_end - self.table_start + 1) // self.num_params
+
+            # Each GetMultiTableValues call costs one controller round-trip,
+            # so when several parameters are due, prefer a single read that
+            # spans all their regions (including the gaps between blocks) and
+            # slice it locally. Worth it only when the gaps waste at most as
+            # much as the useful data — with small streaming batches the gaps
+            # dominate and per-parameter reads win.
+            span = (self.num_params - 1) * samples_per_param + new_samples
+            useful = self.num_params * new_samples
+            if self.num_params > 1 and span <= 2 * useful:
+                raw = np.empty(span, dtype=np.float64)
+                self.connection.GetMultiTableValues(
+                    self.table_start + last_read_pos, span, raw)
+                for i, (param_name, display_name) in enumerate(
+                        zip(self.scope_params, self.display_names)):
+                    offset = i * samples_per_param
+                    result['params'][display_name] = raw[offset:offset + new_samples]
+                return result, actual_end
 
             for i, (param_name, display_name) in enumerate(zip(self.scope_params, self.display_names)):
                 # Calculate position in this parameter's block
@@ -578,8 +596,8 @@ class ScopeEngine:
                 read_start = param_block_start + last_read_pos
                 read_count = new_samples
 
-                # Read this parameter's new data
-                param_data = np.zeros(read_count, dtype=np.float64)
+                # Read this parameter's new data (empty: fully overwritten)
+                param_data = np.empty(read_count, dtype=np.float64)
                 self.connection.GetMultiTableValues(read_start, read_count, param_data)
                 result['params'][display_name] = param_data
 

@@ -3,6 +3,10 @@ import re
 from typing import Dict, List, Tuple
 import numpy as np
 
+# Column names like "MPOS(0)" -> param="MPOS", axis=0
+_PARAM_PATTERN = re.compile(r'^(.+)\((\d+)\)$')
+
+
 class CSVStorage:
     @staticmethod
     def export_data(path: str, time_data: np.ndarray, params_data: Dict[str, np.ndarray]) -> None:
@@ -11,9 +15,11 @@ class CSVStorage:
         with open(path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(['Time'] + param_names)
-            for i in range(len(time_data)):
-                row = [round(time_data[i], 6)] + [params_data[p][i] for p in param_names]
-                writer.writerow(row)
+            # writerows over zipped columns avoids per-row list building in
+            # Python — noticeably faster for 100k+ sample captures.
+            columns = [np.round(time_data, 6)]
+            columns.extend(params_data[p] for p in param_names)
+            writer.writerows(zip(*columns))
 
     @staticmethod
     def import_data(path: str) -> Tuple[np.ndarray, Dict[str, np.ndarray], List[Tuple[str, int]]]:
@@ -45,11 +51,9 @@ class CSVStorage:
         for col_idx, pname in enumerate(param_names, start=1):
             params[pname] = np.array([float(row[col_idx]) for row in rows])
 
-        # Parse column names like "MPOS(0)" -> param="MPOS", axis=0
-        param_pattern = re.compile(r'^(.+)\((\d+)\)$')
         traces = []
         for pname in param_names:
-            m = param_pattern.match(pname)
+            m = _PARAM_PATTERN.match(pname)
             if m:
                 traces.append((m.group(1), int(m.group(2))))
             else:

@@ -1,5 +1,7 @@
 import unittest
 
+import numpy as np
+
 from src.scope.scope_engine import ScopeEngine
 
 
@@ -7,6 +9,7 @@ class FakeScopeConnection:
     def __init__(self, scope_on_error=None):
         self.calls = []
         self.scope_on_error = scope_on_error
+        self.scope_pos = 0
 
     def ScopeOn(self, *args):
         self.calls.append(("ScopeOn", args))
@@ -21,6 +24,14 @@ class FakeScopeConnection:
 
     def Execute(self, command):
         self.calls.append(("Execute", command))
+
+    def GetSystemParameter_SCOPE_POS(self):
+        return self.scope_pos
+
+    def GetMultiTableValues(self, start, count, out):
+        self.calls.append(("GetMultiTableValues", start, count))
+        # TABLE[i] = i so tests can verify which entries were sliced out
+        out[:] = np.arange(start, start + count, dtype=np.float64)
 
 
 class ScopeEngineStartCaptureTests(unittest.TestCase):
@@ -173,6 +184,79 @@ class ScopeEngineStartCaptureTests(unittest.TestCase):
             connection.calls,
             [("Execute", "SCOPE(ON, 1, 20, 29, READ_OP(0))")],
         )
+
+
+class ScopeEngineReadNewDataTests(unittest.TestCase):
+    def _make_engine(self):
+        connection = FakeScopeConnection()
+        engine = ScopeEngine(connection)
+        engine.servo_period_sec = 0.001
+        engine.tsize = 1000
+        # 2 params, table 0..19 → 10 samples per parameter block
+        engine.configure(
+            ["MPOS AXIS(0)", "DPOS AXIS(0)"],
+            ["MPOS(0)", "DPOS(0)"],
+            period_cycles=1,
+            duration_seconds=0.01,
+            table_start=0,
+        )
+        return engine, connection
+
+    def test_large_batch_uses_single_spanning_read(self):
+        engine, connection = self._make_engine()
+        connection.scope_pos = 10  # 6 new samples since last_read_pos=4
+
+        data, new_pos = engine.read_new_data(4)
+
+        # span = 1*10 + 6 = 16 ≤ 2 * useful (24) → one round-trip
+        self.assertEqual(
+            connection.calls,
+            [("GetMultiTableValues", 4, 16)],
+        )
+        self.assertEqual(new_pos, 10)
+        self.assertEqual(data['num_samples'], 6)
+        # Param 0 block at 0..9, new region 4..9; param 1 block at 10..19,
+        # new region 14..19 (TABLE[i] = i in the fake connection)
+        np.testing.assert_array_equal(
+            data['params']['MPOS(0)'], np.arange(4, 10, dtype=np.float64))
+        np.testing.assert_array_equal(
+            data['params']['DPOS(0)'], np.arange(14, 20, dtype=np.float64))
+
+    def test_small_batch_reads_each_parameter_block(self):
+        engine, connection = self._make_engine()
+        connection.scope_pos = 1  # 1 new sample since last_read_pos=0
+
+        data, new_pos = engine.read_new_data(0)
+
+        # span = 1*10 + 1 = 11 > 2 * useful (4) → per-parameter reads
+        self.assertEqual(
+            connection.calls,
+            [
+                ("GetMultiTableValues", 0, 1),
+                ("GetMultiTableValues", 10, 1),
+            ],
+        )
+        self.assertEqual(new_pos, 1)
+        np.testing.assert_array_equal(
+            data['params']['MPOS(0)'], np.array([0.0]))
+        np.testing.assert_array_equal(
+            data['params']['DPOS(0)'], np.array([10.0]))
+
+    def test_both_paths_return_identical_data(self):
+        for last_read, scope_pos in [(0, 10), (0, 1), (3, 7), (5, 10)]:
+            engine, connection = self._make_engine()
+            connection.scope_pos = scope_pos
+            data, new_pos = engine.read_new_data(last_read)
+            self.assertEqual(new_pos, scope_pos)
+            n_new = scope_pos - last_read
+            for i, name in enumerate(["MPOS(0)", "DPOS(0)"]):
+                block_start = i * 10 + last_read
+                np.testing.assert_array_equal(
+                    data['params'][name],
+                    np.arange(block_start, block_start + n_new,
+                              dtype=np.float64),
+                    err_msg=f"{name} last_read={last_read} pos={scope_pos}",
+                )
 
 
 if __name__ == "__main__":

@@ -372,6 +372,8 @@ class MainWindowActions(WindowBackedController):
                     self._param_buffers[k] = buf
                 self._buffer_len = n_import
                 self._segment_breaks = []
+            self._last_consumed_state = None
+            self._virtual_buffers = {}
 
             # Ensure we're not in auto-scroll/running state
             self.auto_scroll = False
