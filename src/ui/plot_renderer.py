@@ -441,7 +441,8 @@ class PlotRenderer(WindowBackedController):
             return
 
         self._trace_window_counter += 1
-        trace_window = TraceWindow(trace, trace.is_fft(), parent=self.window)
+        trace_window = TraceWindow(trace, trace.is_fft(), parent=self.window,
+                                   line_width=self.line_width)
         trace_window.setWindowTitle(
             f"Trace Scope {self._trace_window_counter}: {trace_name}")
         trace_window.closed.connect(
@@ -499,7 +500,8 @@ class PlotRenderer(WindowBackedController):
             return
 
         self._compare_window_counter += 1
-        compare_window = CompareWindow(chosen, fft_mode, parent=self.window)
+        compare_window = CompareWindow(chosen, fft_mode, parent=self.window,
+                                       line_width=self.line_width)
         compare_window.setWindowTitle(
             f"Compare Scopes {self._compare_window_counter}")
         compare_window.closed.connect(
@@ -1492,5 +1494,7 @@ class PlotRenderer(WindowBackedController):
             pen = ref_curve.opts.get('pen')
             if pen:
                 ref_curve.setPen(pg.mkPen(pen.color(), width=self.line_width))
+        for compare_window in self._compare_windows:
+            compare_window.set_line_width(self.line_width)
         self._update_x_links()
 

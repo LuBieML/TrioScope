@@ -21,8 +21,10 @@ class CompareWindow(QMainWindow):
 
     MIN_TRACES = 2
 
-    def __init__(self, traces, fft_mode, parent=None, single_trace=False):
+    def __init__(self, traces, fft_mode, parent=None, single_trace=False,
+                 line_width=1):
         super().__init__(parent, Qt.Window)
+        self.line_width = line_width
         self.single_trace = single_trace
         self.setWindowTitle("Trace Scope" if single_trace else "Compare Scopes")
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -124,7 +126,7 @@ class CompareWindow(QMainWindow):
                                 color=first_color)
 
         # Primary curve goes on main_plot's ViewBox
-        width = 1
+        width = self.line_width
         self.curves = []
         self.viewboxes = [self.main_plot.vb]
         self.axes = [self.main_plot.getAxis('left')]
@@ -186,6 +188,12 @@ class CompareWindow(QMainWindow):
         self._cursor_updating = False
 
         self.main_plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
+    def set_line_width(self, width):
+        """Apply a new line width to all trace curves."""
+        self.line_width = width
+        for curve, trace in zip(self.curves, self.traces):
+            curve.setPen(pg.mkPen(trace.get_color(), width=width))
 
     def _sync_viewboxes(self):
         rect = self.main_plot.vb.sceneBoundingRect()
@@ -524,5 +532,6 @@ class _CompareTracePicker(QDialog):
 class TraceWindow(CompareWindow):
     """Single-trace companion window using the compare plot/cursor tools."""
 
-    def __init__(self, trace, fft_mode, parent=None):
-        super().__init__([trace], fft_mode, parent=parent, single_trace=True)
+    def __init__(self, trace, fft_mode, parent=None, line_width=1):
+        super().__init__([trace], fft_mode, parent=parent, single_trace=True,
+                         line_width=line_width)
