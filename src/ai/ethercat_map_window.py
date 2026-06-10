@@ -3,21 +3,27 @@ EtherCAT Network Map window — visual topology of discovered slaves.
 
 Diagram-style layout inspired by Trio Motion Perfect:
   Address row  →  device strip with bus line  →  axis row
+
+Devices are clickable; the details panel on the right shows the full
+CoE identity (vendor, product, revision, serial, profile) and offers
+an internet lookup for the selected device.
 """
 
 import logging
 import threading
+import webbrowser
 from typing import Optional
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QWidget,
-    QScrollArea, QFrame, QSizePolicy, QGroupBox, QGridLayout,
+    QScrollArea, QSizePolicy, QGroupBox, QGridLayout,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QRect
 from PySide6.QtGui import QFont, QPainter, QPen, QColor, QBrush
 
 import Trio_UnifiedApi as TUA
 
+from . import ethercat_devices
 from .ethercat_scan import scan_network, EthercatNetwork, EthercatSlot, EthercatSlave
 
 logger = logging.getLogger(__name__)
@@ -37,11 +43,12 @@ _CLR_RED          = QColor("#f14c4c")
 _CLR_BLUE         = QColor("#4a9eff")
 _CLR_CONTROLLER   = QColor("#2e8b3e")
 _CLR_BUS_LINE     = QColor("#FFA500")
+_CLR_SELECTED     = QColor("#FFA500")
 
 # Layout constants
-_DEV_W      = 48   # device block width
-_DEV_H      = 60   # device block height
-_DEV_GAP    = 8    # gap between device blocks
+_DEV_W      = 84   # device block width
+_DEV_H      = 72   # device block height
+_DEV_GAP    = 10   # gap between device blocks
 _LABEL_H    = 16   # row height for address / axis labels
 _BUS_Y_OFF  = 6    # bus line offset above device blocks
 _MARG       = 8    # outer margin
@@ -61,20 +68,18 @@ def _state_colour(state) -> QColor:
     return _CLR_RED
 
 
-def _drive_type_label(raw: int) -> str:
-    known = {0: "", 41: "DX3", 42: "DX4", 43: "DX1", 45: "DX5"}
-    return known.get(raw, f"T{raw}")
-
-
 # ---------------------------------------------------------------------------
 # Diagram widget — one per EtherCAT slot
 # ---------------------------------------------------------------------------
 class _SlotDiagram(QWidget):
     """Custom-painted diagram for one EtherCAT slot, resembling Motion Perfect."""
 
+    deviceSelected = Signal(object)   # EthercatSlave or None
+
     def __init__(self, ecat_slot: EthercatSlot, parent=None):
         super().__init__(parent)
         self.ecat_slot = ecat_slot
+        self._selected: Optional[int] = None
 
         # Filter ghost slaves
         self.devices: list[EthercatSlave] = [
@@ -93,22 +98,25 @@ class _SlotDiagram(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         # Build tooltip map: device index → tooltip text
+        self._dev_rects: list[QRect] = []
         self._tooltips: list[tuple[QRect, str]] = []
         for i, dev in enumerate(self.devices):
             x = self._dev_x(i)
             y = _MARG + _LABEL_H + _BUS_Y_OFF
             rect = QRect(x, y, _DEV_W, _DEV_H)
+            self._dev_rects.append(rect)
             lines = [f"Position: #{dev.position}"]
             lines.append(f"Address: {dev.address}")
             if dev.axis >= 0:
                 lines.append(f"Axis: {dev.axis}")
+            if dev.product_name:
+                lines.append(f"Device: {dev.product_name}")
             if dev.vendor_id:
                 lines.append(f"Vendor: {dev.vendor_name}")
-            if dev.drive_type:
-                lines.append(f"Drive: {_drive_type_label(dev.drive_type)}")
             lines.append(f"Online: {'Yes' if dev.online else 'No'}")
             if dev.drive_status:
                 lines.append(f"Status: 0x{dev.drive_status:04X}")
+            lines.append("Click for full details")
             self._tooltips.append((rect, "\n".join(lines)))
 
         self.setMouseTracking(True)
@@ -116,6 +124,28 @@ class _SlotDiagram(QWidget):
     def _dev_x(self, i: int) -> int:
         """X position of device block i."""
         return _MARG + self._master_w + _DEV_GAP + i * (_DEV_W + _DEV_GAP)
+
+    # ----- selection -------------------------------------------------------
+
+    def mousePressEvent(self, ev):
+        pos = ev.position().toPoint()
+        for i, rect in enumerate(self._dev_rects):
+            if rect.contains(pos):
+                self._selected = i
+                self.update()
+                self.deviceSelected.emit(self.devices[i])
+                return
+        # Click on empty space clears selection
+        if self._selected is not None:
+            self._selected = None
+            self.update()
+            self.deviceSelected.emit(None)
+        super().mousePressEvent(ev)
+
+    def clear_selection(self):
+        if self._selected is not None:
+            self._selected = None
+            self.update()
 
     def event(self, ev):
         from PySide6.QtCore import QEvent
@@ -178,13 +208,6 @@ class _SlotDiagram(QWidget):
         p.setPen(QPen(_CLR_BUS_LINE, 2))
         p.drawLine(x_bus_start, bus_y, x_bus_end, bus_y)
 
-        # ── "Address:" label ──────────────────────────────────
-        p.setPen(_CLR_GREEN)
-        p.setFont(font_sm)
-        addr_lbl_x = _MARG
-        p.drawText(QRect(addr_lbl_x, y_addr, self._master_w, _LABEL_H),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "")
-
         # ── "Axis:" label ─────────────────────────────────────
         has_axes = any(d.axis >= 0 for d in self.devices)
         if has_axes:
@@ -203,22 +226,26 @@ class _SlotDiagram(QWidget):
 
             # Device rectangle
             border_clr = _CLR_GREEN if dev.online else _CLR_RED
-            p.setPen(QPen(border_clr, 1))
+            pen_w = 1
+            if i == self._selected:
+                border_clr = _CLR_SELECTED
+                pen_w = 2
+            p.setPen(QPen(border_clr, pen_w))
             p.setBrush(QBrush(_CLR_CARD_BG))
             p.drawRoundedRect(x, y_dev, _DEV_W, _DEV_H, 3, 3)
 
             # Online indicator bar at top of device
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(border_clr))
+            p.setBrush(QBrush(_CLR_GREEN if dev.online else _CLR_RED))
             p.drawRect(x + 1, y_dev + 1, _DEV_W - 2, 3)
 
-            # Drive type / vendor icon text inside device
+            # Product / device name inside device
             p.setPen(_CLR_TEXT)
             p.setFont(font_md)
-            dt = _drive_type_label(dev.drive_type)
-            if dt:
-                p.drawText(QRect(x, y_dev + 8, _DEV_W, 20),
-                           Qt.AlignmentFlag.AlignCenter, dt)
+            name = dev.product_name
+            if name:
+                p.drawText(QRect(x + 2, y_dev + 8, _DEV_W - 4, 18),
+                           Qt.AlignmentFlag.AlignCenter, name)
 
             # Vendor short name
             if dev.vendor_id:
@@ -226,10 +253,17 @@ class _SlotDiagram(QWidget):
                 p.setFont(font_sm)
                 # Shorten long vendor names
                 vn = dev.vendor_name
-                if len(vn) > 8:
+                if len(vn) > 12:
                     vn = vn.split()[0]  # first word only
-                p.drawText(QRect(x, y_dev + 26, _DEV_W, 14),
+                p.drawText(QRect(x + 2, y_dev + 26, _DEV_W - 4, 14),
                            Qt.AlignmentFlag.AlignCenter, vn)
+
+            # Revision (small, dimmed)
+            if dev.revision_str:
+                p.setPen(_CLR_TEXT_DIM)
+                p.setFont(font_sm)
+                p.drawText(QRect(x + 2, y_dev + 40, _DEV_W - 4, 14),
+                           Qt.AlignmentFlag.AlignCenter, f"rev {dev.revision_str}")
 
             # Position number at bottom of device
             p.setPen(_CLR_TEXT_DIM)
@@ -254,11 +288,100 @@ class _SlotDiagram(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Details panel for the selected device
+# ---------------------------------------------------------------------------
+class _DetailsPanel(QGroupBox):
+    """Shows the full CoE identity of the selected slave."""
+
+    _FIELDS = [
+        ("Device",      "device"),
+        ("Vendor",      "vendor"),
+        ("Product code", "product"),
+        ("Revision",    "revision"),
+        ("Serial no.",  "serial"),
+        ("Profile",     "profile"),
+        ("Position",    "position"),
+        ("Address",     "address"),
+        ("Axis",        "axis"),
+        ("Drive status", "status"),
+        ("Online",      "online"),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__("Device details", parent)
+        self.setFixedWidth(260)
+        self._slave: Optional[EthercatSlave] = None
+
+        layout = QVBoxLayout(self)
+        grid = QGridLayout()
+        grid.setColumnStretch(1, 1)
+        grid.setVerticalSpacing(4)
+
+        self._values: dict[str, QLabel] = {}
+        for row, (title, key) in enumerate(self._FIELDS):
+            lbl = QLabel(title + ":")
+            lbl.setStyleSheet("color: #888888; font-size: 8pt;")
+            val = QLabel("—")
+            val.setStyleSheet("color: #d4d4d4; font-size: 8pt;")
+            val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            val.setWordWrap(True)
+            grid.addWidget(lbl, row, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(val, row, 1)
+            self._values[key] = val
+        layout.addLayout(grid)
+        layout.addStretch()
+
+        self._btn_search = QPushButton("\U0001F310  Search device online")
+        self._btn_search.setToolTip(
+            "Open a web search for this device (vendor + product) in your browser"
+        )
+        self._btn_search.setEnabled(False)
+        self._btn_search.clicked.connect(self._search_online)
+        layout.addWidget(self._btn_search)
+
+    def set_slave(self, slave: Optional[EthercatSlave]):
+        self._slave = slave
+        if slave is None:
+            for val in self._values.values():
+                val.setText("—")
+            self._btn_search.setEnabled(False)
+            return
+
+        v = self._values
+        v["device"].setText(slave.product_name or "Unknown")
+        if slave.vendor_id:
+            v["vendor"].setText(f"{slave.vendor_name}\n(0x{slave.vendor_id:08X})")
+        else:
+            v["vendor"].setText("—")
+        v["product"].setText(f"0x{slave.product_code:08X}" if slave.product_code else "—")
+        v["revision"].setText(slave.revision_str or "—")
+        v["serial"].setText(str(slave.serial_number) if slave.serial_number else "—")
+        v["profile"].setText(slave.profile_name or "—")
+        v["position"].setText(f"#{slave.position} (slot {slave.slot})")
+        v["address"].setText(str(slave.address))
+        v["axis"].setText(str(slave.axis) if slave.axis >= 0 else "not mapped")
+        v["status"].setText(f"0x{slave.drive_status:04X}" if slave.drive_status else "—")
+        v["online"].setText("Yes" if slave.online else "No")
+        self._btn_search.setEnabled(True)
+
+    def _search_online(self):
+        if self._slave is None:
+            return
+        url = ethercat_devices.web_search_url(
+            self._slave.vendor_id, self._slave.product_code,
+            drive_type=self._slave.drive_type,
+        )
+        webbrowser.open(url)
+
+
+# ---------------------------------------------------------------------------
 # Signal bridge for thread → GUI
 # ---------------------------------------------------------------------------
 class _ScanSignals(QObject):
     finished = Signal(object)   # EthercatNetwork
     error = Signal(str)
+    etg_done = Signal(int)      # number of vendors fetched
+    etg_error = Signal(str)
 
 
 # ---------------------------------------------------------------------------
@@ -275,10 +398,12 @@ class EthercatMapWindow(QDialog):
         self._signals = _ScanSignals()
         self._signals.finished.connect(self._on_scan_finished)
         self._signals.error.connect(self._on_scan_error)
+        self._signals.etg_done.connect(self._on_etg_done)
+        self._signals.etg_error.connect(self._on_etg_error)
 
         self.setWindowTitle("EtherCAT Network Map")
-        self.resize(750, 220)
-        self.setMinimumSize(400, 160)
+        self.resize(950, 320)
+        self.setMinimumSize(500, 200)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -286,10 +411,19 @@ class EthercatMapWindow(QDialog):
 
         # Toolbar
         toolbar = QHBoxLayout()
-        self._btn_scan = QPushButton("\u27f3  Scan Network")
+        self._btn_scan = QPushButton("⟳  Scan Network")
         self._btn_scan.setFixedHeight(26)
         self._btn_scan.clicked.connect(self._start_scan)
         toolbar.addWidget(self._btn_scan)
+
+        self._btn_etg = QPushButton("\U0001F310  Update Vendor Names")
+        self._btn_etg.setFixedHeight(26)
+        self._btn_etg.setToolTip(
+            "Download the official EtherCAT vendor-ID registry from\n"
+            "ethercat.org (requires internet). The list is cached locally."
+        )
+        self._btn_etg.clicked.connect(self._start_etg_update)
+        toolbar.addWidget(self._btn_etg)
 
         self._status_label = QLabel("")
         self._status_label.setStyleSheet("color: #888888;")
@@ -301,7 +435,10 @@ class EthercatMapWindow(QDialog):
         toolbar.addWidget(self._summary_label)
         root.addLayout(toolbar)
 
-        # Scrollable content area
+        # Content row: scrollable diagrams + details panel
+        content_row = QHBoxLayout()
+        content_row.setSpacing(6)
+
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -312,7 +449,13 @@ class EthercatMapWindow(QDialog):
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(6)
         self._scroll.setWidget(self._content)
-        root.addWidget(self._scroll, 1)
+        content_row.addWidget(self._scroll, 1)
+
+        self._details = _DetailsPanel()
+        content_row.addWidget(self._details)
+        root.addLayout(content_row, 1)
+
+        self._diagrams: list[_SlotDiagram] = []
 
         # Kick off initial scan
         QTimer.singleShot(100, self._start_scan)
@@ -325,7 +468,7 @@ class EthercatMapWindow(QDialog):
             return
 
         self._btn_scan.setEnabled(False)
-        self._status_label.setText("Scanning...")
+        self._status_label.setText("Scanning (reading device identities)...")
 
         conn_lock = self._conn_lock
 
@@ -383,10 +526,40 @@ class EthercatMapWindow(QDialog):
                 logger.debug("Failed to start watchdog on close: %s", exc)
         super().closeEvent(event)
 
+    # ----- ETG vendor registry update --------------------------------------
+
+    def _start_etg_update(self):
+        """Download the official vendor-ID registry from ethercat.org."""
+        self._btn_etg.setEnabled(False)
+        self._status_label.setText("Downloading ETG vendor registry...")
+
+        def _worker():
+            try:
+                vendors = ethercat_devices.fetch_etg_vendors()
+                self._signals.etg_done.emit(len(vendors))
+            except Exception as exc:
+                logger.warning("ETG vendor fetch failed: %s", exc)
+                self._signals.etg_error.emit(str(exc))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_etg_done(self, count: int):
+        self._btn_etg.setEnabled(True)
+        self._status_label.setText(f"Vendor registry updated ({count} vendors)")
+        # Re-render so unknown vendor IDs pick up their new names
+        if self._network:
+            self._rebuild_map()
+
+    def _on_etg_error(self, msg: str):
+        self._btn_etg.setEnabled(True)
+        self._status_label.setText(f"Vendor registry update failed: {msg}")
+
     # ----- map rendering ---------------------------------------------------
 
     def _rebuild_map(self):
         """Rebuild the visual map from the current network scan."""
+        self._diagrams.clear()
+        self._details.set_slave(None)
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             if item.widget():
@@ -416,9 +589,19 @@ class EthercatMapWindow(QDialog):
             if ecat_slot.num_slaves == 0 and not ecat_slot.is_operational:
                 continue
             diagram = _SlotDiagram(ecat_slot)
+            diagram.deviceSelected.connect(self._on_device_selected)
+            self._diagrams.append(diagram)
             self._content_layout.addWidget(diagram)
 
         self._content_layout.addStretch()
+
+    def _on_device_selected(self, slave: Optional[EthercatSlave]):
+        # Only one device selected across all slot diagrams
+        sender = self.sender()
+        for diagram in self._diagrams:
+            if diagram is not sender:
+                diagram.clear_selection()
+        self._details.set_slave(slave)
 
     # ----- public API ------------------------------------------------------
 

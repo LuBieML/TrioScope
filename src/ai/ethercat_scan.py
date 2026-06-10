@@ -14,10 +14,16 @@ from typing import Optional
 
 import Trio_UnifiedApi as TUA
 
+from . import ethercat_devices
+from .ethercat_devices import VENDOR_NAMES  # noqa: F401 — re-exported for compat
+
 logger = logging.getLogger(__name__)
 
 # EtherCAT slots available on Trio controllers
 _MAX_SLOTS = 1
+
+# CoE Device Type object (0x1000) — low word is the CiA profile number
+_DEVICE_TYPE_INDEX = 0x1000
 
 # CoE Identity Object (0x1018) subindices
 _IDENTITY_INDEX = 0x1018
@@ -25,45 +31,6 @@ _SUBIDX_VENDOR_ID = 1
 _SUBIDX_PRODUCT_CODE = 2
 _SUBIDX_REVISION = 3
 _SUBIDX_SERIAL = 4
-
-# ---------------------------------------------------------------------------
-# EtherCAT Vendor ID lookup table
-# Source: ETG (EtherCAT Technology Group) vendor registry.
-# Extend as needed when encountering new devices.
-# ---------------------------------------------------------------------------
-VENDOR_NAMES: dict[int, str] = {
-    0x00000001: "EtherCAT Technology Group",
-    0x00000002: "Beckhoff Automation",
-    0x00000004: "KEB Automation",
-    0x0000000E: "Bosch Rexroth",
-    0x00000022: "Lenze",
-    0x00000044: "Wago",
-    0x00000048: "B&R Industrial Automation",
-    0x0000004C: "ifm electronic",
-    0x0000006A: "Festo",
-    0x00000083: "Omron",
-    0x000000AB: "Trio Motion Technology",
-    0x000002DE: "Trio Motion Technology",
-    0x000000B9: "SEW-Eurodrive",
-    0x000000C7: "Pilz",
-    0x000000E4: "Hilscher",
-    0x000000FB: "SMC Corporation",
-    0x00000127: "Mitsubishi Electric",
-    0x0000014E: "Baumer",
-    0x00000195: "Sick",
-    0x000001DD: "Delta Electronics",
-    0x00000226: "Oriental Motor",
-    0x0000029C: "Keyence",
-    0x000002BE: "Sanyo Denki",
-    0x00000539: "Yaskawa Electric",
-    0x0000054D: "Panasonic",
-    0x00000569: "Maxon Motor",
-    0x000005A2: "Nanotec Electronic",
-    0x00000659: "Schneider Electric",
-    0x0000066F: "Inovance Technology",
-    0x00000A13: "Elmo Motion Control",
-    0x00100000: "Copley Controls",
-}
 
 
 @dataclass
@@ -81,11 +48,29 @@ class EthercatSlave:
     product_code: int = 0   # product code from Identity Object 0x1018
     revision: int = 0       # revision number from Identity Object 0x1018
     serial_number: int = 0  # serial number from Identity Object 0x1018
+    device_type: int = 0    # CoE Device Type object 0x1000 (CiA profile)
 
     @property
     def vendor_name(self) -> str:
         """Human-readable vendor name, or hex ID if unknown."""
-        return VENDOR_NAMES.get(self.vendor_id, f"Unknown (0x{self.vendor_id:08X})")
+        return ethercat_devices.vendor_name(self.vendor_id)
+
+    @property
+    def product_name(self) -> str:
+        """Best-effort short product name (e.g. 'DX4', 'EK1100', 'Drive')."""
+        return ethercat_devices.product_label(
+            self.vendor_id, self.product_code,
+            device_type=self.device_type, drive_type=self.drive_type,
+        )
+
+    @property
+    def profile_name(self) -> str:
+        """CiA device profile name derived from object 0x1000."""
+        return ethercat_devices.device_profile_name(self.device_type)
+
+    @property
+    def revision_str(self) -> str:
+        return ethercat_devices.revision_str(self.revision)
 
 
 @dataclass
@@ -136,24 +121,24 @@ class EthercatNetwork:
         return [s for s in self.slots if s.num_slaves > 0]
 
 
-def _read_identity_field(
+def _coe_read_u32(
     connection: TUA.TrioConnection,
     slot: int,
     position: int,
+    index: int,
     subindex: int,
     vr_scratch: int = 900,
     timeout: float = 0.5,
 ) -> int:
-    """Read one subindex of the Identity Object (0x1018) via SDO.
+    """Read one CoE object (Unsigned32) via SDO using slot + slave position.
 
     Uses a shorter timeout than normal CoE reads since identity
     responses are immediate on present slaves.
     """
-    import time
     _SENTINEL = -9999.0
     connection.SetVrValue(vr_scratch, _SENTINEL)
     connection.Ethercat_CoRead(
-        slot, position, _IDENTITY_INDEX, subindex,
+        slot, position, index, subindex,
         TUA.Co_ObjectType.Unsigned32, vr_scratch,
     )
     deadline = time.monotonic() + timeout
@@ -163,7 +148,8 @@ def _read_identity_field(
             return int(val)
         time.sleep(0.05)
     raise TimeoutError(
-        f"Identity read timed out — slot {slot}, slave {position}, sub {subindex}"
+        f"CoE read timed out — slot {slot}, slave {position}, "
+        f"object 0x{index:04X}:{subindex}"
     )
 
 
@@ -180,16 +166,51 @@ def read_slave_vendor(
     lock = conn_lock or contextlib.nullcontext()
     with lock:
         try:
-            slave.vendor_id = _read_identity_field(
-                connection, slave.slot, slave.position, _SUBIDX_VENDOR_ID,
+            slave.vendor_id = _coe_read_u32(
+                connection, slave.slot, slave.position,
+                _IDENTITY_INDEX, _SUBIDX_VENDOR_ID,
             )
         except Exception as exc:
             logger.debug("Slave %d: vendor read failed — %s", slave.position, exc)
 
 
+def _read_slave_identity(connection: TUA.TrioConnection, slave: EthercatSlave,
+                         lock) -> None:
+    """Populate identity (0x1018) and device-type (0x1000) fields in place.
+
+    Each field is read independently under the lock; failures are logged
+    and leave the field at its default so a partial identity is still useful.
+    """
+    fields = (
+        ("vendor_id", _IDENTITY_INDEX, _SUBIDX_VENDOR_ID),
+        ("product_code", _IDENTITY_INDEX, _SUBIDX_PRODUCT_CODE),
+        ("revision", _IDENTITY_INDEX, _SUBIDX_REVISION),
+        ("serial_number", _IDENTITY_INDEX, _SUBIDX_SERIAL),
+        ("device_type", _DEVICE_TYPE_INDEX, 0),
+    )
+    for attr, index, sub in fields:
+        try:
+            with lock:
+                value = _coe_read_u32(
+                    connection, slave.slot, slave.position, index, sub,
+                )
+            setattr(slave, attr, value)
+        except Exception as exc:
+            logger.debug(
+                "Slave %d: %s read (0x%04X:%d) failed — %s",
+                slave.position, attr, index, sub, exc,
+            )
+            # Identity object is mandatory; if the first read fails the
+            # mailbox is probably not reachable — don't retry the rest.
+            if attr == "vendor_id":
+                break
+        time.sleep(0.01)
+
+
 def scan_network(
     connection: TUA.TrioConnection,
     conn_lock: Optional[threading.Lock] = None,
+    read_identity: bool = True,
 ) -> EthercatNetwork:
     """
     Scan all EtherCAT slots and enumerate slaves.
@@ -199,8 +220,10 @@ def scan_network(
 
     Parameters
     ----------
-    connection : active TUA.TrioConnection
-    conn_lock  : optional lock to serialize access to the connection
+    connection    : active TUA.TrioConnection
+    conn_lock     : optional lock to serialize access to the connection
+    read_identity : also read CoE Identity (0x1018) and Device Type (0x1000)
+                    for each online slave (a few SDO round-trips per device)
     """
     lock = conn_lock or contextlib.nullcontext()
     network = EthercatNetwork()
@@ -279,9 +302,15 @@ def scan_network(
                 sn = _call(connection.GetAxisParameter_SLOT_NUMBER, slave.axis, default=0)
                 slave.slot_number = int(sn)
 
+            # Read CoE identity (vendor / product / revision / serial)
+            if read_identity and slave.online:
+                _read_slave_identity(connection, slave, lock)
+
             logger.info(
-                "  Slave %d: addr=%d, axis=%d, online=%s, drive_type=%d",
+                "  Slave %d: addr=%d, axis=%d, online=%s, drive_type=%d, "
+                "vendor=0x%08X, product=0x%08X",
                 pos, slave.address, slave.axis, slave.online, slave.drive_type,
+                slave.vendor_id, slave.product_code,
             )
             slot.slaves.append(slave)
 
