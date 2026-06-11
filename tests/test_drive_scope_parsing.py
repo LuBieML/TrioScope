@@ -207,7 +207,7 @@ class DriveScopeParsingTests(unittest.TestCase):
             target = Path(tmp) / "drive_scope.bin"
             target.write_bytes(b"\xff" * (len(payload) * 2))
 
-            with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+            with patch("time.sleep", lambda _seconds: None):
                 result = engine.read_data(local_filename=str(target))
 
             parsed = result["params"]["SPD_FB_RPM (0x0F10)"]
@@ -222,7 +222,7 @@ class DriveScopeParsingTests(unittest.TestCase):
         engine.is_configured = True
         engine.sample_time = 8
 
-        with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+        with patch("time.sleep", lambda _seconds: None):
             engine.start_capture()
 
         self.assertEqual(
@@ -245,7 +245,7 @@ class DriveScopeParsingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "drive_scope.bin"
-            with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+            with patch("time.sleep", lambda _seconds: None):
                 engine.read_data(local_filename=str(target))
 
         # Check that we tried 5 first, then fell back to 1
@@ -281,7 +281,7 @@ class DriveScopeParsingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "drive_scope.bin"
-            with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+            with patch("time.sleep", lambda _seconds: None):
                 result = engine.read_data(local_filename=str(target))
 
             parsed = result["params"]["SPD_FB_RPM (0x0F10)"]
@@ -300,7 +300,7 @@ class DriveScopeParsingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "drive_scope.bin"
-            with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+            with patch("time.sleep", lambda _seconds: None):
                 result = engine.read_data(local_filename=str(target))
 
         parsed = result["params"]["SPD_FB_RPM (0x0F10)"]
@@ -319,7 +319,7 @@ class DriveScopeParsingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "drive_scope.bin"
-            with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+            with patch("time.sleep", lambda _seconds: None):
                 result = engine.read_data(local_filename=str(target))
 
         parsed = result["params"]["SPD_FB_RPM (0x0F10)"]
@@ -341,7 +341,7 @@ class DriveScopeParsingTests(unittest.TestCase):
             previous = b"previous capture"
             target.write_bytes(previous)
 
-            with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+            with patch("time.sleep", lambda _seconds: None):
                 with self.assertRaises(RuntimeError):
                     engine.read_data(local_filename=str(target))
 
@@ -470,7 +470,7 @@ class DriveScopeDx5Dx1Tests(unittest.TestCase):
 
         with patch("subprocess.run", mock_run), tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "drive_scope.bin"
-            with patch("src.scope.drive_scope_engine.time.sleep", lambda _seconds: None):
+            with patch("time.sleep", lambda _seconds: None):
                 result = engine.read_data(local_filename=str(target))
 
         self.assertIn("SPD_FB_RPM (0x0F10)", result["params"])
