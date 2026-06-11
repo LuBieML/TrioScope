@@ -10,12 +10,18 @@ Protocol (from IPD-PLN-T22 COMBO document):
     0x368C  Setup:    trigger mode, thresholds, channel addresses, sample time
     0x368B  Control:  start/stop capture
     0x3680  Status:   bits 14-15 indicate capture state
-    0x3687  Data:     16000-byte domain (8000 words, 8 channels × 1000 samples)
+    0x3687  Data:     16000-byte domain (8000 words, up to 8 ch × 1000 samples)
 
-Data layout is interleaved:
-    Word 0-7:   Ch1[0], Ch2[0], ..., Ch8[0]
-    Word 8-15:  Ch1[1], Ch2[1], ..., Ch8[1]
+Data layout is interleaved across the ACTIVE channels only.  The COMBO
+document shows the full 8-channel case, but the drive packs just the
+channels whose address is nonzero, each with 1000 samples (verified
+against real DX4 captures and the C# reference, which parses a 6-channel
+setup with a 6-word stride).  With N active channels:
+    Word 0..N-1:    Ch1[0], Ch2[0], ..., ChN[0]
+    Word N..2N-1:   Ch1[1], Ch2[1], ..., ChN[1]
     ...
+Only the first N × 1000 words of the 16000-byte upload are capture data;
+the remainder is stale drive memory and must not be parsed.
 """
 
 import logging
@@ -43,8 +49,6 @@ NUM_CHANNELS = 8
 SAMPLES_PER_CHANNEL = 1000
 TOTAL_WORDS = NUM_CHANNELS * SAMPLES_PER_CHANNEL  # 8000
 EXPECTED_CAPTURE_BYTES = TOTAL_WORDS * 2
-FIFO_CHUNK_BYTES = 0x8100
-FIFO_CONTAINER_PREFIX_BYTES = 0x100
 SAMPLE_TIME_UNIT_US = 125  # each sample time unit = 125 μs
 
 # ── Trigger modes ───────────────────────────────────────────────────────
@@ -842,45 +846,32 @@ class DriveScopeEngine:
             return None
 
     def _select_capture_bytes(self, raw_bytes: bytes) -> bytes:
-        """Return the most recent 16000-byte capture payload from a FIFO file.
+        """Return the 16000-byte capture payload from a downloaded FIFO file.
 
-        The Trio controller stores EC_COE_FIFO downloads as 0x8100-byte chunks:
-        a small container prefix followed by the object payload/padding.  Compose
-        drive_scope.bin from the newest chunk's payload area, not from byte zero
-        of the controller container.
+        The 0x3687 object payload starts at byte zero of the controller's
+        EC_COE_FIFO file; the controller merely rounds the file up (typically
+        to 0x8100 bytes) with padding after the payload.  This matches the
+        working C# reference, which parses the downloaded file from byte 0,
+        and was verified against real DX4 captures: with N active channels
+        the stale-memory junk past the capture begins exactly at byte
+        N × 1000 × 2 of the file, which is only consistent with the payload
+        starting at offset 0.  (The remote file is deleted before every
+        transfer, so the download never accumulates older captures.)
         """
         n_bytes = len(raw_bytes)
-        if n_bytes <= EXPECTED_CAPTURE_BYTES:
-            return raw_bytes
-
-        chunk_start = 0
-        chunk = raw_bytes
-        if n_bytes >= FIFO_CHUNK_BYTES:
-            chunk_count = n_bytes // FIFO_CHUNK_BYTES
-            chunk_start = (chunk_count - 1) * FIFO_CHUNK_BYTES
-            chunk = raw_bytes[chunk_start:chunk_start + FIFO_CHUNK_BYTES]
-            logger.info(
-                "FIFO file contains %d chunk(s), using newest chunk at byte %d",
-                chunk_count, chunk_start,
-            )
-
-        payload_offset = 0
-        if len(chunk) >= FIFO_CONTAINER_PREFIX_BYTES + EXPECTED_CAPTURE_BYTES:
-            payload_offset = FIFO_CONTAINER_PREFIX_BYTES
-
-        payload = chunk[payload_offset:payload_offset + EXPECTED_CAPTURE_BYTES]
-        if len(payload) < EXPECTED_CAPTURE_BYTES:
+        if n_bytes < EXPECTED_CAPTURE_BYTES:
             logger.warning(
-                "FIFO payload has %d bytes; expected %d, padding composed file",
-                len(payload), EXPECTED_CAPTURE_BYTES,
+                "FIFO file has %d bytes; expected at least %d, padding capture",
+                n_bytes, EXPECTED_CAPTURE_BYTES,
             )
-            payload = payload + bytes(EXPECTED_CAPTURE_BYTES - len(payload))
+            return raw_bytes + bytes(EXPECTED_CAPTURE_BYTES - n_bytes)
 
-        logger.info(
-            "Selected FIFO payload window: raw byte %d, chunk offset %d, length %d",
-            chunk_start + payload_offset, payload_offset, len(payload),
-        )
-        return payload
+        if n_bytes > EXPECTED_CAPTURE_BYTES:
+            logger.info(
+                "FIFO file has %d bytes; using first %d (rest is container padding)",
+                n_bytes, EXPECTED_CAPTURE_BYTES,
+            )
+        return raw_bytes[:EXPECTED_CAPTURE_BYTES]
 
     def _nonzero_byte_ranges(self, data: bytes, merge_gap: int = 16) -> List[Tuple[int, int]]:
         """Return merged nonzero byte ranges as [start, end) pairs."""
@@ -1134,52 +1125,32 @@ class DriveScopeEngine:
     def _parse_raw_bytes(self, raw_bytes: bytes) -> Dict[str, Any]:
         """Parse binary data downloaded via EC_COE_FIFO.
 
-        The data layout is interleaved across all 8 channels (the drive's built-in
-        scope always captures and outputs 8 channels). Each sample row contains
-        eight 16-bit words.
+        The data layout is interleaved across the ACTIVE channels only: the
+        drive packs the channels with a nonzero address contiguously, 1000
+        samples each, so the word stride per sample equals the number of
+        active channels (matching the C# reference, which parses a 6-channel
+        capture with a 6-word stride).  Everything past the first
+        stride × 1000 words of the upload is stale drive memory, not samples,
+        and is discarded.
         """
         n_bytes = len(raw_bytes)
         n_words = n_bytes // 2
-        n_ch = self.active_channels
+
+        # Active channels: configure() packs them at the front of
+        # channel_addresses; skip zeros defensively, keeping the original
+        # index so display_names stays aligned.
+        active = [
+            (idx, addr)
+            for idx, addr in enumerate(self.channel_addresses[:self.active_channels])
+            if addr
+        ]
+        stride = len(active)
 
         logger.info(
             "Parsing %d bytes (%d words), %d active channels, "
             "stride=%d words/sample",
-            n_bytes, n_words, n_ch, NUM_CHANNELS,
+            n_bytes, n_words, stride, stride,
         )
-
-        # Convert bytes to uint16 array (little-endian)
-        raw_words = np.frombuffer(raw_bytes[:n_words * 2], dtype=np.dtype('<u2'))
-
-        # Expected useful data: NUM_CHANNELS * SAMPLES_PER_CHANNEL (8000 words)
-        expected_words = TOTAL_WORDS
-        if len(raw_words) < expected_words:
-            logger.warning(
-                "Got %d words, expected %d (%d ch × %d samples) — padding",
-                len(raw_words), expected_words, NUM_CHANNELS, SAMPLES_PER_CHANNEL,
-            )
-            padded = np.zeros(expected_words, dtype=np.uint16)
-            padded[:len(raw_words)] = raw_words
-            raw_words = padded
-        else:
-            # Take only the first 8000 words (the actual captured domain data)
-            if len(raw_words) > expected_words:
-                extra_words = raw_words[expected_words:]
-                if np.any(extra_words):
-                    logger.warning(
-                        "Got %d words from drive scope FIFO; using first %d words "
-                        "and ignoring %d nonzero trailing words",
-                        len(raw_words), expected_words, int(np.count_nonzero(extra_words)),
-                    )
-                else:
-                    logger.debug(
-                        "Got %d words from drive scope FIFO; trailing data is zero padding",
-                        len(raw_words),
-                    )
-            raw_words = raw_words[:expected_words]
-
-        # Reshape to (1000, 8) — each row is one sample across 8 channels
-        data_2d = raw_words.reshape(SAMPLES_PER_CHANNEL, NUM_CHANNELS)
 
         # Build time array
         time_array = np.arange(SAMPLES_PER_CHANNEL) * self.sample_period_sec
@@ -1189,23 +1160,52 @@ class DriveScopeEngine:
             'sample_period': self.sample_period_sec,
             'num_samples': SAMPLES_PER_CHANNEL,
             'params': {},
-            'raw_words': raw_words,
         }
+
+        if stride == 0:
+            logger.warning("No active drive scope channels; nothing to parse")
+            result['num_samples'] = 0
+            result['raw_words'] = np.zeros(0, dtype=np.uint16)
+            return result
+
+        # Convert bytes to uint16 array (little-endian)
+        raw_words = np.frombuffer(raw_bytes[:n_words * 2], dtype=np.dtype('<u2'))
+
+        # Useful capture data: stride × 1000 words; the rest of the
+        # 16000-byte upload is stale drive memory and must not be parsed.
+        expected_words = stride * SAMPLES_PER_CHANNEL
+        if len(raw_words) < expected_words:
+            logger.warning(
+                "Got %d words, expected %d (%d ch × %d samples) — padding",
+                len(raw_words), expected_words, stride, SAMPLES_PER_CHANNEL,
+            )
+            padded = np.zeros(expected_words, dtype=np.uint16)
+            padded[:len(raw_words)] = raw_words
+            raw_words = padded
+        elif len(raw_words) > expected_words:
+            logger.debug(
+                "Got %d words from drive scope FIFO; using first %d, "
+                "discarding %d trailing words of stale buffer memory",
+                len(raw_words), expected_words, len(raw_words) - expected_words,
+            )
+            raw_words = raw_words[:expected_words]
+
+        result['raw_words'] = raw_words
+
+        # Reshape to (1000, stride) — each row is one sample across the
+        # active channels
+        data_2d = raw_words.reshape(SAMPLES_PER_CHANNEL, stride)
 
         # Extract each active channel with signed interpretation
         skip_channels = 0
-        for ch_idx in range(n_ch):
+        for col, (ch_idx, addr) in enumerate(active):
             if skip_channels > 0:
                 skip_channels -= 1
                 continue
 
-            addr = self.channel_addresses[ch_idx]
-            if addr == 0:
-                continue
-
             # No copy needed — the astype() calls below always allocate new
             # arrays, and data_2d is never mutated.
-            raw_ch = data_2d[:, ch_idx]
+            raw_ch = data_2d[:, col]
 
             # Determine display name and data type
             if addr in DRIVE_VARIABLES:
@@ -1222,16 +1222,16 @@ class DriveScopeEngine:
                 dtype_str = "Int16"
 
             # Reconstruction Logic
-            if dtype_str == "Int32" and ch_idx + 1 < n_ch:
-                raw_high = data_2d[:, ch_idx+1]
+            if dtype_str == "Int32" and col + 1 < stride:
+                raw_high = data_2d[:, col+1]
                 combined = (raw_high.astype(np.uint32) << 16) | raw_ch.astype(np.uint32)
                 values = combined.astype(np.int32).astype(np.float64)
                 skip_channels = 1
                 display_name = display_name.replace("_L", "").replace("_L1", "")
-            elif dtype_str == "Int64" and ch_idx + 3 < n_ch:
-                raw_h1 = data_2d[:, ch_idx+1]
-                raw_l2 = data_2d[:, ch_idx+2]
-                raw_h2 = data_2d[:, ch_idx+3]
+            elif dtype_str == "Int64" and col + 3 < stride:
+                raw_h1 = data_2d[:, col+1]
+                raw_l2 = data_2d[:, col+2]
+                raw_h2 = data_2d[:, col+3]
                 combined = (
                     (raw_h2.astype(np.uint64) << 48) |
                     (raw_l2.astype(np.uint64) << 32) |
