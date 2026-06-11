@@ -116,8 +116,11 @@ src/
   reports/            HTML commissioning report generator
 docs/help/            In-app user manual (Markdown)
 tests/                Unit tests (no hardware required)
+reference/            Vendor manuals, COMBO protocol doc, C# reference impl
 build_exe.py          PyInstaller build script
 ```
+
+Module-level navigation for AI coding agents lives in [`CLAUDE.md`](CLAUDE.md).
 
 ## Versioning
 
