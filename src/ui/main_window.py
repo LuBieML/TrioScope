@@ -242,17 +242,16 @@ class ParameterScopeOscilloscope(QMainWindow):
         config_group = QGroupBox("Configuration")
         config_layout = QGridLayout(config_group)
 
-        # Capture source selector (Drive Scope hidden — logic preserved in engine)
+        # Capture source selector: Controller SCOPE or Drive Scope (SDO)
         self._source_label = QLabel("Source:")
-        self._source_label.setVisible(False)
         config_layout.addWidget(self._source_label, 0, 0)
         self.source_combo = QComboBox()
-        self.source_combo.addItems(["Controller SCOPE"])
+        self.source_combo.addItems(["Controller SCOPE", "Drive Scope (SDO)"])
         self.source_combo.setToolTip(
-            "Controller SCOPE: captures Trio axis parameters at servo rate"
+            "Controller SCOPE: captures Trio axis parameters at servo rate\n"
+            "Drive Scope (SDO): captures internal drive variables at 125μs rate"
         )
         self.source_combo.currentIndexChanged.connect(self._on_source_changed)
-        self.source_combo.setVisible(False)
         config_layout.addWidget(self.source_combo, 0, 1, 1, 2)
 
         # -- Controller SCOPE config widgets --
@@ -348,7 +347,8 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.drv_info_label = QLabel("")
         self.drv_info_label.setStyleSheet("color: #03DAC6; font-size: 8pt;")
         self.drv_info_label.setVisible(False)
-        config_layout.addWidget(self.drv_info_label, 5, 0, 1, 3)
+        # Row 7: rows 5-6 hold the shared Plot Mode selector and path info
+        config_layout.addWidget(self.drv_info_label, 7, 0, 1, 3)
 
         # Plot mode selector (shared)
         config_layout.addWidget(QLabel("Plot Mode:"), 5, 0)
