@@ -8,7 +8,9 @@ class WindowBackedController(QObject):
 
     def __init__(self, window):
         super().__init__(window)
-        object.__setattr__(self, "_window", window)
+        # QObject.__setattr__ (not object.__setattr__): PySide6 >= 6.10
+        # rejects object.__setattr__ on QObject-derived instances.
+        QObject.__setattr__(self, "_window", window)
 
     @property
     def window(self):
@@ -19,6 +21,6 @@ class WindowBackedController(QObject):
 
     def __setattr__(self, name, value):
         if name in self._local_attrs:
-            object.__setattr__(self, name, value)
+            QObject.__setattr__(self, name, value)
         else:
             setattr(self._window, name, value)

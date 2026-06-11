@@ -242,17 +242,16 @@ class ParameterScopeOscilloscope(QMainWindow):
         config_group = QGroupBox("Configuration")
         config_layout = QGridLayout(config_group)
 
-        # Capture source selector (Drive Scope hidden — logic preserved in engine)
+        # Capture source selector
         self._source_label = QLabel("Source:")
-        self._source_label.setVisible(False)
         config_layout.addWidget(self._source_label, 0, 0)
         self.source_combo = QComboBox()
-        self.source_combo.addItems(["Controller SCOPE"])
+        self.source_combo.addItems(["Controller SCOPE", "Drive Scope (SDO)"])
         self.source_combo.setToolTip(
-            "Controller SCOPE: captures Trio axis parameters at servo rate"
+            "Controller SCOPE: captures Trio axis parameters at servo rate\n"
+            "Drive Scope (SDO): captures internal drive variables at 125μs rate"
         )
         self.source_combo.currentIndexChanged.connect(self._on_source_changed)
-        self.source_combo.setVisible(False)
         config_layout.addWidget(self.source_combo, 0, 1, 1, 2)
 
         # -- Controller SCOPE config widgets --
@@ -350,8 +349,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.drv_info_label.setVisible(False)
         config_layout.addWidget(self.drv_info_label, 5, 0, 1, 3)
 
-        # Plot mode selector (shared)
-        config_layout.addWidget(QLabel("Plot Mode:"), 5, 0)
+        # Plot mode selector (shared) — row 6 so it never overlaps the
+        # drive info label, which occupies row 5 in Drive Scope mode.
+        config_layout.addWidget(QLabel("Plot Mode:"), 6, 0)
         self.plot_mode_combo = QComboBox()
         self.plot_mode_combo.addItems(["Time", "XY (2D path)", "XYZ (3D path)", "XYZW (4D path)"])
         self.plot_mode_combo.setToolTip(
@@ -362,11 +362,11 @@ class ParameterScopeOscilloscope(QMainWindow):
             "Use the FFT button on each trace for per-trace spectrum analysis"
         )
         self.plot_mode_combo.currentIndexChanged.connect(self._on_plot_mode_changed)
-        config_layout.addWidget(self.plot_mode_combo, 5, 1, 1, 2)
+        config_layout.addWidget(self.plot_mode_combo, 6, 1, 1, 2)
 
         self.path_info_label = QLabel("")
         self.path_info_label.setStyleSheet("color: #FFA500; font-size: 8pt;")
-        config_layout.addWidget(self.path_info_label, 6, 0, 1, 3)
+        config_layout.addWidget(self.path_info_label, 7, 0, 1, 3)
 
         # Table start (hidden, managed via settings dialog)
         self.table_start_edit = QLineEdit("0")
