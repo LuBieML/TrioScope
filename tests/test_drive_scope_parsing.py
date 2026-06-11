@@ -7,11 +7,13 @@ import numpy as np
 from src.scope.drive_scope_engine import (
     CONTROL_INDEX,
     DriveScopeEngine,
-    FIFO_CHUNK_BYTES,
-    FIFO_CONTAINER_PREFIX_BYTES,
-    NUM_CHANNELS,
+    EXPECTED_CAPTURE_BYTES,
     SAMPLES_PER_CHANNEL,
 )
+
+# Size of the controller-side EC_COE_FIFO file as observed on real hardware:
+# the 16000-byte 0x3687 payload at offset 0, rounded up with padding.
+CONTROLLER_FILE_BYTES = 0x8100
 
 
 class FakeDownloadConnection:
@@ -89,19 +91,22 @@ class FakeCaptureConnection:
         return self.vr_values.get(vr, -9999.0)
 
 
-def make_capture_bytes(ch1_values):
-    raw = np.zeros((SAMPLES_PER_CHANNEL, NUM_CHANNELS), dtype=np.uint16)
-    raw[:, 0] = np.asarray(ch1_values, dtype=np.int16).view(np.uint16)
+def make_capture_bytes(*channel_values):
+    """Pack per-channel sample arrays the way the drive does: interleaved
+    with a word stride equal to the number of active channels."""
+    n_active = len(channel_values)
+    raw = np.zeros((SAMPLES_PER_CHANNEL, n_active), dtype=np.uint16)
+    for col, values in enumerate(channel_values):
+        raw[:, col] = np.asarray(values, dtype=np.int16).view(np.uint16)
     return raw.tobytes()
 
 
-def make_fifo_chunk(ch1_values):
-    payload = make_capture_bytes(ch1_values)
-    return (
-        bytes(FIFO_CONTAINER_PREFIX_BYTES)
-        + payload
-        + bytes(FIFO_CHUNK_BYTES - FIFO_CONTAINER_PREFIX_BYTES - len(payload))
-    )
+def make_controller_file(*channel_values, stale_tail=b""):
+    """Build a realistic EC_COE_FIFO download: capture payload at byte 0,
+    optionally followed by stale drive memory, padded to 0x8100 bytes."""
+    payload = make_capture_bytes(*channel_values) + stale_tail
+    assert len(payload) <= CONTROLLER_FILE_BYTES
+    return payload + bytes(CONTROLLER_FILE_BYTES - len(payload))
 
 
 class DriveScopeParsingTests(unittest.TestCase):
@@ -141,6 +146,53 @@ class DriveScopeParsingTests(unittest.TestCase):
         self.assertAlmostEqual(ch_data.mean(), -0.2, places=3)
         self.assertEqual(np.count_nonzero(ch_data), 4)
 
+    def test_parse_two_channels_interleaved_with_active_stride(self):
+        """The drive packs only the active channels: stride = channel count."""
+        ch1 = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)
+        ch2 = -ch1
+        # Stale memory right after the 2 × 1000 words of capture data must
+        # not leak into the parsed traces.
+        stale = bytes(range(1, 256)) * 4
+        raw_bytes = make_controller_file(ch1, ch2, stale_tail=stale)
+
+        engine = DriveScopeEngine(None)
+        engine.active_channels = 2
+        engine.channel_addresses = [0x0F10, 0x0F13] + [0] * 6
+        engine.sample_time = 8
+
+        result = engine._parse_raw_bytes(raw_bytes)
+
+        np.testing.assert_array_equal(
+            result['params']["SPD_FB_RPM (0x0F10)"], ch1.astype(np.float64))
+        np.testing.assert_array_equal(
+            result['params']["TN (0x0F13)"], ch2.astype(np.float64))
+
+    def test_parse_ignores_stale_memory_after_capture_data(self):
+        """Regression test for garbage spikes mid-trace.
+
+        On real hardware the 16000-byte 0x3687 upload contains only
+        active_channels × 1000 words of capture data; the rest of the buffer
+        holds stale drive memory (machine-code fragments were observed).
+        With 3 active channels and an idle motor, the old 8-word-stride
+        parser plotted that stale memory as ±30000 'spikes' around samples
+        359-396 while the real data was all zeros.
+        """
+        zeros = np.zeros(SAMPLES_PER_CHANNEL, dtype=np.int16)
+        stale = bytes([0x08, 0x8F, 0x70, 0x00, 0x40, 0x76, 0xB6, 0xC8] * 80)
+        raw_bytes = make_controller_file(zeros, zeros, zeros, stale_tail=stale)
+
+        engine = DriveScopeEngine(None)
+        engine.active_channels = 3
+        engine.channel_addresses = [0x0F10, 0x0F11, 0x0F13] + [0] * 5
+        engine.sample_time = 8
+
+        result = engine._parse_raw_bytes(raw_bytes)
+
+        self.assertEqual(len(result['params']), 3)
+        for name, values in result['params'].items():
+            self.assertEqual(np.count_nonzero(values), 0,
+                             f"stale memory leaked into trace {name}")
+
     def test_read_data_replaces_previous_local_file(self):
         values = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)
         payload = make_capture_bytes(values)
@@ -161,7 +213,7 @@ class DriveScopeParsingTests(unittest.TestCase):
             parsed = result["params"]["SPD_FB_RPM (0x0F10)"]
             np.testing.assert_array_equal(parsed, values.astype(np.float64))
             self.assertTrue(target.exists())
-            self.assertEqual(target.stat().st_size, len(payload))
+            self.assertEqual(target.stat().st_size, EXPECTED_CAPTURE_BYTES)
 
     def test_start_capture_rearms_and_records_sampling_transition(self):
         conn = FakeCaptureConnection(statuses=[0, 0, 1])
@@ -202,20 +254,24 @@ class DriveScopeParsingTests(unittest.TestCase):
         self.assertIn("ethercat($161, 0, 5,", ethercat_cmds[0])
         self.assertIn("ethercat($161, 0, 1,", ethercat_cmds[1])
 
-    def test_select_capture_bytes_strips_fifo_container_prefix(self):
+    def test_select_capture_bytes_takes_payload_from_byte_zero(self):
+        """The 0x3687 payload starts at byte 0 of the controller file; the
+        bytes past 16000 are container padding and must be dropped."""
         values = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)
-        raw = make_fifo_chunk(values)
+        raw = make_controller_file(values)
 
         engine = DriveScopeEngine(None)
         capture = engine._select_capture_bytes(raw)
 
-        self.assertEqual(capture, make_capture_bytes(values))
+        self.assertEqual(len(capture), EXPECTED_CAPTURE_BYTES)
+        self.assertEqual(capture, raw[:EXPECTED_CAPTURE_BYTES])
+        self.assertEqual(capture[:2000], make_capture_bytes(values))
 
-    def test_read_data_uses_newest_fifo_chunk_when_remote_file_accumulates(self):
-        old_values = np.full(SAMPLES_PER_CHANNEL, 111, dtype=np.int16)
-        new_values = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)
+    def test_read_data_parses_realistic_controller_file(self):
+        values = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)
+        stale = bytes([0xAD, 0x5C, 0x44, 0x06] * 100)
         conn = FakeDownloadConnection(
-            make_fifo_chunk(old_values) + make_fifo_chunk(new_values),
+            make_controller_file(values, stale_tail=stale),
             created_devices={1},
         )
 
@@ -229,10 +285,10 @@ class DriveScopeParsingTests(unittest.TestCase):
                 result = engine.read_data(local_filename=str(target))
 
             parsed = result["params"]["SPD_FB_RPM (0x0F10)"]
-            np.testing.assert_array_equal(parsed, new_values.astype(np.float64))
-            self.assertEqual(target.stat().st_size, SAMPLES_PER_CHANNEL * NUM_CHANNELS * 2)
+            np.testing.assert_array_equal(parsed, values.astype(np.float64))
+            self.assertEqual(target.stat().st_size, EXPECTED_CAPTURE_BYTES)
             raw_target = target.with_name(f"{target.stem}_fifo_raw{target.suffix}")
-            self.assertEqual(raw_target.stat().st_size, FIFO_CHUNK_BYTES * 2)
+            self.assertEqual(raw_target.stat().st_size, CONTROLLER_FILE_BYTES)
 
     def test_read_data_retries_when_fifo_candidate_creates_no_file(self):
         values = np.arange(SAMPLES_PER_CHANNEL, dtype=np.int16)

@@ -222,12 +222,17 @@ class CaptureController(WindowBackedController):
             QMessageBox.warning(self.window, "No Traces", "Enable at least one trace")
             return
 
-        # Collect channel addresses from enabled traces
+        # Collect channel addresses from enabled traces.  Deduplicate: the
+        # drive samples each address once and every trace using that variable
+        # shares the same display key, so duplicates would only waste channel
+        # slots and overwrite each other in the parsed params dict.
         channels = []
         display_names = []
+        seen_addrs = set()
         for t in enabled_traces:
             addr = t.get_drive_variable_address()
-            if addr and addr != 0:
+            if addr and addr != 0 and addr not in seen_addrs:
+                seen_addrs.add(addr)
                 channels.append(addr)
                 display_names.append(t.get_display_name())
 
