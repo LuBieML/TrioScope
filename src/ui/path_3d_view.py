@@ -4,6 +4,9 @@ import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 
 
+GOLDEN_PATH_COLOR = (1.0, 0.843, 0.0, 1.0)  # #FFD700
+
+
 class Path3DView(gl.GLViewWidget):
     """OpenGL path view for XYZ and XYZW plot modes."""
 
@@ -109,7 +112,7 @@ class Path3DView(gl.GLViewWidget):
         pts = self._downsample_points(x_vals, y_vals, z_vals)
         if self.line_item is None:
             self.line_item = gl.GLLinePlotItem(
-                pos=pts, color=(0.012, 0.855, 0.776, 1.0),
+                pos=pts, color=GOLDEN_PATH_COLOR,
                 width=line_width, antialias=True)
             self.addItem(self.line_item)
         else:
