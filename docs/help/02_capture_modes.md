@@ -22,10 +22,10 @@ This mode uses the Trio controller's built-in `SCOPE` command. It can capture
 The controller fills its internal `TABLE` memory with parameter samples and
 TrioScope reads back the data once capture has started. With **External TRIGGER**
 enabled, pressing **RUN** only arms the controller-side SCOPE; sampling starts
-when a Trio BASIC program executes `TRIGGER`. For external continuous capture,
-use `TRIGGER(1)` in the BASIC program so the controller auto-retriggers. In
-normal **Continuous** mode, TrioScope starts this auto-retrigger internally.
-Small gaps between buffers are visible as **segment breaks** (vertical guides).
+when a Trio BASIC program executes `TRIGGER`. When **Continuous** is selected,
+TrioScope switches the detected capture to automatic retriggering, so the BASIC
+program can use the same `TRIGGER` command for either capture mode. Small gaps
+between buffers are visible as **segment breaks** (vertical guides).
 
 ### When to use
 

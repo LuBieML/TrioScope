@@ -446,8 +446,13 @@ class CaptureController(WindowBackedController):
             self.is_running = False
             self.sig_capture_stopped.emit()
 
-    def _arm_and_wait_for_external_trigger(self) -> bool:
-        """Arm controller SCOPE and wait until SCOPE_POS shows TRIGGER activity."""
+    def _arm_and_wait_for_external_trigger(self, auto_retrigger: bool = False) -> bool:
+        """Arm SCOPE and wait for an external TRIGGER to start the capture.
+
+        An external program commonly issues the one-shot ``TRIGGER`` command.
+        When continuous mode is selected, promote that capture to
+        ``TRIGGER(1)`` after detecting it so the UI mode remains authoritative.
+        """
         self.scope_engine.arm_capture()
         self.sig_capture_status.emit("SCOPE armed; waiting for external TRIGGER...")
         self.sig_capture_progress.emit("Waiting for TRIGGER")
@@ -470,6 +475,8 @@ class CaptureController(WindowBackedController):
                 or (initial_scope_pos != 0 and scope_pos != initial_scope_pos)
             ):
                 self.scope_engine.is_capturing = True
+                if auto_retrigger:
+                    self.scope_engine.trigger_capture(auto_retrigger=True)
                 self.sig_capture_status.emit("External TRIGGER detected; capturing...")
                 return True
 
@@ -533,7 +540,7 @@ class CaptureController(WindowBackedController):
             self.sig_capture_stopped.emit()
 
     def _scope_continuous_external_trigger_thread(self):
-        """Continuous controller SCOPE started by a Trio BASIC TRIGGER(1) command."""
+        """Continuous controller SCOPE started by an external TRIGGER command."""
         try:
             samples_per_param = (
                 (self.scope_engine.table_end - self.scope_engine.table_start + 1)
@@ -541,7 +548,7 @@ class CaptureController(WindowBackedController):
             )
             sample_period = self.scope_engine.period_cycles * self.scope_engine.servo_period_sec
 
-            if not self._arm_and_wait_for_external_trigger():
+            if not self._arm_and_wait_for_external_trigger(auto_retrigger=True):
                 return
 
             last_sample_idx = 0
