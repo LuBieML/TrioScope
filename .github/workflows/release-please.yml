@@ -3,7 +3,6 @@ name: Release Please
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,32 +10,10 @@ permissions:
   pull-requests: write
 
 jobs:
-  release:
-    name: Prepare or publish release
+  release-please:
     runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - name: Run Release Please
-        id: release
-        uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          # A PAT or GitHub App token lets CI run on the generated release PR.
-          # GITHUB_TOKEN remains a usable fallback for repositories without one.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-
-  build-windows:
-    name: Build released Windows application
-    needs: release
-    if: >-
-      needs.release.outputs.release_created == 'true' &&
-      vars.TRIOSCOPE_ENABLE_RELEASE_BUILD == 'true'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/build-release.yml
-    with:
-      tag: ${{ needs.release.outputs.tag_name }}
-    secrets: inherit

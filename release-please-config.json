@@ -7,8 +7,6 @@
   "bump-minor-pre-major": true,
   "packages": {
     ".": {
-      "package-name": "TrioScope",
-      "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {
           "type": "generic",

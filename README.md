@@ -99,9 +99,8 @@ python build_exe.py
 ```
 
 This produces `dist/TrioScope_v<version>/` with the Trio native binaries,
-the help manual, third-party license texts, and Windows version metadata
-bundled. The build discovers the Trio Unified API in the active environment,
-the repository `.venv`, or the directory specified by `TRIOSCOPE_SDK_DIR`.
+the help manual, and third-party license texts bundled. The script expects
+the Trio Unified API to be installed in `.venv` (see `build_exe.py`).
 
 ## Project layout
 
@@ -122,13 +121,10 @@ build_exe.py          PyInstaller build script
 
 ## Versioning
 
-TrioScope uses Semantic Versioning and automated release pull requests. Use
-Conventional Commit titles such as `fix(scope): correct trigger timing` and
-`feat(ui): add path inspection`, then squash-merge pull requests into `main`.
-Release Please updates [`src/version.py`](src/version.py), the release manifest,
-and [`CHANGELOG.md`](CHANGELOG.md); merging its release pull request creates the
-version tag and GitHub Release. See [`docs/RELEASING.md`](docs/RELEASING.md) for
-the complete workflow and Windows release-runner setup.
+The application version lives in [`src/version.py`](src/version.py). Commits
+starting with `fix:` propose a patch release and `feat:` a minor release.
+Release Please opens the version PR; merging it creates the tag and GitHub
+Release.
 
 ## Licenses
 
