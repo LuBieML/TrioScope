@@ -688,7 +688,10 @@ class CaptureController(WindowBackedController):
             logger.exception("Continuous error")
         finally:
             self.is_running = False
-            self.sig_capture_stopped.emit()
+            try:
+                self.sig_capture_stopped.emit()
+            except RuntimeError:
+                pass
 
     def _push_data(self, data):
         """Thread-safe: push new data chunk from capture thread into pre-allocated buffer"""
