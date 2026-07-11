@@ -32,6 +32,9 @@ viewport. Useful for visualising true 3D toolpaths or 3-axis robot motion.
 - Drag with the left mouse button to **orbit**.
 - Wheel scroll to **dolly** in/out.
 - Right-drag to **pan** the camera target.
+- Use **3D Scale** beside **HTML Report** on the bottom bar to scale the whole
+  scene from 0.25× to 4.00×. The grid, path, axes, and legend zoom together;
+  captured values and axis units do not change.
 
 ## XYZW (4D path)
 

@@ -40,6 +40,10 @@ class SettingsStore:
         
         app_settings.display.window_duration = float(s.value("display/window_duration", 5.0))
         app_settings.display.lock_x_axis = s.value("display/lock_x_axis", "true") == "true"
+        legacy_path_scale = s.value("display/path_grid_scale", 1.0)
+        app_settings.display.path_view_scale = float(
+            s.value("display/path_view_scale", legacy_path_scale)
+        )
         app_settings.plot.line_width = float(s.value("plot/line_width", 1.0))
         app_settings.plot.grid_alpha = float(s.value("plot/grid_alpha", 0.3))
         app_settings.plot.bg_color = str(s.value("plot/bg_color", "#0A0A0A"))
@@ -107,6 +111,7 @@ class SettingsStore:
         s.setValue("display/plot_mode", settings.display.plot_mode)
         s.setValue("display/window_duration", settings.display.window_duration)
         s.setValue("display/lock_x_axis", "true" if settings.display.lock_x_axis else "false")
+        s.setValue("display/path_view_scale", settings.display.path_view_scale)
         s.setValue("plot/line_width", settings.plot.line_width)
         s.setValue("plot/grid_alpha", settings.plot.grid_alpha)
         s.setValue("plot/bg_color", settings.plot.bg_color)

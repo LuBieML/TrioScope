@@ -1,19 +1,25 @@
 import numpy as np
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 
 
 GOLDEN_PATH_COLOR = (1.0, 0.843, 0.0, 1.0)  # #FFD700
+DEFAULT_CAMERA_DISTANCE = 50.0
+CURSOR_MARKER_SIZE_PX = 8.0
 
 
 class Path3DView(gl.GLViewWidget):
     """OpenGL path view for XYZ and XYZW plot modes."""
 
+    viewScaleChanged = Signal(float)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBackgroundColor("#0A0A0A")
-        self.setCameraPosition(distance=50)
+        self.view_scale = 1.0
+        self.setCameraPosition(distance=DEFAULT_CAMERA_DISTANCE)
         self.grid_item = None
         self.line_item = None
         self.cursor_item = None
@@ -157,6 +163,19 @@ class Path3DView(gl.GLViewWidget):
         self.cursor_item = None
         self.line_segments = None
 
+    def set_view_scale(self, scale):
+        """Scale the complete 3D scene by changing camera distance."""
+        self.view_scale = max(0.25, min(4.0, float(scale)))
+        self.setCameraPosition(distance=DEFAULT_CAMERA_DISTANCE / self.view_scale)
+
+    def wheelEvent(self, event):
+        """Keep the bottom scale slider synchronized with wheel zoom."""
+        super().wheelEvent(event)
+        distance = max(float(self.opts.get("distance", DEFAULT_CAMERA_DISTANCE)), 1e-6)
+        scale = max(0.25, min(4.0, DEFAULT_CAMERA_DISTANCE / distance))
+        self.set_view_scale(scale)
+        self.viewScaleChanged.emit(self.view_scale)
+
     @staticmethod
     def _downsample_arrays(*arrays, max_points=8000):
         n = len(arrays[0])
@@ -201,11 +220,14 @@ class Path3DView(gl.GLViewWidget):
         self.grid_item.translate((x_max + x_min) / 2, (y_max + y_min) / 2, 0)
 
     def _update_cursor(self, x, y, z):
+        pos = np.array([[x, y, z]], dtype=np.float32)
         if self.cursor_item is None:
-            md = gl.MeshData.sphere(rows=10, cols=10, radius=0.5)
-            self.cursor_item = gl.GLMeshItem(
-                meshdata=md, smooth=True,
-                color=(1.0, 0.33, 0.33, 1.0), shader="balloon")
+            self.cursor_item = gl.GLScatterPlotItem(
+                pos=pos,
+                color=(1.0, 0.33, 0.33, 1.0),
+                size=CURSOR_MARKER_SIZE_PX,
+                pxMode=True,
+            )
             self.addItem(self.cursor_item)
-        self.cursor_item.resetTransform()
-        self.cursor_item.translate(x, y, z)
+        else:
+            self.cursor_item.setData(pos=pos)

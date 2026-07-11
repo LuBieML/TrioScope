@@ -966,11 +966,15 @@ class MainWindowActions(WindowBackedController):
 
         # Display / plot settings
         self.plot_mode = app_settings.display.plot_mode
-        mode_index = {'time': 0, 'xy': 1, 'xyz': 2}.get(self.plot_mode, 0)
+        mode_index = {'time': 0, 'xy': 1, 'xyz': 2, 'xyzw': 3}.get(self.plot_mode, 0)
         self.plot_mode_combo.setCurrentIndex(mode_index)
         self.window_duration = app_settings.display.window_duration
         self.lock_x_axis = app_settings.display.lock_x_axis
         self.chk_lock_x.setChecked(self.lock_x_axis)
+        self.path_view_scale = max(
+            0.25, min(4.0, app_settings.display.path_view_scale)
+        )
+        self.path_view_scale_slider.setValue(round(self.path_view_scale * 100))
         self.line_width = app_settings.plot.line_width
         self.grid_alpha = app_settings.plot.grid_alpha
         self.plot_bg_color = app_settings.plot.bg_color
@@ -1014,6 +1018,7 @@ class MainWindowActions(WindowBackedController):
         app_settings.display.plot_mode = self.plot_mode
         app_settings.display.window_duration = self.window_duration
         app_settings.display.lock_x_axis = self.lock_x_axis
+        app_settings.display.path_view_scale = self.path_view_scale
         app_settings.plot.line_width = self.line_width
         app_settings.plot.grid_alpha = self.grid_alpha
         app_settings.plot.bg_color = self.plot_bg_color

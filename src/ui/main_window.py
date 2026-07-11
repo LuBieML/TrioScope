@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFrame,
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
-    QGridLayout,
+    QGridLayout, QSlider,
 )
 from PySide6.QtCore import Qt, QTimer
 
@@ -135,6 +135,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.line_width = 1  # int width uses Qt's fast cosmetic pen path
         self.plot_bg_color = '#0A0A0A'
         self.plot_mode = 'time'  # 'time', 'xy', 'xyz', 'xyzw'
+        self.path_view_scale = 1.0
 
         # 3D view widget
         self.gl_widget = None
@@ -454,6 +455,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # 3D Plot area (hidden by default)
         self.gl_widget = Path3DView()
+        self.gl_widget.viewScaleChanged.connect(self._sync_path_view_scale)
         self.gl_widget.hide()
         right_layout.addWidget(self.gl_widget, 1)
 
@@ -526,6 +528,36 @@ class ParameterScopeOscilloscope(QMainWindow):
             "Create a self-contained commissioning report from the current capture")
         self.btn_report.clicked.connect(self.export_html_report)
         status_layout.addWidget(self.btn_report)
+
+        self.path_scale_control = QWidget()
+        path_scale_layout = QHBoxLayout(self.path_scale_control)
+        path_scale_layout.setContentsMargins(5, 0, 0, 0)
+        path_scale_layout.setSpacing(5)
+        path_scale_label = QLabel("3D Scale")
+        path_scale_label.setToolTip("Scale the complete 3D view: grid and path")
+        path_scale_layout.addWidget(path_scale_label)
+        self.path_view_scale_slider = QSlider(Qt.Horizontal)
+        self.path_view_scale_slider.setRange(25, 400)
+        self.path_view_scale_slider.setSingleStep(5)
+        self.path_view_scale_slider.setPageStep(25)
+        self.path_view_scale_slider.setValue(100)
+        self.path_view_scale_slider.setFixedWidth(115)
+        self.path_view_scale_slider.setToolTip(
+            "Scale the complete 3D view from 0.25× to 4.00×"
+        )
+        self.path_view_scale_value = QLabel("1.00×")
+        self.path_view_scale_value.setFixedWidth(44)
+        self.path_view_scale_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.path_view_scale_value.setStyleSheet(
+            "color: #03DAC6; font-family: Consolas; font-size: 8pt;"
+        )
+        self.path_view_scale_slider.valueChanged.connect(
+            self._on_path_view_scale_changed
+        )
+        path_scale_layout.addWidget(self.path_view_scale_slider)
+        path_scale_layout.addWidget(self.path_view_scale_value)
+        self.path_scale_control.setVisible(False)
+        status_layout.addWidget(self.path_scale_control)
 
         status_layout.addStretch()
 

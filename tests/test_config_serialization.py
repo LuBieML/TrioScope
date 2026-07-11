@@ -74,6 +74,7 @@ class TestConfigSerialization(unittest.TestCase):
             settings = AppSettings(
                 connection=ConnectionSettings(ip="10.0.0.5"),
                 capture=CaptureSettings(duration="3.5", use_end_of_table=False, external_trigger=True),
+                display=DisplaySettings(plot_mode="xyzw", path_view_scale=2.0),
                 traces=[TraceConfig(param="FE", axis=2, enabled=False)]
             )
             store.save(settings)
@@ -84,6 +85,8 @@ class TestConfigSerialization(unittest.TestCase):
             self.assertEqual(loaded.capture.duration, "3.5")
             self.assertFalse(loaded.capture.use_end_of_table)
             self.assertTrue(loaded.capture.external_trigger)
+            self.assertEqual(loaded.display.plot_mode, "xyzw")
+            self.assertEqual(loaded.display.path_view_scale, 2.0)
             self.assertEqual(len(loaded.traces), 1)
             self.assertEqual(loaded.traces[0].param, "FE")
             self.assertEqual(loaded.traces[0].axis, 2)

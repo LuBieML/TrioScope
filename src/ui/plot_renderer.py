@@ -846,6 +846,7 @@ class PlotRenderer(WindowBackedController):
     def _on_plot_mode_changed(self, index):
         modes = ['time', 'xy', 'xyz', 'xyzw']
         self.plot_mode = modes[index]
+        self.path_scale_control.setVisible(self.plot_mode in ('xyz', 'xyzw'))
         self._update_path_info_label()
         self.curves = {}
         self.stats_texts = {}
@@ -869,6 +870,22 @@ class PlotRenderer(WindowBackedController):
         # Re-render static data in new mode (e.g. switching to FFT after capture)
         if not self.is_running and self.accumulated_data is not None:
             self._render_plots()
+
+    def _on_path_view_scale_changed(self, value):
+        """Scale the complete XYZ/XYZW scene from the bottom slider."""
+        self.path_view_scale = max(0.25, min(4.0, value / 100.0))
+        self.path_view_scale_value.setText(f"{self.path_view_scale:.2f}×")
+        if self.gl_widget is not None:
+            self.gl_widget.set_view_scale(self.path_view_scale)
+
+    def _sync_path_view_scale(self, scale):
+        """Reflect mouse-wheel 3D zoom in the scale slider and readout."""
+        self.path_view_scale = max(0.25, min(4.0, float(scale)))
+        slider_value = round(self.path_view_scale * 100)
+        self.path_view_scale_slider.blockSignals(True)
+        self.path_view_scale_slider.setValue(slider_value)
+        self.path_view_scale_slider.blockSignals(False)
+        self.path_view_scale_value.setText(f"{self.path_view_scale:.2f}×")
 
     def _update_path_info_label(self):
         """Update path mode info label showing axis assignments."""

@@ -23,9 +23,10 @@ class PlotSettings:
 
 @dataclass
 class DisplaySettings:
-    plot_mode: str = "time"  # "time", "xy", "xyz"
+    plot_mode: str = "time"  # "time", "xy", "xyz", "xyzw"
     window_duration: float = 5.0
     lock_x_axis: bool = True
+    path_view_scale: float = 1.0
 
 @dataclass
 class AppSettings:
