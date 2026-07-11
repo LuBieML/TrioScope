@@ -1,4 +1,5 @@
 {
+  "pythonVersion": "3.13",
   "extraPaths": ["src"],
   "exclude": [
     ".venv",

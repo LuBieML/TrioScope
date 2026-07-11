@@ -12,7 +12,7 @@ python scope_app.py                          # run the app (needs Trio SDK + dis
 pyright                                      # type check (informational, has known errors)
 ```
 
-CI (`.github/workflows/ci.yml`) runs pytest on Python 3.11/3.13 and a
+CI (`.github/workflows/ci.yml`) runs pytest on Python 3.13 and a
 non-blocking pyright job.
 
 ## Import & runtime conventions

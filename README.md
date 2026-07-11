@@ -33,7 +33,7 @@ familiar oscilloscope UI.
 
 ## Requirements
 
-- Python 3.11+ (3.13 recommended; release builds target 3.13)
+- Python 3.13
 - A Trio Motion Controller reachable over Ethernet (default IP
   `192.168.0.245`) and, for Drive Scope / CoE features, DX3/DX4 drives on
   EtherCAT
@@ -88,7 +88,7 @@ python -m pytest tests/
 ```
 
 On a headless machine, run Qt offscreen: `QT_QPA_PLATFORM=offscreen
-python -m pytest tests/`. CI runs the suite on Python 3.11 and 3.13 (see
+python -m pytest tests/`. CI runs the suite on Python 3.13 (see
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ## Building a Windows executable

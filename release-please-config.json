@@ -11,6 +11,10 @@
         {
           "type": "generic",
           "path": "src/version.py"
+        },
+        {
+          "type": "generic",
+          "path": "pyproject.toml"
         }
       ]
     }
