@@ -1,0 +1,94 @@
+name: Build Windows Release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: SemVer release tag to build
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing SemVer release tag to build, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Package ${{ inputs.tag }}
+    # This runner must have the licensed Trio Unified API binaries available.
+    runs-on: [self-hosted, Windows, X64, trioscope-release]
+    env:
+      TRIOSCOPE_SDK_DIR: ${{ vars.TRIOSCOPE_SDK_DIR }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-dev.txt pyinstaller
+
+      - name: Verify tag and source version
+        run: python scripts/check_release_version.py "${{ inputs.tag }}"
+
+      - name: Run test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/ -q
+
+      - name: Build Windows application
+        run: python build_exe.py
+
+      - name: Create archive and checksum
+        id: package
+        shell: pwsh
+        run: |
+          $version = python -c "from src.version import __version__; print(__version__)"
+          if ($LASTEXITCODE -ne 0) { throw "Could not read application version" }
+
+          $directory = "dist/TrioScope_v$version"
+          $archive = "dist/TrioScope_v$version-win64.zip"
+          $checksum = "$archive.sha256"
+          Compress-Archive -Path "$directory/*" -DestinationPath $archive -Force
+
+          $digest = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          "$digest  $(Split-Path -Leaf $archive)" | Set-Content -Encoding ascii $checksum
+
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+          "checksum=$checksum" >> $env:GITHUB_OUTPUT
+
+      - name: Preserve build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrioScope-${{ inputs.tag }}-win64
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
+          if-no-files-found: error
+
+      - name: Upload files to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ inputs.tag }}" --repo "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "${{ inputs.tag }}" --verify-tag --generate-notes --repo "${{ github.repository }}"
+          }
+          gh release upload "${{ inputs.tag }}" `
+            "${{ steps.package.outputs.archive }}" `
+            "${{ steps.package.outputs.checksum }}" `
+            --clobber --repo "${{ github.repository }}"

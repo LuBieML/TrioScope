@@ -1,13 +1,19 @@
+from html import escape
+
 import numpy as np
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QLabel
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
+
+from ui.path_hover import nearest_projected_point_index
 
 
 GOLDEN_PATH_COLOR = (1.0, 0.843, 0.0, 1.0)  # #FFD700
 DEFAULT_CAMERA_DISTANCE = 50.0
 CURSOR_MARKER_SIZE_PX = 8.0
+HOVER_MARKER_SIZE_PX = 11.0
 
 
 class Path3DView(gl.GLViewWidget):
@@ -24,18 +30,44 @@ class Path3DView(gl.GLViewWidget):
         self.line_item = None
         self.cursor_item = None
         self.line_segments = None
+        self.hover_item = None
         self.colorbar_items = []
         self._cb_min_label = None
         self._cb_max_label = None
         self._cb_title_label = None
+        self._path_points = np.empty((0, 3), dtype=np.float32)
+        self._path_w = None
+        self._coordinate_names = ("X", "Y", "Z")
+        self._last_hover_pos = None
+
+        self.setMouseTracking(True)
+        self.coordinate_label = QLabel(self)
+        self.coordinate_label.setTextFormat(Qt.RichText)
+        self.coordinate_label.setAlignment(Qt.AlignRight | Qt.AlignTop)
+        self.coordinate_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.coordinate_label.setStyleSheet(
+            "QLabel { color: #d4d4d4; background-color: rgba(26, 26, 46, 220);"
+            " border: 1px solid #55556a; border-radius: 4px; padding: 5px;"
+            " font-family: Consolas; font-size: 9pt; }"
+        )
+        self.coordinate_label.hide()
 
     def setup_view(self, mode, enabled_traces):
         for item in self.items[:]:
             self.removeItem(item)
         self.line_item = None
         self.cursor_item = None
+        self.hover_item = None
         self.line_segments = None
         self.colorbar_items = []
+        self._path_points = np.empty((0, 3), dtype=np.float32)
+        self._path_w = None
+        self._last_hover_pos = None
+        self.coordinate_label.hide()
+
+        if len(enabled_traces) >= 3:
+            names = [trace.get_display_name() for trace in enabled_traces[:4]]
+            self._coordinate_names = tuple(names)
 
         self.grid_item = gl.GLGridItem()
         self.grid_item.setSize(100, 100)
@@ -116,6 +148,8 @@ class Path3DView(gl.GLViewWidget):
 
     def render_xyz(self, x_vals, y_vals, z_vals, line_width=1):
         pts = self._downsample_points(x_vals, y_vals, z_vals)
+        self._path_points = pts
+        self._path_w = None
         if self.line_item is None:
             self.line_item = gl.GLLinePlotItem(
                 pos=pts, color=GOLDEN_PATH_COLOR,
@@ -131,6 +165,8 @@ class Path3DView(gl.GLViewWidget):
         x_ds, y_ds, z_ds, w_ds = self._downsample_arrays(
             x_vals, y_vals, z_vals, w_vals)
         pts = np.column_stack([x_ds, y_ds, z_ds]).astype(np.float32)
+        self._path_points = pts
+        self._path_w = np.asarray(w_ds)
 
         w_min, w_max = float(w_ds.min()), float(w_ds.max())
         if w_max - w_min > 1e-12:
@@ -161,7 +197,11 @@ class Path3DView(gl.GLViewWidget):
     def clear_path(self):
         self.line_item = None
         self.cursor_item = None
+        self.hover_item = None
         self.line_segments = None
+        self._path_points = np.empty((0, 3), dtype=np.float32)
+        self._path_w = None
+        self.coordinate_label.hide()
 
     def set_view_scale(self, scale):
         """Scale the complete 3D scene by changing camera distance."""
@@ -175,6 +215,112 @@ class Path3DView(gl.GLViewWidget):
         scale = max(0.25, min(4.0, DEFAULT_CAMERA_DISTANCE / distance))
         self.set_view_scale(scale)
         self.viewScaleChanged.emit(self.view_scale)
+        self._refresh_hover()
+
+    def mouseMoveEvent(self, event):
+        """Pick and display the sampled path point nearest the mouse."""
+        super().mouseMoveEvent(event)
+        self._last_hover_pos = event.position()
+        self._refresh_hover()
+
+    def leaveEvent(self, event):
+        self._last_hover_pos = None
+        self._hide_hover()
+        super().leaveEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_coordinate_label()
+
+    def _refresh_hover(self):
+        if self._last_hover_pos is None or len(self._path_points) == 0:
+            self._hide_hover()
+            return
+
+        projected = self._project_path_points()
+        index = nearest_projected_point_index(
+            projected,
+            float(self._last_hover_pos.x()),
+            float(self._last_hover_pos.y()),
+        )
+        if index is None:
+            self._hide_hover()
+            return
+
+        point = self._path_points[index]
+        pos = np.asarray([point], dtype=np.float32)
+        if self.hover_item is None:
+            self.hover_item = gl.GLScatterPlotItem(
+                pos=pos,
+                color=(1.0, 1.0, 1.0, 1.0),
+                size=HOVER_MARKER_SIZE_PX,
+                pxMode=True,
+            )
+            self.addItem(self.hover_item)
+        else:
+            self.hover_item.setData(pos=pos)
+            self.hover_item.setVisible(True)
+
+        names = self._coordinate_names
+        rows = [
+            ("X", names[0] if len(names) > 0 else "X", float(point[0]), "#ff6666"),
+            ("Y", names[1] if len(names) > 1 else "Y", float(point[1]), "#66ff66"),
+            ("Z", names[2] if len(names) > 2 else "Z", float(point[2]), "#8080ff"),
+        ]
+        if self._path_w is not None and index < len(self._path_w):
+            rows.append((
+                "W",
+                names[3] if len(names) > 3 else "W",
+                float(self._path_w[index]),
+                "#ffa500",
+            ))
+        html = "".join(
+            f"<div><span style='color:{color}; font-weight:600'>{axis}</span> "
+            f"<span style='color:#999'>({escape(name)})</span>: {value:.6g}</div>"
+            for axis, name, value, color in rows
+        )
+        self.coordinate_label.setText(html)
+        self.coordinate_label.adjustSize()
+        self._position_coordinate_label()
+        self.coordinate_label.show()
+        self.coordinate_label.raise_()
+
+    def _project_path_points(self):
+        """Project stored XYZ samples into widget pixel coordinates."""
+        width = max(self.width(), 1)
+        height = max(self.height(), 1)
+        viewport = (0, 0, width, height)
+        transform = self.projectionMatrix(viewport, viewport) * self.viewMatrix()
+        matrix = np.asarray(transform.copyDataTo(), dtype=float).reshape(4, 4)
+
+        homogeneous = np.column_stack([
+            self._path_points.astype(float, copy=False),
+            np.ones(len(self._path_points)),
+        ])
+        clip = homogeneous @ matrix.T
+        clip_w = clip[:, 3]
+        valid = np.isfinite(clip).all(axis=1) & (clip_w > 1e-12)
+        projected = np.full((len(clip), 2), np.nan, dtype=float)
+        if valid.any():
+            ndc = clip[valid, :3] / clip_w[valid, None]
+            in_depth = (ndc[:, 2] >= -1.0) & (ndc[:, 2] <= 1.0)
+            valid_indices = np.flatnonzero(valid)[in_depth]
+            ndc = ndc[in_depth]
+            projected[valid_indices, 0] = (ndc[:, 0] + 1.0) * width * 0.5
+            projected[valid_indices, 1] = (1.0 - ndc[:, 1]) * height * 0.5
+        return projected
+
+    def _hide_hover(self):
+        self.coordinate_label.hide()
+        if self.hover_item is not None:
+            self.hover_item.setVisible(False)
+
+    def _position_coordinate_label(self):
+        margin = 10
+        self.coordinate_label.move(
+            max(margin, self.width() - self.coordinate_label.width() - margin),
+            margin,
+        )
 
     @staticmethod
     def _downsample_arrays(*arrays, max_points=8000):

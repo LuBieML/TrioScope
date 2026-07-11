@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "bead5b104739778a3ae3c9a0e09217461c201eb7",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "packages": {
+    ".": {
+      "package-name": "TrioScope",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "src/version.py"
+        }
+      ]
+    }
+  }
+}

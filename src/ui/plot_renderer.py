@@ -1,3 +1,4 @@
+from html import escape
 import weakref
 
 import numpy as np
@@ -7,6 +8,7 @@ import pyqtgraph as pg
 
 from plot.viewbox import ScopeViewBox
 from ui.compare_window import CompareWindow, _CompareTracePicker, TraceWindow
+from ui.path_hover import nearest_xy_point_index
 from ui.theme import CURSOR_COLORS
 from ui.trace_control import TraceControl
 from ui.window_controller import WindowBackedController
@@ -347,11 +349,17 @@ class PlotRenderer(WindowBackedController):
         if active_pi is None:
             for vline in self._hover_vlines.values(): vline.hide()
             for label in self._hover_labels.values(): label.hide()
+            self._hide_xy_path_hover()
             return
 
         vb_active = active_pi.getViewBox()
         mouse_point = vb_active.mapSceneToView(scene_pos)
         x = mouse_point.x()
+
+        if self.plot_mode == 'xy':
+            self._update_xy_path_hover(
+                active_plot_key, active_pi, mouse_point.x(), mouse_point.y())
+            return
 
         for key, pi in self.plot_items.items():
             vline = self._hover_vlines.get(key)
@@ -369,13 +377,7 @@ class PlotRenderer(WindowBackedController):
                 continue
 
             html_lines = []
-            if self.plot_mode == 'xy':
-                enabled = self.get_enabled_traces()
-                if len(enabled) >= 2:
-                    if key == active_plot_key:
-                        html_lines.append(f"<span style='color:{enabled[0].get_color()}'>{enabled[0].get_display_name()} = {mouse_point.x():.4g}</span>")
-                        html_lines.append(f"<span style='color:{enabled[1].get_color()}'>{enabled[1].get_display_name()} = {mouse_point.y():.4g}</span>")
-            else:  # time mode
+            if self.plot_mode != 'xy':  # time mode
                 trace = next((t for t in self.traces if id(t) == key), None)
                 if not trace:
                     continue
@@ -415,6 +417,74 @@ class PlotRenderer(WindowBackedController):
                 label.show()
             else:
                 label.hide()
+
+    def _update_xy_path_hover(self, active_key, plot_item, mouse_x, mouse_y):
+        """Snap the XY readout to the nearest rendered path sample."""
+        for vline in self._hover_vlines.values():
+            vline.hide()
+        for key, label in self._hover_labels.items():
+            if key != active_key:
+                label.hide()
+
+        label = self._hover_labels.get(active_key)
+        path_curve = self.curves.get('xy_path')
+        if label is None or path_curve is None:
+            self._hide_xy_path_hover()
+            return
+        x_values = path_curve.xData
+        y_values = path_curve.yData
+        if x_values is None or y_values is None:
+            self._hide_xy_path_hover()
+            return
+
+        vb = plot_item.getViewBox()
+        x_range, y_range = vb.viewRange()
+        scene_rect = vb.sceneBoundingRect()
+        x_units_per_pixel = (x_range[1] - x_range[0]) / max(scene_rect.width(), 1.0)
+        y_units_per_pixel = (y_range[1] - y_range[0]) / max(scene_rect.height(), 1.0)
+        index = nearest_xy_point_index(
+            x_values,
+            y_values,
+            mouse_x,
+            mouse_y,
+            x_units_per_pixel,
+            y_units_per_pixel,
+        )
+        if index is None:
+            self._hide_xy_path_hover()
+            return
+
+        x_value = float(x_values[index])
+        y_value = float(y_values[index])
+        enabled = self.get_enabled_traces()
+        if len(enabled) < 2:
+            self._hide_xy_path_hover()
+            return
+
+        x_name = escape(enabled[0].get_display_name())
+        y_name = escape(enabled[1].get_display_name())
+        label.setHtml(
+            "<div style='font-family: Consolas; font-size: 9pt; text-align: right;"
+            " background-color: rgba(26,26,46,220);'>"
+            f"<span style='color:{enabled[0].get_color()}; font-weight:600'>X</span> "
+            f"<span style='color:#999'>({x_name})</span>: {x_value:.6g}<br/>"
+            f"<span style='color:{enabled[1].get_color()}; font-weight:600'>Y</span> "
+            f"<span style='color:#999'>({y_name})</span>: {y_value:.6g}</div>"
+        )
+        label.setPos(x_range[1], y_range[1])
+        label.show()
+
+        marker = self.curves.get('xy_hover')
+        if marker is not None:
+            marker.setData([x_value], [y_value])
+
+    def _hide_xy_path_hover(self):
+        label = self._hover_labels.get('xy')
+        if label is not None:
+            label.hide()
+        marker = self.curves.get('xy_hover')
+        if marker is not None:
+            marker.setData([], [])
 
     def _open_trace_window(self, trace):
         """Open a resizable companion window for one enabled trace."""
@@ -1076,6 +1146,13 @@ class PlotRenderer(WindowBackedController):
                     symbolBrush='#FF5555', symbolPen=None, pen=None)
                 curve._viewBox = weakref.ref(pi.getViewBox())
                 self.curves['xy_cursor'] = curve
+            if 'xy_hover' not in self.curves:
+                curve = pi.plot(
+                    symbol='o', symbolSize=11,
+                    symbolBrush='#FFFFFF', symbolPen=None, pen=None)
+                curve.setZValue(1002)
+                curve._viewBox = weakref.ref(pi.getViewBox())
+                self.curves['xy_hover'] = curve
 
             vb = pi.getViewBox()
             if self._xy_auto_range:
