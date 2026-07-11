@@ -13,5 +13,6 @@ from ui.main_window import ParameterScopeOscilloscope, main
 __all__ = ["ParameterScopeOscilloscope", "main"]
 
 
+
 if __name__ == "__main__":
     main()
