@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 @dataclass
 class AxisParameterConfig:
-    """Controller axis parameters that can be saved before UAPI is available."""
+    """Controller axis parameters persisted by and written from TrioScope."""
 
     axis: int = 0
     speed: float = 100.0
@@ -16,16 +16,24 @@ class AxisParameterConfig:
     decel: float = 3000.0
     fast_dec: float = 50000.0
     jerk: float = 100000.0
-    fwd_in: float = -1.0
-    rev_in: float = -1.0
+    fwd_in: int = -1
+    rev_in: int = -1
     fe_limit: float = 10.0
 
     def validate(self) -> None:
+        if isinstance(self.axis, bool) or not isinstance(self.axis, int):
+            raise ValueError("Axis must be an integer between 0 and 25.")
         if not 0 <= self.axis <= 25:
             raise ValueError(f"Axis must be between 0 and 25 (got {self.axis}).")
 
         for field_name, value in asdict(self).items():
             if field_name == "axis":
+                continue
+            if field_name in ("fwd_in", "rev_in"):
+                if isinstance(value, bool) or not isinstance(value, int):
+                    raise ValueError(f"{field_name} must be a whole-number input index.")
+                if not -32768 <= value <= 32767:
+                    raise ValueError(f"{field_name} must fit the UAPI int16 range.")
                 continue
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(f"{field_name} must be numeric.")
@@ -44,15 +52,15 @@ class AxisParameterConfig:
         defaults = cls()
         try:
             config = cls(
-                axis=int(data.get("axis", defaults.axis)),
+                axis=_parse_axis(data.get("axis", defaults.axis)),
                 speed=float(data.get("speed", defaults.speed)),
                 units=float(data.get("units", defaults.units)),
                 accel=float(data.get("accel", defaults.accel)),
                 decel=float(data.get("decel", defaults.decel)),
                 fast_dec=float(data.get("fast_dec", defaults.fast_dec)),
                 jerk=float(data.get("jerk", defaults.jerk)),
-                fwd_in=float(data.get("fwd_in", defaults.fwd_in)),
-                rev_in=float(data.get("rev_in", defaults.rev_in)),
+                fwd_in=_parse_int16(data.get("fwd_in", defaults.fwd_in), "fwd_in"),
+                rev_in=_parse_int16(data.get("rev_in", defaults.rev_in), "rev_in"),
                 fe_limit=float(data.get("fe_limit", defaults.fe_limit)),
             )
         except (TypeError, ValueError) as exc:
@@ -60,3 +68,23 @@ class AxisParameterConfig:
 
         config.validate()
         return config
+
+
+def _parse_int16(value: Any, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a whole-number input index")
+    parsed = int(value)
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"{field_name} must be a whole-number input index")
+    if not -32768 <= parsed <= 32767:
+        raise ValueError(f"{field_name} must fit the UAPI int16 range")
+    return parsed
+
+
+def _parse_axis(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("axis must be an integer between 0 and 25")
+    parsed = int(value)
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError("axis must be an integer between 0 and 25")
+    return parsed

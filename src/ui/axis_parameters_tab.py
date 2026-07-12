@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import logging
+import threading
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QSize, Signal
@@ -18,16 +19,21 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QTableWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from .theme import AXIS_PARAMETERS_STYLESHEET
+
 try:
     from ..models.axis_parameter_config import AxisParameterConfig
+    from ..scope.axis_parameter_writer import write_axis_parameters
     from ..storage.axis_config_io import load_axis_config, save_axis_config
 except ImportError:  # App runtime imports ui as a top-level package.
     from models.axis_parameter_config import AxisParameterConfig
+    from scope.axis_parameter_writer import write_axis_parameters
     from storage.axis_config_io import load_axis_config, save_axis_config
 
 
@@ -57,7 +63,7 @@ class CompactDoubleSpinBox(QDoubleSpinBox):
 @dataclass
 class _AxisRow:
     axis_combo: QComboBox
-    editors: Dict[str, CompactDoubleSpinBox]
+    editors: Dict[str, QDoubleSpinBox | QSpinBox]
     copy_combo: QComboBox
     copy_button: QPushButton
     remove_button: QPushButton
@@ -67,13 +73,18 @@ class AxisParametersTab(QWidget):
     """A horizontal commissioning grid for axes 0 through 25."""
 
     configurationChanged = Signal()
+    writeProgress = Signal(int, int, int, str)
+    writeFinished = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._rows: List[_AxisRow] = []
         self._connection = None
         self._connection_lock = None
+        self._write_busy = False
         self._build_ui()
+        self.writeProgress.connect(self._on_write_progress)
+        self.writeFinished.connect(self._on_write_finished)
 
     def minimumSizeHint(self) -> QSize:
         return QSize(760, 420)
@@ -167,43 +178,7 @@ class AxisParametersTab(QWidget):
         footer.addWidget(self.connection_label)
         layout.addLayout(footer)
 
-        self.setStyleSheet(
-            """
-            QWidget#axisParametersTab { background-color: #24272b; }
-            QLabel#axisSetupTitle { color: #f0f2f4; font-size: 18pt; font-weight: 600; }
-            QLabel#axisSetupSubtitle { color: #9aa3ad; font-size: 9pt; }
-            QFrame#axisAccentRule { background-color: #f3a712; border: none; }
-            QPushButton#axisAddButton { color: #f3b63f; font-weight: 600; }
-            QTableWidget#axisParametersTable {
-                background-color: #24272b;
-                alternate-background-color: #292d32;
-                color: #d7dce1;
-                border: 1px solid #383e45;
-                selection-background-color: #3b3b30;
-                selection-color: #ffffff;
-            }
-            QTableWidget#axisParametersTable QHeaderView::section {
-                background-color: #30353b;
-                color: #f3b63f;
-                border: none;
-                border-right: 1px solid #3c4249;
-                border-bottom: 1px solid #f3a712;
-                padding: 8px 6px;
-                font-weight: 600;
-            }
-            QTableWidget#axisParametersTable QDoubleSpinBox,
-            QTableWidget#axisParametersTable QComboBox {
-                background-color: #202328;
-                color: #e1e5e9;
-                border: 1px solid #414851;
-                border-radius: 3px;
-                padding: 4px 6px;
-                font-family: 'Consolas';
-            }
-            QLabel#axisSetupStatus { color: #9aa3ad; }
-            QLabel#axisConnectionStatus { color: #d06b64; font-weight: 600; }
-            """
-        )
+        self.setStyleSheet(AXIS_PARAMETERS_STYLESHEET)
 
     def add_axis(self, config: Optional[AxisParameterConfig] = None) -> bool:
         used_axes = {row.axis_combo.currentData() for row in self._rows}
@@ -229,14 +204,19 @@ class AxisParametersTab(QWidget):
         axis_combo.setProperty("previousAxis", config.axis)
         self.table.setCellWidget(table_row, 0, axis_combo)
 
-        editors: Dict[str, CompactDoubleSpinBox] = {}
+        editors: Dict[str, QDoubleSpinBox | QSpinBox] = {}
         for column, (field_name, _, tooltip) in enumerate(PARAMETER_COLUMNS, start=1):
-            editor = CompactDoubleSpinBox()
-            editor.setRange(-1_000_000_000_000.0, 1_000_000_000_000.0)
-            editor.setDecimals(6)
-            editor.setSingleStep(1.0)
+            if field_name in ("fwd_in", "rev_in"):
+                editor = QSpinBox()
+                editor.setRange(-32768, 32767)
+                editor.setValue(int(getattr(config, field_name)))
+            else:
+                editor = CompactDoubleSpinBox()
+                editor.setRange(-1_000_000_000_000.0, 1_000_000_000_000.0)
+                editor.setDecimals(6)
+                editor.setSingleStep(1.0)
+                editor.setValue(float(getattr(config, field_name)))
             editor.setKeyboardTracking(False)
-            editor.setValue(float(getattr(config, field_name)))
             editor.setToolTip(tooltip)
             editor.valueChanged.connect(self.configurationChanged)
             editors[field_name] = editor
@@ -351,7 +331,7 @@ class AxisParametersTab(QWidget):
         self._connection = connection
         self._connection_lock = connection_lock
         connected = connection is not None
-        self.btn_send.setEnabled(connected)
+        self.btn_send.setEnabled(connected and not self._write_busy)
         if connected:
             self.connection_label.setText("●  Controller connected")
             self.connection_label.setStyleSheet("color: #62c980; font-weight: 600;")
@@ -366,24 +346,85 @@ class AxisParametersTab(QWidget):
             self._set_status("Connect to a controller before sending values.", error=True)
             return
         configs = self.configurations()
-        try:
-            self._write_axis_parameters(configs)
-        except NotImplementedError:
-            QMessageBox.information(
-                self,
-                "Controller write placeholder",
-                "The axis configuration is ready. The UAPI parameter-write mapping "
-                "will be connected here in a future update; no controller values were changed.",
-            )
-            self._set_status("UAPI write placeholder reached; no values were sent.")
+        if not configs:
+            self._set_status("Add at least one axis before sending values.", error=True)
+            return
 
-    def _write_axis_parameters(self, configs: List[AxisParameterConfig]) -> None:
-        """Future UAPI boundary; deliberately performs no controller writes yet."""
-        logger.info(
-            "Axis parameter UAPI placeholder called for axes %s",
-            [config.axis for config in configs],
+        axes = ", ".join(str(config.axis) for config in configs)
+        axis_word = "axis" if len(configs) == 1 else "axes"
+        reply = QMessageBox.question(
+            self,
+            "Write axis parameters",
+            f"Write 9 parameters to {len(configs)} {axis_word} "
+            f"({axes})?\n\nThis changes the connected controller immediately.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
         )
-        raise NotImplementedError
+        if reply != QMessageBox.Yes:
+            return
+
+        connection = self._connection
+        connection_lock = self._connection_lock
+        self._set_write_busy(True)
+
+        def _do_write():
+            try:
+                count = self._write_axis_parameters(
+                    configs,
+                    connection=connection,
+                    connection_lock=connection_lock,
+                    progress_callback=lambda done, total, axis, parameter: (
+                        self.writeProgress.emit(done, total, axis, parameter)
+                    ),
+                )
+                self.writeFinished.emit(count)
+            except Exception as exc:
+                logger.error("Axis parameter write failed: %s", exc)
+                self.writeFinished.emit(exc)
+
+        threading.Thread(
+            target=_do_write,
+            name="AxisParameterWrite",
+            daemon=True,
+        ).start()
+
+    def _write_axis_parameters(
+        self,
+        configs: List[AxisParameterConfig],
+        connection=None,
+        connection_lock=None,
+        progress_callback=None,
+    ) -> int:
+        """Apply the manual-defined UAPI mapping; split out for testability."""
+        target = self._connection if connection is None else connection
+        lock = self._connection_lock if connection_lock is None else connection_lock
+        return write_axis_parameters(target, configs, lock, progress_callback)
+
+    def _set_write_busy(self, busy: bool) -> None:
+        self._write_busy = busy
+        self.table.setEnabled(not busy)
+        self.btn_add.setEnabled(not busy and len(self._rows) < 26)
+        self.btn_load.setEnabled(not busy)
+        self.btn_save.setEnabled(not busy)
+        self.btn_send.setEnabled(not busy and self._connection is not None)
+        self.btn_send.setText("Writing…" if busy else "Send to controller")
+
+    def _on_write_progress(
+        self, completed: int, total: int, axis: int, parameter: str
+    ) -> None:
+        self._set_status(
+            f"Writing axis {axis} {parameter}… {completed}/{total} values complete."
+        )
+
+    def _on_write_finished(self, result) -> None:
+        self._set_write_busy(False)
+        if isinstance(result, Exception):
+            QMessageBox.warning(self, "Axis parameter write failed", str(result))
+            self._set_status(str(result), error=True)
+            return
+
+        self._set_status(f"Controller updated successfully: {int(result)} values written.")
+        logger.info("Axis parameter write completed: %d values", int(result))
 
     def _on_axis_changed(self, row: _AxisRow) -> None:
         new_axis = int(row.axis_combo.currentData())

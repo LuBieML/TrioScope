@@ -18,6 +18,43 @@ CURSOR_COLORS = {
     'c2': '#00CED1',  # Dark Turquoise
 }
 
+AXIS_PARAMETERS_STYLESHEET = """
+QWidget#axisParametersTab { background-color: #24272b; }
+QLabel#axisSetupTitle { color: #f0f2f4; font-size: 18pt; font-weight: 600; }
+QLabel#axisSetupSubtitle { color: #9aa3ad; font-size: 9pt; }
+QFrame#axisAccentRule { background-color: #f3a712; border: none; }
+QPushButton#axisAddButton { color: #f3b63f; font-weight: 600; }
+QTableWidget#axisParametersTable {
+    background-color: #24272b;
+    alternate-background-color: #292d32;
+    color: #d7dce1;
+    border: 1px solid #383e45;
+    selection-background-color: #3b3b30;
+    selection-color: #ffffff;
+}
+QTableWidget#axisParametersTable QHeaderView::section {
+    background-color: #30353b;
+    color: #f3b63f;
+    border: none;
+    border-right: 1px solid #3c4249;
+    border-bottom: 1px solid #f3a712;
+    padding: 8px 6px;
+    font-weight: 600;
+}
+QTableWidget#axisParametersTable QDoubleSpinBox,
+QTableWidget#axisParametersTable QSpinBox,
+QTableWidget#axisParametersTable QComboBox {
+    background-color: #202328;
+    color: #e1e5e9;
+    border: 1px solid #414851;
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-family: 'Consolas';
+}
+QLabel#axisSetupStatus { color: #9aa3ad; }
+QLabel#axisConnectionStatus { color: #d06b64; font-weight: 600; }
+"""
+
 DARK_STYLESHEET = """
 QMainWindow, QWidget {
     background-color: #2e2e2e;
