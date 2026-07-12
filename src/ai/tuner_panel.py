@@ -28,8 +28,13 @@ from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
 from .signal_metrics import SignalMetrics
 from .signal_channels import detect_axes
-from .loop_cards import FePhaseCard, PositionLoopCard, VelocityLoopCard
+from .loop_cards import (
+    FePhaseCard, PositionLoopCard, RecommendationsCard, VelocityLoopCard,
+)
 from .zn_calculator import ZNCalculatorCard
+from .history_card import HistoryCard
+from .tuning_history import TuningHistory, TuningRun, make_run
+from .tuning_rules import evaluate as evaluate_rules
 from .tuner_theme import (
     ACCENT, AMBER, BG_DARK, BG_PANEL, BORDER, BORDER_LIGHT, GREEN, GROUP_STYLE,
     RED, TEXT, TEXT_DIM,
@@ -72,6 +77,7 @@ class TunerPanel(QDockWidget):
         self._connection = None
         self._conn_lock: threading.Lock | None = None
         self._last_metrics: dict | None = None
+        self._history = TuningHistory()
 
         self._profiles: dict[int, DriveProfile] = {}
         self._param_widgets: dict[str, QWidget] = {}
@@ -230,9 +236,13 @@ class TunerPanel(QDockWidget):
         self._scroll_content = QWidget()
         self._scroll_content.setStyleSheet(f"background-color: {BG_DARK};")
         self._scroll_content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        columns = QHBoxLayout(self._scroll_content)
+        content = QVBoxLayout(self._scroll_content)
+        content.setContentsMargins(0, 0, 0, 0)
+        content.setSpacing(8)
+        columns = QHBoxLayout()
         columns.setContentsMargins(0, 0, 0, 0)
         columns.setSpacing(8)
+        content.addLayout(columns)
 
         # ── Left column: Drive Profile + ZN ─────────────────────────
         left_col = QVBoxLayout()
@@ -262,8 +272,16 @@ class TunerPanel(QDockWidget):
         self._fe_card = FePhaseCard()
         right_col.addWidget(self._fe_card)
 
+        self._rec_card = RecommendationsCard()
+        right_col.addWidget(self._rec_card)
+
         right_col.addStretch()
         columns.addLayout(right_col, 1)
+
+        # ── Full-width tuning history under both columns ────────────
+        self._history_card = HistoryCard()
+        self._history_card.run_selected.connect(self._on_history_run_selected)
+        content.addWidget(self._history_card)
 
         scroll.setWidget(self._scroll_content)
         root.addWidget(scroll, 1)
@@ -702,6 +720,7 @@ class TunerPanel(QDockWidget):
         self._vel_card.reset()
         self._pos_card.reset()
         self._fe_card.reset()
+        self._rec_card.reset()
 
     def _set_status(self, text: str, color: str):
         self._status_label.setText(text)
@@ -770,10 +789,17 @@ class TunerPanel(QDockWidget):
             self._set_status(f"Analysis error: {exc}", RED)
             return
 
+        # Pn snapshot of the analyzed axis — for rule proposals + history
+        profile = self._profiles.get(axis)
+        snapshot = (profile.to_dict()
+                    if profile is not None and profile.has_drive_params()
+                    else None)
+
         self._last_metrics = metrics
         self._vel_card.populate(metrics)
         self._pos_card.populate(metrics)
         self._fe_card.populate(metrics)
+        self._rec_card.populate(evaluate_rules(metrics, snapshot))
 
         warnings = metrics.get("warnings", [])
         if metrics.get("data_sufficiency") != "OK":
@@ -782,9 +808,14 @@ class TunerPanel(QDockWidget):
             self.analysis_complete.emit()
             return
 
+        # Record this run in the tuning history
+        self._history.add(make_run(metrics, axis, snapshot))
+        self._history_card.refresh(self._history)
+
         cap = metrics.get("capture", {})
         phases = metrics.get("phases", {})
         parts = [
+            f"Run {len(self._history)}",
             f"Axis {axis}",
             f"{cap.get('n_samples', 0)} samples ({cap.get('duration_s', 0):.2f}s)",
             f"{phases.get('n_moves', 0)} move(s)",
@@ -805,3 +836,17 @@ class TunerPanel(QDockWidget):
         self._status_label.setToolTip("\n".join(tooltip_lines))
 
         self.analysis_complete.emit()
+
+    def _on_history_run_selected(self, run: TuningRun):
+        """Recall a previous run's full analysis into the metric cards."""
+        if not run.full_metrics:
+            return
+        self._last_metrics = run.full_metrics
+        self._vel_card.populate(run.full_metrics)
+        self._pos_card.populate(run.full_metrics)
+        self._fe_card.populate(run.full_metrics)
+        self._rec_card.populate(
+            evaluate_rules(run.full_metrics, run.pn_snapshot))
+        self._set_status(
+            f"Viewing run {run.timestamp} (axis {run.axis}) — "
+            f"press ANALYZE for a new run", ACCENT)

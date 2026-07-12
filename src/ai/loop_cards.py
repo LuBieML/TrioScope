@@ -1,9 +1,10 @@
 """Metric display cards for the Servo Loop Analyser panel.
 
 Each card renders one slice of the SignalMetrics result dict:
-  VelocityLoopCard — velocity tracking + overshoot + oscillation
-  PositionLoopCard — tolerance-band settling, ringing, damping
-  FePhaseCard      — FE by motion phase + VFF / reversal / asymmetry diagnostics
+  VelocityLoopCard    — velocity tracking + overshoot + oscillation
+  PositionLoopCard    — tolerance-band settling, ringing, damping
+  FePhaseCard         — FE by motion phase + VFF / reversal / asymmetry
+  RecommendationsCard — offline rule-based tuning advice + score
 """
 
 from __future__ import annotations
@@ -11,9 +12,10 @@ from __future__ import annotations
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
 from .tuner_theme import (
-    AMBER, CARD_STYLE, CYAN, RED, TEXT_BRIGHT, TEXT_DIM,
+    AMBER, CARD_STYLE, CYAN, GREEN, RED, TEXT, TEXT_BRIGHT, TEXT_DIM,
     HealthDot, clear_layout, health_color, metric_label, separator,
 )
+from .tuning_rules import TuningReport
 
 
 class _MetricCard(QFrame):
@@ -287,3 +289,81 @@ class FePhaseCard(_MetricCard):
             self.add_row("FE oscillation", "none", "", CYAN)
 
         self.set_issues(hints, color=AMBER)
+
+
+class RecommendationsCard(_MetricCard):
+    """Offline rule-based tuning advice — no API key required.
+
+    Renders a TuningReport: score chip, root cause, up to three concrete
+    parameter changes (with proposed values when the Pn profile is known),
+    and mechanical observations.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__("RECOMMENDATIONS", with_dot=False, parent=parent)
+        self.reset()
+
+    def reset(self):
+        self.clear_rows()
+        self.status_lbl.setText("--")
+        self._add_block("Run ANALYZE to get tuning recommendations.",
+                        TEXT_DIM)
+
+    def _add_block(self, text: str, color: str, indent: int = 0,
+                   italic: bool = False):
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        style = f"color: {color}; font-size: 8pt;"
+        if indent:
+            style += f" padding-left: {indent}px;"
+        if italic:
+            style += " font-style: italic;"
+        lbl.setStyleSheet(style)
+        self.rows.addWidget(lbl)
+
+    @staticmethod
+    def _score_color(score: float) -> str:
+        if score >= 8.0:
+            return GREEN
+        return AMBER if score >= 5.0 else RED
+
+    def populate(self, report: TuningReport):
+        self.clear_rows()
+
+        if report.score is None:
+            self.status_lbl.setText("insufficient data")
+            self.status_lbl.setStyleSheet(
+                f"color: {TEXT_DIM}; font-size: 8pt; font-style: italic;")
+            for obs in report.observations:
+                self._add_block(obs.action, AMBER)
+                self._add_block(f"why: {obs.diagnosis}", TEXT_DIM, indent=8)
+            return
+
+        color = self._score_color(report.score)
+        self.status_lbl.setText(
+            f"Tuning score {report.score:.1f}/10 · {report.root_cause}")
+        self.status_lbl.setStyleSheet(
+            f"color: {color}; font-size: 8pt; font-weight: bold;")
+
+        if report.well_tuned:
+            self._add_block("✓ System is well tuned. No further changes "
+                            "needed.", GREEN)
+
+        for i, rec in enumerate(report.recommendations, 1):
+            headline = f"{i}. {rec.action}"
+            if rec.proposed:
+                headline += f"  [{rec.proposed}]"
+            self._add_block(headline, TEXT_BRIGHT)
+            self._add_block(f"why: {rec.diagnosis}", TEXT_DIM, indent=10)
+            if rec.expected:
+                self._add_block(f"expect: {rec.expected}", TEXT_DIM,
+                                indent=10, italic=True)
+
+        for obs in report.observations:
+            self._add_block(f"⚠ {obs.action}", AMBER)
+            self._add_block(f"why: {obs.diagnosis}", TEXT_DIM, indent=10)
+
+        if (not report.well_tuned and not report.recommendations
+                and not report.observations):
+            self._add_block("No rule matched — inspect the metric cards "
+                            "and the FE trace directly.", TEXT_DIM)
