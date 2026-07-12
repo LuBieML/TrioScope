@@ -910,7 +910,12 @@ class AIAnalysisPanel(QDockWidget):
             return None
 
         try:
-            time_arr, params = self._data_provider()
+            result = self._data_provider()
+            seq = tuple(result) if result is not None else ()
+            time_arr = seq[0] if len(seq) >= 1 else None
+            params = seq[1] if len(seq) >= 2 else None
+            servo_period_sec = seq[2] if len(seq) >= 3 else None
+            segment_breaks = seq[3] if len(seq) >= 4 else None
         except Exception as exc:
             logger.exception("Scope data provider failed: %s", exc)
             self._append_chat_line(
@@ -930,7 +935,12 @@ class AIAnalysisPanel(QDockWidget):
             )
             return None
 
-        metrics = SignalMetrics.compute_all(time_arr, params)
+        metrics = SignalMetrics.compute_all(
+            time_arr, params,
+            axis=self._current_axis(),
+            servo_period_sec=servo_period_sec,
+            segment_breaks=segment_breaks,
+        )
         return SignalMetrics.format_for_llm(metrics)
 
     def _get_drive_context(self) -> str:
