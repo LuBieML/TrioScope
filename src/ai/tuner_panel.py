@@ -28,10 +28,13 @@ from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
 from .signal_metrics import SignalMetrics
 from .signal_channels import detect_axes
-from .loop_cards import FePhaseCard, PositionLoopCard, VelocityLoopCard
+from .loop_cards import (
+    FePhaseCard, PositionLoopCard, RecommendationsCard, VelocityLoopCard,
+)
 from .zn_calculator import ZNCalculatorCard
 from .history_card import HistoryCard
 from .tuning_history import TuningHistory, TuningRun, make_run
+from .tuning_rules import evaluate as evaluate_rules
 from .tuner_theme import (
     ACCENT, AMBER, BG_DARK, BG_PANEL, BORDER, BORDER_LIGHT, GREEN, GROUP_STYLE,
     RED, TEXT, TEXT_DIM,
@@ -268,6 +271,9 @@ class TunerPanel(QDockWidget):
 
         self._fe_card = FePhaseCard()
         right_col.addWidget(self._fe_card)
+
+        self._rec_card = RecommendationsCard()
+        right_col.addWidget(self._rec_card)
 
         right_col.addStretch()
         columns.addLayout(right_col, 1)
@@ -714,6 +720,7 @@ class TunerPanel(QDockWidget):
         self._vel_card.reset()
         self._pos_card.reset()
         self._fe_card.reset()
+        self._rec_card.reset()
 
     def _set_status(self, text: str, color: str):
         self._status_label.setText(text)
@@ -782,10 +789,17 @@ class TunerPanel(QDockWidget):
             self._set_status(f"Analysis error: {exc}", RED)
             return
 
+        # Pn snapshot of the analyzed axis — for rule proposals + history
+        profile = self._profiles.get(axis)
+        snapshot = (profile.to_dict()
+                    if profile is not None and profile.has_drive_params()
+                    else None)
+
         self._last_metrics = metrics
         self._vel_card.populate(metrics)
         self._pos_card.populate(metrics)
         self._fe_card.populate(metrics)
+        self._rec_card.populate(evaluate_rules(metrics, snapshot))
 
         warnings = metrics.get("warnings", [])
         if metrics.get("data_sufficiency") != "OK":
@@ -794,11 +808,7 @@ class TunerPanel(QDockWidget):
             self.analysis_complete.emit()
             return
 
-        # Record this run in the tuning history with the axis Pn snapshot
-        profile = self._profiles.get(axis)
-        snapshot = (profile.to_dict()
-                    if profile is not None and profile.has_drive_params()
-                    else None)
+        # Record this run in the tuning history
         self._history.add(make_run(metrics, axis, snapshot))
         self._history_card.refresh(self._history)
 
@@ -835,6 +845,8 @@ class TunerPanel(QDockWidget):
         self._vel_card.populate(run.full_metrics)
         self._pos_card.populate(run.full_metrics)
         self._fe_card.populate(run.full_metrics)
+        self._rec_card.populate(
+            evaluate_rules(run.full_metrics, run.pn_snapshot))
         self._set_status(
             f"Viewing run {run.timestamp} (axis {run.axis}) — "
             f"press ANALYZE for a new run", ACCENT)

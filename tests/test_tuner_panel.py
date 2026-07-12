@@ -185,4 +185,67 @@ def test_history_csv_export_content(qt_app):
     panel._on_analyze()
     csv_text = panel._history.to_csv()
     assert "timestamp" in csv_text.splitlines()[0]
+    assert "score" in csv_text.splitlines()[0]
     assert len(csv_text.strip().splitlines()) == 2
+
+
+# ---------------------------------------------------------------------------
+# Offline recommendations
+# ---------------------------------------------------------------------------
+def _card_texts(card):
+    texts = []
+    for i in range(card.rows.count()):
+        widget = card.rows.itemAt(i).widget()
+        if widget is not None:
+            texts.append(widget.text())
+    return texts
+
+
+def test_recommendations_card_reports_well_tuned_axis(qt_app):
+    panel = TunerPanel()
+    panel.set_data_provider(_capture)
+    panel._on_analyze()
+
+    assert "/10" in panel._rec_card.status_lbl.text()
+    assert any("well tuned" in t for t in _card_texts(panel._rec_card))
+
+
+def test_recommendations_card_flags_vff_defect(qt_app):
+    def provider():
+        t, params, sp, breaks = _capture()
+        dvel = np.gradient(params["DPOS(0)"], t)
+        params["DRIVE_FE(0)"] = params["DRIVE_FE(0)"] + 0.002 * dvel
+        # Second slower move gives the FE-vs-velocity fit its speed spread
+        params2 = {k: v for k, v in params.items()}
+        dvel2 = dvel * 0.5
+        dpos2 = np.cumsum(dvel2) / FS
+        t2 = t[-1] + (np.arange(len(t)) + 1) / FS
+        full_t = np.concatenate([t, t2])
+        full = {
+            "DPOS(0)": np.concatenate([params["DPOS(0)"],
+                                       params["DPOS(0)"][-1] + dpos2]),
+            "DRIVE_FE(0)": np.concatenate([
+                params["DRIVE_FE(0)"],
+                params2["DRIVE_FE(0)"] * 0 + 0.002 * dvel2]),
+        }
+        return full_t, full, sp, breaks
+
+    panel = TunerPanel()
+    panel.set_data_provider(provider)
+    panel._on_analyze()
+
+    texts = " ".join(_card_texts(panel._rec_card))
+    assert "VFF_GAIN" in texts or "Pn112" in texts
+
+
+def test_history_table_tracks_score_column(qt_app):
+    panel = TunerPanel()
+    panel.set_data_provider(_capture)
+    panel._on_analyze()
+
+    table = panel._history_card._table
+    header = table.horizontalHeaderItem(2)
+    assert header is not None and "Score" in header.text()
+    score_cell = table.item(0, 2)
+    assert score_cell is not None
+    assert float(score_cell.text().split()[0]) >= 8.0

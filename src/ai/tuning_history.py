@@ -14,6 +14,8 @@ import io
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from .tuning_rules import tuning_score
+
 # Attr → drive parameter code, for Pn-change summaries ("Pn102 500→600").
 _PN_LABELS: dict[str, str] = {
     "drive_type": "Drive",
@@ -37,6 +39,7 @@ class KpiDef:
     """One comparable tuning metric.
 
     direction: "lower"  — smaller is better
+               "higher" — larger is better (tuning score)
                "unity"  — closer to 1.0 is better
                "absent" — None/0 is good, any value is bad (e.g. oscillation)
     """
@@ -49,6 +52,7 @@ class KpiDef:
 
 
 KPI_DEFS: tuple[KpiDef, ...] = (
+    KpiDef("score", "Score", "/10", "higher", abs_epsilon=0.4, fmt="{:.1f}"),
     KpiDef("settle_ms", "Settle", "ms", "lower", abs_epsilon=2.0, fmt="{:.0f}"),
     KpiDef("fe_settle_peak", "FE pk", "u", "lower"),
     KpiDef("ringing", "Ring", "", "lower", fmt="{:.0f}"),
@@ -96,6 +100,7 @@ def extract_kpis(metrics: dict) -> dict:
     overshoot = vel.get("velocity_overshoot_per_move") or {}
 
     return {
+        "score": tuning_score(metrics),
         "settle_ms": settle_ms,
         "fe_settle_peak": settle.get("fe_peak_during_settle"),
         "ringing": settle.get("zero_crossings"),
@@ -156,6 +161,8 @@ def compare_kpi(prev: float | None, cur: float | None, kpi: KpiDef) -> str | Non
 
     if kpi.direction == "unity":
         prev_err, cur_err = abs(prev - 1.0), abs(cur - 1.0)
+    elif kpi.direction == "higher":
+        prev_err, cur_err = -prev, -cur
     else:  # "lower"
         prev_err, cur_err = prev, cur
     if _same(prev_err, cur_err, kpi):

@@ -52,6 +52,7 @@ non-blocking pyright job.
 | AI chat panel | `src/ai/analysis_panel.py` | prompts in `tuning_prompts.py`, LLM client in `nanogpt_client.py` |
 | Signal metrics for LLM | `src/ai/signal_metrics.py` | facade; constants / phases / analyzers / spectral / report in `signal_*.py` siblings |
 | ZN tuning helpers | `src/ai/classical_tuner.py` | oscillation detection + bandwidth estimates |
+| Offline tuning rules | `src/ai/tuning_rules.py` | metrics → Pn recommendations + tuning score (no API key) |
 | CoE SDO drive profile I/O | `src/ai/coe_io.py` | Pn read/write over EtherCAT |
 | EtherCAT network map | `src/ai/ethercat_scan.py`, `ethercat_map_window.py` | |
 | HTML reports | `src/reports/html_report.py` | + `report_style.py`, `report_plots.py`, `report_format.py` |
