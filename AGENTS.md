@@ -51,7 +51,7 @@ non-blocking pyright job.
 | Drive profile editor | `src/ai/drive_profile_editor.py` | shared per-axis Pn editor + CoE read/write |
 | AI chat panel | `src/ai/analysis_panel.py` | prompts in `tuning_prompts.py`, LLM client in `nanogpt_client.py` |
 | Signal metrics for LLM | `src/ai/signal_metrics.py` | facade; constants / phases / analyzers / spectral / report in `signal_*.py` siblings |
-| Step-response analysis | `src/ai/classical_tuner.py` | velocity/position loop metrics |
+| ZN tuning helpers | `src/ai/classical_tuner.py` | oscillation detection + bandwidth estimates |
 | CoE SDO drive profile I/O | `src/ai/coe_io.py` | Pn read/write over EtherCAT |
 | EtherCAT network map | `src/ai/ethercat_scan.py`, `ethercat_map_window.py` | |
 | HTML reports | `src/reports/html_report.py` | + `report_style.py`, `report_plots.py`, `report_format.py` |

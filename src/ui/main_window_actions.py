@@ -841,22 +841,24 @@ class MainWindowActions(WindowBackedController):
             self._ethercat_map.activateWindow()
 
     def _get_scope_data_for_ai(self):
-        """Data provider callback for AI panel.
+        """Data provider callback for the analysis panels.
 
-        Returns (time_arr, params_dict, servo_period_sec). servo_period_sec
-        is needed to scale DEMAND_SPEED (captured as units/servocycle) into
-        units/second for velocity-loop analysis.
+        Returns (time_arr, params_dict, servo_period_sec, segment_breaks).
+        servo_period_sec scales DEMAND_SPEED (captured as units/servocycle)
+        into units/second; segment_breaks marks continuous-mode splice
+        points so the analysis never computes gradients or FFTs across them.
         """
         if self.accumulated_data is None:
-            return None, None, None
+            return None, None, None, None
         time_arr = self.accumulated_data.get('time')
         params = self.accumulated_data.get('params')
         if time_arr is None or len(time_arr) == 0:
-            return None, None, None
+            return None, None, None, None
         servo_period_sec = None
         if self.scope_engine is not None:
             servo_period_sec = self.scope_engine.servo_period_sec
-        return time_arr, params, servo_period_sec
+        segment_breaks = self.accumulated_data.get('segment_breaks', [])
+        return time_arr, params, servo_period_sec, segment_breaks
 
     def open_settings(self):
         if self._settings_window is not None:
