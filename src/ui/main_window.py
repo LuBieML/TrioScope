@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFrame,
     QScrollArea, QRadioButton, QButtonGroup, QLineEdit, QGroupBox,
-    QGridLayout, QSlider,
+    QGridLayout, QSlider, QTabWidget,
 )
 from PySide6.QtCore import Qt, QTimer
 
@@ -70,6 +70,7 @@ logger.info("=========================================")
 
 
 from ui.logging_widgets import _LogWindow, _LogBarHandler
+from ui.axis_parameters_tab import AxisParametersTab
 from ui.path_3d_view import Path3DView
 from ui.theme import DARK_STYLESHEET
 from ui.main_window_bindings import bind_main_window_controllers
@@ -209,10 +210,14 @@ class ParameterScopeOscilloscope(QMainWindow):
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
 
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setObjectName("mainTabs")
+        outer_layout.addWidget(self.main_tabs, 1)
+
         content = QWidget()
         main_layout = QHBoxLayout(content)
         main_layout.setContentsMargins(5, 5, 5, 5)
-        outer_layout.addWidget(content, 1)
+        self.main_tabs.addTab(content, "Scope")
 
         # === LEFT PANEL (fixed width) ===
         left_panel = QWidget()
@@ -570,6 +575,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         right_layout.addWidget(status_frame)
 
         main_layout.addWidget(right_panel, 1)  # stretch factor 1 → plot expands
+
+        self.axis_parameters_tab = AxisParametersTab()
+        self.main_tabs.addTab(self.axis_parameters_tab, "Axis setup")
 
         # === LOG BAR (single line, full width, bottom) ===
         self._log_window = _LogWindow(self)

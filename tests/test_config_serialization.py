@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 import unittest
 from src.scope.parameters import SCOPE_PARAMETERS, CHANNEL_PARAMETERS_SET
 from src.models.trace_config import TraceConfig
+from src.models.axis_parameter_config import AxisParameterConfig
 from src.models.app_settings import AppSettings, ConnectionSettings, CaptureSettings, PlotSettings, DisplaySettings
 
 class TestConfigSerialization(unittest.TestCase):
@@ -49,7 +50,8 @@ class TestConfigSerialization(unittest.TestCase):
             connection=ConnectionSettings(ip="192.168.1.100"),
             capture=CaptureSettings(duration="10.0", external_trigger=True),
             traces=[TraceConfig(param="MPOS", axis=0), TraceConfig(param="DPOS", axis=1)],
-            drive_profiles={0: {"pn100": 1000, "drive_type": "EtherCAT"}}
+            drive_profiles={0: {"pn100": 1000, "drive_type": "EtherCAT"}},
+            axis_parameters=[AxisParameterConfig(axis=4, speed=250.0)],
         )
         d = settings.to_dict()
         self.assertEqual(d["connection"]["ip"], "192.168.1.100")
@@ -58,6 +60,8 @@ class TestConfigSerialization(unittest.TestCase):
         self.assertEqual(len(d["traces"]), 2)
         self.assertEqual(d["traces"][0]["param"], "MPOS")
         self.assertEqual(d["drive_profiles"][0]["pn100"], 1000)
+        self.assertEqual(d["axis_parameters"][0]["axis"], 4)
+        self.assertEqual(d["axis_parameters"][0]["speed"], 250.0)
 
     def test_settings_store_load_save(self):
         import tempfile
@@ -75,7 +79,11 @@ class TestConfigSerialization(unittest.TestCase):
                 connection=ConnectionSettings(ip="10.0.0.5"),
                 capture=CaptureSettings(duration="3.5", use_end_of_table=False, external_trigger=True),
                 display=DisplaySettings(plot_mode="xyzw", path_view_scale=2.0),
-                traces=[TraceConfig(param="FE", axis=2, enabled=False)]
+                traces=[TraceConfig(param="FE", axis=2, enabled=False)],
+                axis_parameters=[
+                    AxisParameterConfig(axis=2, speed=175.0, fe_limit=4.5),
+                    AxisParameterConfig(axis=7, units=1048576.0),
+                ],
             )
             store.save(settings)
             
@@ -91,6 +99,12 @@ class TestConfigSerialization(unittest.TestCase):
             self.assertEqual(loaded.traces[0].param, "FE")
             self.assertEqual(loaded.traces[0].axis, 2)
             self.assertFalse(loaded.traces[0].enabled)
+            self.assertEqual(len(loaded.axis_parameters), 2)
+            self.assertEqual(loaded.axis_parameters[0].axis, 2)
+            self.assertEqual(loaded.axis_parameters[0].speed, 175.0)
+            self.assertEqual(loaded.axis_parameters[0].fe_limit, 4.5)
+            self.assertEqual(loaded.axis_parameters[1].axis, 7)
+            self.assertEqual(loaded.axis_parameters[1].units, 1048576.0)
         finally:
             os.remove(tmp_name)
 

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field, asdict
 from typing import Dict, Any, List, Optional
 from .trace_config import TraceConfig
+from .axis_parameter_config import AxisParameterConfig
 
 @dataclass
 class ConnectionSettings:
@@ -36,6 +37,9 @@ class AppSettings:
     display: DisplaySettings = field(default_factory=DisplaySettings)
     traces: List[TraceConfig] = field(default_factory=list)
     drive_profiles: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    axis_parameters: List[AxisParameterConfig] = field(
+        default_factory=lambda: [AxisParameterConfig()]
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert settings to a dictionary."""
@@ -45,5 +49,6 @@ class AppSettings:
             "plot": asdict(self.plot),
             "display": asdict(self.display),
             "traces": [t.to_dict() for t in self.traces],
-            "drive_profiles": self.drive_profiles
+            "drive_profiles": self.drive_profiles,
+            "axis_parameters": [config.to_dict() for config in self.axis_parameters],
         }

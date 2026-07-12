@@ -999,6 +999,8 @@ class MainWindowActions(WindowBackedController):
             t.setParent(None)
             t.deleteLater()
 
+        self.axis_parameters_tab.set_configurations(app_settings.axis_parameters)
+
     def _save_settings(self):
         """Persist current settings to QSettings."""
         app_settings = AppSettings()
@@ -1039,6 +1041,8 @@ class MainWindowActions(WindowBackedController):
             # We should load the existing ones from settings so we don't overwrite them with empty
             existing = SettingsStore().load()
             app_settings.drive_profiles = existing.drive_profiles
+
+        app_settings.axis_parameters = self.axis_parameters_tab.configurations()
 
         SettingsStore().save(app_settings)
 

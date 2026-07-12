@@ -1,5 +1,8 @@
+import json
+
 from PySide6.QtCore import QSettings
 from models.app_settings import AppSettings, ConnectionSettings, CaptureSettings, PlotSettings, DisplaySettings
+from models.axis_parameter_config import AxisParameterConfig
 from models.trace_config import TraceConfig
 
 class SettingsStore:
@@ -91,6 +94,22 @@ class SettingsStore:
                 "pn112": _int_or_none(s.value(f"ai/drive_profiles/{i}/pn112")),
             }
 
+        # Axis setup grid. A JSON payload keeps the settings schema aligned
+        # with the tab's standalone .json import/export format.
+        if s.contains("axis_parameters/json"):
+            try:
+                raw_axis_parameters = json.loads(str(s.value("axis_parameters/json", "[]")))
+                if not isinstance(raw_axis_parameters, list):
+                    raise ValueError("axis_parameters/json must contain a list")
+                app_settings.axis_parameters = [
+                    AxisParameterConfig.from_dict(item) for item in raw_axis_parameters
+                ]
+                axes = [config.axis for config in app_settings.axis_parameters]
+                if len(axes) != len(set(axes)):
+                    raise ValueError("axis_parameters/json contains duplicate axes")
+            except (json.JSONDecodeError, TypeError, ValueError):
+                app_settings.axis_parameters = []
+
         return app_settings
 
     def save(self, settings: AppSettings) -> None:
@@ -130,3 +149,8 @@ class SettingsStore:
             s.setValue(f"ai/drive_profiles/{i}/axis", axis)
             for key, val in profile_dict.items():
                 s.setValue(f"ai/drive_profiles/{i}/{key}", "" if val is None else val)
+
+        s.setValue(
+            "axis_parameters/json",
+            json.dumps([config.to_dict() for config in settings.axis_parameters]),
+        )

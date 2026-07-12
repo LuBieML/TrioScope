@@ -107,6 +107,28 @@ QScrollArea {
     border: none;
     background-color: #353536;
 }
+QTabWidget#mainTabs::pane {
+    border: none;
+    border-top: 1px solid #454a50;
+}
+QTabWidget#mainTabs QTabBar::tab {
+    background-color: #303439;
+    color: #aeb5bd;
+    border: none;
+    border-right: 1px solid #454a50;
+    padding: 9px 22px;
+    min-width: 90px;
+}
+QTabWidget#mainTabs QTabBar::tab:hover {
+    background-color: #3a3f45;
+    color: #ffffff;
+}
+QTabWidget#mainTabs QTabBar::tab:selected {
+    background-color: #24272b;
+    color: #f3b63f;
+    border-top: 2px solid #f3a712;
+    font-weight: bold;
+}
 QScrollBar:vertical {
     background-color: #2e2e2e;
     width: 10px;
