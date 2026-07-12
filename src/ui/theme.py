@@ -55,6 +55,91 @@ QLabel#axisSetupStatus { color: #9aa3ad; }
 QLabel#axisConnectionStatus { color: #d06b64; font-weight: 600; }
 """
 
+MOTION_WINDOW_STYLESHEET = """
+QWidget#motionRoot, QWidget#motionRows, QScrollArea#motionScroll {
+    background-color: #24272b;
+    color: #d7dce1;
+}
+QLabel#motionTitle {
+    color: #f0f2f4;
+    font-size: 18pt;
+    font-weight: 600;
+}
+QLabel#motionSubtitle { color: #9aa3ad; font-size: 9pt; }
+QFrame#motionAccentRule { background-color: #f3a712; border: none; }
+QLabel#motionColumnLabel {
+    color: #8e98a3;
+    font-family: 'Consolas';
+    font-size: 8pt;
+    font-weight: 600;
+}
+QFrame#motionAxisRow {
+    background-color: #2b2f34;
+    border: 1px solid #3a4148;
+    border-left: 3px solid #f3a712;
+    border-radius: 4px;
+}
+QLabel#motionMoveIndex {
+    color: #f3b63f;
+    font-family: 'Consolas';
+    font-size: 11pt;
+    font-weight: 700;
+}
+QComboBox#motionAxisCombo, QFrame#motionAxisRow QDoubleSpinBox {
+    background-color: #202328;
+    color: #e1e5e9;
+    border: 1px solid #414851;
+    border-radius: 3px;
+    padding: 6px 8px;
+    font-family: 'Consolas';
+    font-size: 10pt;
+}
+QComboBox#motionAxisCombo:focus, QFrame#motionAxisRow QDoubleSpinBox:focus {
+    border-color: #f3a712;
+}
+QPushButton#motionAddButton { color: #f3b63f; font-weight: 600; }
+QPushButton#motionRemoveButton { color: #c98783; }
+QPushButton#motionEnableButton {
+    background-color: #4a4130;
+    color: #f3c86b;
+    border: 1px solid #75633d;
+    font-weight: 700;
+    padding: 7px 14px;
+}
+QPushButton#motionEnableButton:hover { background-color: #5a4e37; }
+QPushButton#motionEnableButton:checked {
+    background-color: #1f6d64;
+    color: #e7fffb;
+    border: 1px solid #37a698;
+}
+QPushButton#motionRowStartButton {
+    background-color: #287a43;
+    color: #ffffff;
+    border: 1px solid #3a9d5b;
+    font-weight: 700;
+    padding: 6px 10px;
+}
+QPushButton#motionRowStartButton:hover { background-color: #329451; }
+QPushButton#motionStopButton {
+    background-color: #713638;
+    color: #f3dada;
+    border: 1px solid #9b4b4e;
+    font-weight: 700;
+    padding: 7px 14px;
+}
+QPushButton#motionStopButton:hover { background-color: #894144; }
+QPushButton#motionEnableButton:disabled,
+QPushButton#motionRowStartButton:disabled,
+QPushButton#motionStopButton:disabled {
+    background-color: #34383d;
+    color: #6f777f;
+    border-color: #454a50;
+}
+QLabel#motionStatus { color: #9aa3ad; }
+QLabel#motionStatus[error="true"] { color: #d06b64; }
+QScrollArea#motionScroll { border: none; }
+"""
+
 DARK_STYLESHEET = """
 QMainWindow, QWidget {
     background-color: #2e2e2e;

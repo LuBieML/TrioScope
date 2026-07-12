@@ -650,6 +650,11 @@ class MainWindowActions(WindowBackedController):
         act_ecat.triggered.connect(self.window._open_ethercat_map)
         view_menu.addAction(act_ecat)
 
+        act_motion = QAction("Axis &Motion...", self)
+        act_motion.setShortcut(QKeySequence("Ctrl+Shift+M"))
+        act_motion.triggered.connect(self.window._open_motion_window)
+        view_menu.addAction(act_motion)
+
         view_menu.addSeparator()
 
         # Profiles submenu
@@ -1052,8 +1057,11 @@ class MainWindowActions(WindowBackedController):
         self.is_running = False
         self._update_timer.stop()
         self._stop_watchdog()
+        self._disable_motion_axes_before_disconnect()
         if self._measurement_panel is not None:
             self._measurement_panel.hide()
+        if self._motion_window is not None:
+            self._motion_window.close()
         for compare_window in list(self._compare_windows):
             compare_window.close()
         self._compare_windows.clear()

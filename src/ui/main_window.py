@@ -173,6 +173,9 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Help window (lazy)
         self._help_window = None
 
+        # Axis motion popup (UAPI command hooks will be added later)
+        self._motion_window = None
+
         # Compare/single-trace companion windows.
         self._compare_windows = []
         self._compare_window_counter = 0

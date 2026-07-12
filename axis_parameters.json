@@ -1,0 +1,42 @@
+{
+  "format": "TrioScope axis parameters",
+  "version": 1,
+  "axis_parameters": [
+    {
+      "axis": 0,
+      "speed": 100.0,
+      "units": 2097152.0,
+      "accel": 3000.0,
+      "decel": 3000.0,
+      "fast_dec": 50000.0,
+      "jerk": 100000.0,
+      "fwd_in": -1,
+      "rev_in": -1,
+      "fe_limit": 10.0
+    },
+    {
+      "axis": 1,
+      "speed": 100.0,
+      "units": 2097152.0,
+      "accel": 3000.0,
+      "decel": 3000.0,
+      "fast_dec": 50000.0,
+      "jerk": 100000.0,
+      "fwd_in": -1,
+      "rev_in": -1,
+      "fe_limit": 10.0
+    },
+    {
+      "axis": 2,
+      "speed": 100.0,
+      "units": 2097152.0,
+      "accel": 3000.0,
+      "decel": 3000.0,
+      "fast_dec": 50000.0,
+      "jerk": 100000.0,
+      "fwd_in": -1,
+      "rev_in": -1,
+      "fe_limit": 10.0
+    }
+  ]
+}

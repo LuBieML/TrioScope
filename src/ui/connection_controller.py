@@ -110,6 +110,7 @@ class ConnectionController(WindowBackedController):
         if self._tuner_panel is not None:
             self._tuner_panel.set_connection(None)
         self.axis_parameters_tab.set_connection(None)
+        self.window._reset_motion_on_disconnect()
         if self._ethercat_map is not None:
             self._ethercat_map.close()
             self._ethercat_map = None
@@ -273,6 +274,7 @@ class ConnectionController(WindowBackedController):
             if self._tuner_panel is not None:
                 self._tuner_panel.set_connection(conn, self._conn_lock)
             self.axis_parameters_tab.set_connection(conn, self._conn_lock)
+            self.window._sync_motion_connection_state()
             self._start_watchdog()
             self.status_dot.setStyleSheet("color: #00cc00; font-size: 16pt;")
             self.status_label.setStyleSheet("color: #d4d4d4;")
@@ -290,6 +292,7 @@ class ConnectionController(WindowBackedController):
         if self.is_running:
             self.stop_capture()
 
+        self.window._disable_motion_axes_before_disconnect()
         self._stop_watchdog()
         self._shutting_down = True
 
@@ -318,6 +321,7 @@ class ConnectionController(WindowBackedController):
         if self._tuner_panel is not None:
             self._tuner_panel.set_connection(None)
         self.axis_parameters_tab.set_connection(None)
+        self.window._reset_motion_on_disconnect()
         self._disconnect_cooldown_end = time.monotonic() + self._disconnect_cooldown_seconds
 
         self.status_dot.setStyleSheet("color: #f14c4c; font-size: 16pt;")
