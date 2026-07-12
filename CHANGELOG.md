@@ -3,6 +3,13 @@
 Notable changes to TrioScope are recorded here. New entries are generated from
 Conventional Commit pull-request titles by Release Please.
 
+## [0.2.1](https://github.com/LuBieML/TrioScope/compare/v0.2.0...v0.2.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* removed limits for  speed and distance in axis move ([8fe90be](https://github.com/LuBieML/TrioScope/commit/8fe90be81f43412d16020b3f3ef5178b3bbd871a))
+
 ## [0.2.0](https://github.com/LuBieML/TrioScope/compare/v0.1.0...v0.2.0) (2026-07-12)
 
 
