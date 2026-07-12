@@ -3,6 +3,14 @@
 Notable changes to TrioScope are recorded here. New entries are generated from
 Conventional Commit pull-request titles by Release Please.
 
+## [0.2.0](https://github.com/LuBieML/TrioScope/compare/v0.1.0...v0.2.0) (2026-07-12)
+
+
+### Features
+
+* added axis motion feature ([36cf37b](https://github.com/LuBieML/TrioScope/commit/36cf37b29740993ba3caea05648cb52e59379c9d))
+* controller parameters set ([537b463](https://github.com/LuBieML/TrioScope/commit/537b463a23d5a9080319ce36dd18e4c0bbce2441))
+
 ## [0.1.0](https://github.com/LuBieML/TrioScope/compare/v0.0.3...v0.1.0) (2026-07-12)
 
 
