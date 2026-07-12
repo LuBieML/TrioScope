@@ -8,9 +8,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QSpinBox
 
 from src.ai.tuner_panel import TunerPanel
+from src.ai.tuning_history import KPI_DEFS
 from src.ai.zn_calculator import zn_pi_table
 
 FS = 1000.0
@@ -21,7 +22,7 @@ def qt_app():
     return QApplication.instance() or QApplication([])
 
 
-def _capture(axis=0):
+def _capture(axis=0, fe_sigma=0.002, seed=1):
     """A clean single-move capture as the provider 4-tuple."""
     n_pre, n_acc, n_cr, n_post = 300, 200, 600, 800
     dvel = np.concatenate([
@@ -33,10 +34,10 @@ def _capture(axis=0):
     ])
     t = np.arange(len(dvel)) / FS
     dpos = np.cumsum(dvel) / FS
-    rng = np.random.default_rng(1)
+    rng = np.random.default_rng(seed)
     params = {
         f"DPOS({axis})": dpos,
-        f"DRIVE_FE({axis})": rng.normal(0, 0.002, len(t)),
+        f"DRIVE_FE({axis})": rng.normal(0, fe_sigma, len(t)),
         f"MSPEED({axis})": dvel + rng.normal(0, 0.05, len(t)),
     }
     return t, params, 0.001, []
@@ -64,7 +65,9 @@ def test_analyze_uses_only_captured_axis_when_unambiguous(qt_app):
     # Profile combo sits at axis 0, but only axis 3 was captured
     panel._on_analyze()
     assert "Axis 3" in panel._status_label.text()
-    assert panel.last_metrics()["channels_detected"]["dpos"] == "DPOS(3)"
+    metrics = panel.last_metrics()
+    assert metrics is not None
+    assert metrics["channels_detected"]["dpos"] == "DPOS(3)"
 
 
 def test_analyze_demands_choice_for_multi_axis_capture(qt_app):
@@ -92,7 +95,9 @@ def test_old_three_tuple_provider_still_works(qt_app):
     panel = TunerPanel()
     panel.set_data_provider(lambda: _capture()[:3])
     panel._on_analyze()
-    assert panel.last_metrics()["data_sufficiency"] == "OK"
+    metrics = panel.last_metrics()
+    assert metrics is not None
+    assert metrics["data_sufficiency"] == "OK"
 
 
 def test_zn_pi_table_classical_values():
@@ -103,3 +108,81 @@ def test_zn_pi_table_classical_values():
     assert classical["pn103"] == pytest.approx(83.3, abs=0.1)
     # Invalid inputs produce empty rows, not crashes
     assert zn_pi_table(0.0, 0.010)[0]["kp"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tuning history integration
+# ---------------------------------------------------------------------------
+_CHANGES_COL = 2 + len(KPI_DEFS)
+
+
+def test_history_records_each_analyze(qt_app):
+    panel = TunerPanel()
+    panel.set_data_provider(_capture)
+    panel._on_analyze()
+    panel._on_analyze()
+
+    assert len(panel._history) == 2
+    assert panel._history_card._table.rowCount() == 2
+    assert "Run 2" in panel._status_label.text()
+    # Insufficient captures must not be recorded
+    panel.set_data_provider(lambda: (None, None, None, None))
+    panel._on_analyze()
+    assert len(panel._history) == 2
+
+
+def test_history_marks_worse_run_red(qt_app):
+    panel = TunerPanel()
+    panel.set_data_provider(lambda: _capture(fe_sigma=0.002))
+    panel._on_analyze()
+    panel.set_data_provider(lambda: _capture(fe_sigma=0.05, seed=2))
+    panel._on_analyze()
+
+    table = panel._history_card._table
+    cruise_col = 2 + next(
+        i for i, kpi in enumerate(KPI_DEFS) if kpi.key == "fe_cruise_rms")
+    newest_cell = table.item(0, cruise_col)
+    assert newest_cell is not None
+    assert "▲" in newest_cell.text()                      # value increased
+    assert newest_cell.foreground().color().name() == "#e74c3c"  # RED = worse
+
+
+def test_history_shows_pn_changes_between_runs(qt_app):
+    panel = TunerPanel()
+    panel.set_data_provider(_capture)
+    assert panel._drive_combo is not None
+    panel._drive_combo.setCurrentText("DX4")   # loads defaults (Pn102 = 500)
+    panel._on_analyze()
+    pn102_spin = panel._param_widgets["pn102"]
+    assert isinstance(pn102_spin, QSpinBox)
+    pn102_spin.setValue(600)
+    panel._on_analyze()
+
+    changes_cell = panel._history_card._table.item(0, _CHANGES_COL)
+    assert changes_cell is not None
+    assert "Pn102 500→600" in changes_cell.text()
+    baseline_cell = panel._history_card._table.item(1, _CHANGES_COL)
+    assert baseline_cell is not None
+    assert baseline_cell.text() == "baseline"
+
+
+def test_history_row_click_recalls_run(qt_app):
+    panel = TunerPanel()
+    panel.set_data_provider(_capture)
+    panel._on_analyze()
+    panel._on_analyze()
+
+    panel._history_card._on_row_clicked(1, 0)  # older run (newest first)
+    assert "Viewing run" in panel._status_label.text()
+    metrics = panel.last_metrics()
+    assert metrics is not None
+    assert metrics["data_sufficiency"] == "OK"
+
+
+def test_history_csv_export_content(qt_app):
+    panel = TunerPanel()
+    panel.set_data_provider(_capture)
+    panel._on_analyze()
+    csv_text = panel._history.to_csv()
+    assert "timestamp" in csv_text.splitlines()[0]
+    assert len(csv_text.strip().splitlines()) == 2

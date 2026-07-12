@@ -47,7 +47,7 @@ non-blocking pyright job.
 | Menus, export, settings | `src/ui/main_window_actions/` | export_import / profiles / menu / panels / settings |
 | Connection + watchdog | `src/ui/connection_controller.py` | connect/disconnect, lost-connection handling |
 | Trace row widget | `src/ui/trace_control.py` | param/axis selectors per trace |
-| Servo Loop Analyser panel | `src/ai/tuner_panel.py` | + `loop_cards.py`, `zn_calculator.py`, `tuner_theme.py` |
+| Servo Loop Analyser panel | `src/ai/tuner_panel.py` | + `loop_cards.py`, `zn_calculator.py`, `tuner_theme.py`, `history_card.py`, `tuning_history.py` |
 | Drive profile editor | `src/ai/drive_profile_editor.py` | shared per-axis Pn editor + CoE read/write |
 | AI chat panel | `src/ai/analysis_panel.py` | prompts in `tuning_prompts.py`, LLM client in `nanogpt_client.py` |
 | Signal metrics for LLM | `src/ai/signal_metrics.py` | facade; constants / phases / analyzers / spectral / report in `signal_*.py` siblings |
