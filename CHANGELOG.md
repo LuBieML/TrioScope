@@ -3,6 +3,14 @@
 Notable changes to TrioScope are recorded here. New entries are generated from
 Conventional Commit pull-request titles by Release Please.
 
+## [0.3.0](https://github.com/LuBieML/TrioScope/compare/v0.2.2...v0.3.0) (2026-07-12)
+
+
+### Features
+
+* unify servo tuner scope analysis on a robust SignalMetrics engine ([7609e9c](https://github.com/LuBieML/TrioScope/commit/7609e9ca07eb50fc5de9c9f2f657afaecf115a4c))
+* updated servotuner ([4c3a239](https://github.com/LuBieML/TrioScope/commit/4c3a2397e27bd9e9da97c3de056978864f9046de))
+
 ## [0.2.2](https://github.com/LuBieML/TrioScope/compare/v0.2.1...v0.2.2) (2026-07-12)
 
 
