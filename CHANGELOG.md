@@ -3,6 +3,13 @@
 Notable changes to TrioScope are recorded here. New entries are generated from
 Conventional Commit pull-request titles by Release Please.
 
+## [0.2.2](https://github.com/LuBieML/TrioScope/compare/v0.2.1...v0.2.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* Added move direction arrows ([6eb4238](https://github.com/LuBieML/TrioScope/commit/6eb4238c10d7c7729fc78cd871e1937947efbe28))
+
 ## [0.2.1](https://github.com/LuBieML/TrioScope/compare/v0.2.0...v0.2.1) (2026-07-12)
 
 
