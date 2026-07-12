@@ -400,12 +400,13 @@ class AxisMotionWindow(QMainWindow):
         self._refresh_controls()
 
     def _refresh_controls(self) -> None:
-        editable = not self._armed and not self._busy
+        structure_editable = not self._armed and not self._busy
+        values_editable = not self._busy
         for row in self._rows:
-            row.axis_combo.setEnabled(editable)
-            row.speed_edit.setEnabled(editable)
-            row.distance_edit.setEnabled(editable)
-            row.remove_button.setEnabled(editable)
+            row.axis_combo.setEnabled(structure_editable)
+            row.speed_edit.setEnabled(values_editable)
+            row.distance_edit.setEnabled(values_editable)
+            row.remove_button.setEnabled(structure_editable)
             axis = int(row.axis_combo.currentData())
             row.start_button.setEnabled(
                 self._connection_available
@@ -414,7 +415,7 @@ class AxisMotionWindow(QMainWindow):
                 and not self._busy
             )
             row.start_button.setText("Moving…" if axis in self._moving_axes else "Start")
-        self.btn_add.setEnabled(editable and len(self._rows) < 26)
+        self.btn_add.setEnabled(structure_editable and len(self._rows) < 26)
         self.btn_enable.setEnabled(
             self._connection_available and bool(self._rows) and not self._busy
         )

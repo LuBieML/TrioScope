@@ -70,14 +70,22 @@ def test_start_and_stop_emit_future_uapi_hooks(qt_app):
 
     window.btn_enable.click()
     assert enables == [(True, window.commands())]
+    assert all(not row.speed_edit.isEnabled() for row in window._rows)
+    assert all(not row.distance_edit.isEnabled() for row in window._rows)
     window.complete_enable(True)
     assert window.btn_enable.isChecked()
     assert all(row.start_button.isEnabled() for row in window._rows)
 
     axis_0_row, axis_3_row = window._rows
+    assert not axis_3_row.axis_combo.isEnabled()
+    assert not axis_3_row.remove_button.isEnabled()
+    assert axis_3_row.speed_edit.isEnabled()
+    assert axis_3_row.distance_edit.isEnabled()
+    axis_3_row.speed_edit.setValue(75.0)
+    axis_3_row.distance_edit.setValue(-7.5)
     axis_3_row.start_button.click()
 
-    assert starts == [[MotionAxisCommand(axis=3, speed=60.0, distance=-5.0)]]
+    assert starts == [[MotionAxisCommand(axis=3, speed=75.0, distance=-7.5)]]
     assert axis_0_row.start_button.isEnabled()
     assert not axis_3_row.start_button.isEnabled()
     assert window.btn_stop.isEnabled()
