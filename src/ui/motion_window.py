@@ -39,7 +39,8 @@ class _MotionRow:
     axis_combo: QComboBox
     speed_edit: QDoubleSpinBox
     distance_edit: QDoubleSpinBox
-    start_button: QPushButton
+    negative_button: QPushButton
+    positive_button: QPushButton
     remove_button: QPushButton
 
 
@@ -78,7 +79,7 @@ class AxisMotionWindow(QMainWindow):
         title = QLabel("Axis motion")
         title.setObjectName("motionTitle")
         subtitle = QLabel(
-            "Configure independent axis moves. Each row has its own speed and signed distance."
+            "Configure independent axis moves. Enter speed and distance magnitudes, then choose direction."
         )
         subtitle.setObjectName("motionSubtitle")
         title_stack.addWidget(title)
@@ -104,7 +105,7 @@ class AxisMotionWindow(QMainWindow):
         column_header.addWidget(self._column_label("AXIS", 100))
         column_header.addWidget(self._column_label("SPEED", 190), 1)
         column_header.addWidget(self._column_label("DISTANCE", 190), 1)
-        column_header.addWidget(self._column_label("ACTION", 82))
+        column_header.addWidget(self._column_label("DIRECTION", 90))
         column_header.addSpacing(74)
         layout.addLayout(column_header)
 
@@ -202,19 +203,25 @@ class AxisMotionWindow(QMainWindow):
         row_layout.addWidget(speed_edit, 1)
 
         distance_edit = self._make_value_editor(
-            minimum=-1_000_000_000_000.0,
+            minimum=0.0,
             maximum=1_000_000_000_000.0,
-            value=command.distance,
+            value=abs(command.distance),
             prefix="",
-            tooltip="Signed relative move distance; use a negative value for reverse motion.",
+            tooltip="Relative move distance magnitude. Choose direction with an arrow button.",
         )
         row_layout.addWidget(distance_edit, 1)
 
-        start_button = QPushButton("Start")
-        start_button.setObjectName("motionRowStartButton")
-        start_button.setFixedWidth(82)
-        start_button.setToolTip("Execute this axis move using its speed and distance.")
-        row_layout.addWidget(start_button)
+        negative_button = QPushButton("←")
+        negative_button.setObjectName("motionRowStartButton")
+        negative_button.setFixedWidth(40)
+        negative_button.setToolTip("Move by the entered distance in the negative direction.")
+        row_layout.addWidget(negative_button)
+
+        positive_button = QPushButton("→")
+        positive_button.setObjectName("motionRowStartButton")
+        positive_button.setFixedWidth(40)
+        positive_button.setToolTip("Move by the entered distance in the positive direction.")
+        row_layout.addWidget(positive_button)
 
         remove_button = QPushButton("Remove")
         remove_button.setObjectName("motionRemoveButton")
@@ -228,7 +235,8 @@ class AxisMotionWindow(QMainWindow):
             axis_combo,
             speed_edit,
             distance_edit,
-            start_button,
+            negative_button,
+            positive_button,
             remove_button,
         )
         self._rows.append(row)
@@ -236,7 +244,12 @@ class AxisMotionWindow(QMainWindow):
         axis_combo.currentIndexChanged.connect(lambda _=0, r=row: self._on_axis_changed(r))
         speed_edit.valueChanged.connect(self._mark_edited)
         distance_edit.valueChanged.connect(self._mark_edited)
-        start_button.clicked.connect(lambda _=False, r=row: self.request_start(r))
+        negative_button.clicked.connect(
+            lambda _=False, r=row: self.request_start(r, -1)
+        )
+        positive_button.clicked.connect(
+            lambda _=False, r=row: self.request_start(r, 1)
+        )
         remove_button.clicked.connect(lambda _=False, r=row: self._remove_row(r))
 
         self._refresh_row_indices()
@@ -347,8 +360,8 @@ class AxisMotionWindow(QMainWindow):
             )
         self._refresh_controls()
 
-    def request_start(self, row: _MotionRow) -> None:
-        command = self._command_for_row(row)
+    def request_start(self, row: _MotionRow, direction: int) -> None:
+        command = self._command_for_row(row, direction)
         if not self._armed:
             self._set_status("Enable the involved axes before starting a move.", True)
             return
@@ -408,13 +421,14 @@ class AxisMotionWindow(QMainWindow):
             row.distance_edit.setEnabled(values_editable)
             row.remove_button.setEnabled(structure_editable)
             axis = int(row.axis_combo.currentData())
-            row.start_button.setEnabled(
+            can_start = (
                 self._connection_available
                 and self._armed
                 and axis not in self._moving_axes
                 and not self._busy
             )
-            row.start_button.setText("Moving…" if axis in self._moving_axes else "Start")
+            row.negative_button.setEnabled(can_start)
+            row.positive_button.setEnabled(can_start)
         self.btn_add.setEnabled(structure_editable and len(self._rows) < 26)
         self.btn_enable.setEnabled(
             self._connection_available and bool(self._rows) and not self._busy
@@ -427,11 +441,13 @@ class AxisMotionWindow(QMainWindow):
         )
 
     @staticmethod
-    def _command_for_row(row: _MotionRow) -> MotionAxisCommand:
+    def _command_for_row(row: _MotionRow, direction: int) -> MotionAxisCommand:
+        if direction not in (-1, 1):
+            raise ValueError("Direction must be -1 or 1.")
         command = MotionAxisCommand(
             axis=int(row.axis_combo.currentData()),
             speed=float(row.speed_edit.value()),
-            distance=float(row.distance_edit.value()),
+            distance=direction * abs(float(row.distance_edit.value())),
         )
         command.validate()
         return command

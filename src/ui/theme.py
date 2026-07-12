@@ -117,7 +117,8 @@ QPushButton#motionRowStartButton {
     color: #ffffff;
     border: 1px solid #3a9d5b;
     font-weight: 700;
-    padding: 6px 10px;
+    font-size: 13pt;
+    padding: 3px;
 }
 QPushButton#motionRowStartButton:hover { background-color: #329451; }
 QPushButton#motionStopButton {

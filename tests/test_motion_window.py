@@ -29,7 +29,7 @@ def test_motion_window_adds_unique_axes_and_preserves_values(qt_app):
 
     assert window.commands() == [
         MotionAxisCommand(axis=2, speed=125.5, distance=80.0),
-        MotionAxisCommand(axis=7, speed=30.0, distance=-12.25),
+        MotionAxisCommand(axis=7, speed=30.0, distance=12.25),
     ]
     assert len(window.rows_container.findChildren(QFrame, "motionAxisRow")) == 2
     assert window.add_axis()
@@ -54,7 +54,7 @@ def test_start_and_stop_emit_future_uapi_hooks(qt_app):
     window.set_commands(
         [
             MotionAxisCommand(axis=0, speed=100.0, distance=25.0),
-            MotionAxisCommand(axis=3, speed=60.0, distance=-5.0),
+            MotionAxisCommand(axis=3, speed=60.0, distance=5.0),
         ]
     )
     starts = []
@@ -66,7 +66,8 @@ def test_start_and_stop_emit_future_uapi_hooks(qt_app):
 
     window.set_connection_available(True)
     assert window.btn_enable.isEnabled()
-    assert all(not row.start_button.isEnabled() for row in window._rows)
+    assert all(not row.negative_button.isEnabled() for row in window._rows)
+    assert all(not row.positive_button.isEnabled() for row in window._rows)
 
     window.btn_enable.click()
     assert enables == [(True, window.commands())]
@@ -74,7 +75,8 @@ def test_start_and_stop_emit_future_uapi_hooks(qt_app):
     assert all(not row.distance_edit.isEnabled() for row in window._rows)
     window.complete_enable(True)
     assert window.btn_enable.isChecked()
-    assert all(row.start_button.isEnabled() for row in window._rows)
+    assert all(row.negative_button.isEnabled() for row in window._rows)
+    assert all(row.positive_button.isEnabled() for row in window._rows)
 
     axis_0_row, axis_3_row = window._rows
     assert not axis_3_row.axis_combo.isEnabled()
@@ -82,30 +84,35 @@ def test_start_and_stop_emit_future_uapi_hooks(qt_app):
     assert axis_3_row.speed_edit.isEnabled()
     assert axis_3_row.distance_edit.isEnabled()
     axis_3_row.speed_edit.setValue(75.0)
-    axis_3_row.distance_edit.setValue(-7.5)
-    axis_3_row.start_button.click()
+    axis_3_row.distance_edit.setValue(7.5)
+    axis_3_row.negative_button.click()
 
     assert starts == [[MotionAxisCommand(axis=3, speed=75.0, distance=-7.5)]]
-    assert axis_0_row.start_button.isEnabled()
-    assert not axis_3_row.start_button.isEnabled()
+    assert axis_0_row.negative_button.isEnabled()
+    assert axis_0_row.positive_button.isEnabled()
+    assert not axis_3_row.negative_button.isEnabled()
+    assert not axis_3_row.positive_button.isEnabled()
     assert window.btn_stop.isEnabled()
 
-    axis_0_row.start_button.click()
+    axis_0_row.positive_button.click()
     assert starts[-1] == [MotionAxisCommand(axis=0, speed=100.0, distance=25.0)]
-    assert not axis_0_row.start_button.isEnabled()
+    assert not axis_0_row.negative_button.isEnabled()
+    assert not axis_0_row.positive_button.isEnabled()
 
     window.btn_stop.click()
 
     assert stops == [True]
     window.complete_stop()
-    assert all(row.start_button.isEnabled() for row in window._rows)
+    assert all(row.negative_button.isEnabled() for row in window._rows)
+    assert all(row.positive_button.isEnabled() for row in window._rows)
     assert not window.btn_stop.isEnabled()
 
     window.btn_enable.click()
     assert enables[-1] == (False, window.commands())
     window.complete_enable(False)
     assert not window.btn_enable.isChecked()
-    assert all(not row.start_button.isEnabled() for row in window._rows)
+    assert all(not row.negative_button.isEnabled() for row in window._rows)
+    assert all(not row.positive_button.isEnabled() for row in window._rows)
 
 
 def test_motion_command_rejects_invalid_axis_and_speed():
@@ -174,7 +181,7 @@ def test_action_controller_runs_enable_move_and_disable_uapi(qt_app):
     host._motion_window.set_commands(
         [
             MotionAxisCommand(axis=0, speed=100.0, distance=10.0),
-            MotionAxisCommand(axis=2, speed=45.0, distance=-6.0),
+            MotionAxisCommand(axis=2, speed=45.0, distance=6.0),
         ]
     )
     controller = MotionController(host)
@@ -186,20 +193,20 @@ def test_action_controller_runs_enable_move_and_disable_uapi(qt_app):
 
     host._motion_window.btn_enable.click()
     axis_0_row, axis_2_row = host._motion_window._rows
-    assert _wait_for(qt_app, lambda: axis_2_row.start_button.isEnabled())
+    assert _wait_for(qt_app, lambda: axis_2_row.negative_button.isEnabled())
 
-    axis_2_row.start_button.click()
+    axis_2_row.negative_button.click()
     assert _wait_for(
         qt_app,
-        lambda: axis_2_row.start_button.isEnabled()
+        lambda: axis_2_row.negative_button.isEnabled()
         and ("MOVE", -6.0, 2) in host.trio_connection.calls,
     )
     assert ("MOVE", 10.0, 0) not in host.trio_connection.calls
 
-    axis_0_row.start_button.click()
+    axis_0_row.positive_button.click()
     assert _wait_for(
         qt_app,
-        lambda: axis_0_row.start_button.isEnabled()
+        lambda: axis_0_row.positive_button.isEnabled()
         and ("MOVE", 10.0, 0) in host.trio_connection.calls,
     )
 
