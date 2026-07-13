@@ -62,6 +62,7 @@ class TuningReport:
     root_cause: str
     recommendations: list[Recommendation] = field(default_factory=list)
     observations: list[Recommendation] = field(default_factory=list)
+    profile_attached: bool = False  # Pn snapshot was available for proposals
 
 
 # ---------------------------------------------------------------- helpers
@@ -436,6 +437,7 @@ def evaluate(metrics: dict, profile: dict | None = None) -> TuningReport:
     profile: DriveProfile.to_dict() for the analyzed axis (or None) — used
     for concrete Pn value proposals and auto-tuning-mode gating.
     """
+    profile_attached = bool(profile)
     if metrics.get("data_sufficiency") != "OK":
         reason = (metrics.get("warnings") or ["insufficient data"])[-1]
         return TuningReport(
@@ -447,6 +449,7 @@ def evaluate(metrics: dict, profile: dict | None = None) -> TuningReport:
                        "DEMAND_SPEED, DRIVE_TORQUE) over at least one move",
                 diagnosis=str(reason),
             )],
+            profile_attached=profile_attached,
         )
 
     score = tuning_score(metrics)
@@ -460,6 +463,7 @@ def evaluate(metrics: dict, profile: dict | None = None) -> TuningReport:
             root_cause=recommendations[0].root_cause,
             recommendations=recommendations[:MAX_PARAMETER_CHANGES],
             observations=observations,
+            profile_attached=profile_attached,
         )
 
     recommendations = _velocity_rules(metrics, profile) + _fe_rules(metrics, profile)
@@ -484,4 +488,5 @@ def evaluate(metrics: dict, profile: dict | None = None) -> TuningReport:
         root_cause=root_cause,
         recommendations=recommendations[:MAX_PARAMETER_CHANGES],
         observations=observations,
+        profile_attached=profile_attached,
     )

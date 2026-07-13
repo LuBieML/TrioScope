@@ -82,21 +82,34 @@ def segment_phases(t: np.ndarray, dvel: np.ndarray, dt: float,
     v_thresh = EPS_VEL_FRAC * v_max if v_max > 0 else 1e-9
     a_thresh = EPS_ACC_FRAC * a_max if a_max > 0 else 1e-9
 
-    # --- Reversals: demand-velocity zero crossings, per segment ---
+    # --- Reversals: true direction changes of the demand, per segment ---
+    # Only samples moving meaningfully (above threshold) define direction,
+    # and consecutive opposite directions must be close together. A move
+    # that merely starts or stops at rest is NOT a reversal — treating the
+    # 0→v / v→0 edges as reversals blankets ±80 ms of every move boundary
+    # and eats short moves entirely.
     reversal = np.zeros(n, dtype=bool)
     n_reversals = 0
     half_width = max(1, int(round(REVERSAL_HALF_WIDTH_S / dt))) if dt > 0 else 1
+    max_gap = 2 * half_width
     for a, b in bounds:
         v = dvel[a:b]
         if len(v) < 2:
             continue
-        signs = np.sign(v)
-        above = (np.abs(v[:-1]) > v_thresh) | (np.abs(v[1:]) > v_thresh)
-        flips = np.where((signs[:-1] != signs[1:]) & above)[0]
-        n_reversals += len(flips)
-        for idx in flips:
-            lo = max(a, a + idx - half_width + 1)
-            hi = min(b, a + idx + 1 + half_width)
+        above_idx = np.nonzero(np.abs(v) > v_thresh)[0]
+        if above_idx.size < 2:
+            continue
+        directions = np.sign(v[above_idx])
+        flips = np.nonzero(directions[:-1] * directions[1:] < 0)[0]
+        for f in flips:
+            i_prev = int(above_idx[f])
+            i_next = int(above_idx[f + 1])
+            if i_next - i_prev > max_gap:
+                continue  # a stop between opposite moves, not a reversal
+            n_reversals += 1
+            center = (i_prev + i_next) // 2
+            lo = max(a, a + center - half_width + 1)
+            hi = min(b, a + center + 1 + half_width)
             reversal[lo:hi] = True
 
     # --- Phase masks (reversal excluded from everything) ---

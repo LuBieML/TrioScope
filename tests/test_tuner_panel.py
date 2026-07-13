@@ -236,6 +236,9 @@ def test_recommendations_card_flags_vff_defect(qt_app):
 
     texts = " ".join(_card_texts(panel._rec_card))
     assert "VFF_GAIN" in texts or "Pn112" in texts
+    # No DX3/DX4 profile is configured → the card must say so instead of
+    # silently omitting proposals and tuning-mode gating
+    assert "No drive Pn profile attached" in texts
 
 
 def test_history_table_tracks_score_column(qt_app):

@@ -363,6 +363,12 @@ class RecommendationsCard(_MetricCard):
             self._add_block(f"⚠ {obs.action}", AMBER)
             self._add_block(f"why: {obs.diagnosis}", TEXT_DIM, indent=10)
 
+        if report.recommendations and not report.profile_attached:
+            self._add_block(
+                "No drive Pn profile attached — Read the drive (or set the "
+                "profile for this axis) to get concrete value proposals and "
+                "tuning-mode-aware advice.", TEXT_DIM, italic=True)
+
         if (not report.well_tuned and not report.recommendations
                 and not report.observations):
             self._add_block("No rule matched — inspect the metric cards "

@@ -296,6 +296,95 @@ class TestSegmentBreaks:
 
 
 # ---------------------------------------------------------------------------
+# Reversal detection and robustness against field captures
+# ---------------------------------------------------------------------------
+class TestReversalDetection:
+    def test_move_edges_are_not_reversals(self):
+        # Out-and-back with a long dwell: two separate moves, no reversal.
+        # (Treating 0→v / v→0 edges as reversals blankets ±80 ms of every
+        # move boundary and eats short moves entirely.)
+        dvel = np.concatenate([
+            trapezoid_dvel(v=100.0, t_post=0.5),
+            trapezoid_dvel(v=100.0, t_pre=0.0, direction=-1.0),
+        ])
+        t, dpos = profile(dvel)
+        m = SignalMetrics.compute_all(
+            t, base_params(dpos, noise(len(t), 0.002)), axis=0)
+        assert m["phases"]["n_reversals"] == 0
+        assert m["phases"]["reversal_pct"] == 0.0
+        assert m["phases"]["n_moves"] == 2
+
+    def test_rect_velocity_pulse_counts_both_moves(self):
+        # Constant-velocity out-and-back (rectangular velocity) — the
+        # capture shape from the field screenshot that read as "1 move".
+        dvel = np.concatenate([
+            np.zeros(500),
+            np.full(300, 64.0),    # out
+            np.zeros(1100),        # hold
+            np.full(300, -64.0),   # back
+            np.zeros(800),
+        ])
+        t, dpos = profile(dvel)
+        m = SignalMetrics.compute_all(
+            t, base_params(dpos, noise(len(t), 0.002)), axis=0)
+        assert m["phases"]["n_moves"] == 2
+        assert m["phases"]["n_reversals"] == 0
+        # Constant-velocity ramps classify as cruise in both directions,
+        # so the VFF fit and asymmetry check have what they need
+        assert m["phases"]["cruise_pct"] > 5.0
+        assert "asymmetry_ratio" in m["asymmetry"]
+
+    def test_true_reversal_through_zero_detected(self):
+        # Triangle profile: continuous motion through a direction change
+        dvel = np.concatenate([
+            np.zeros(300),
+            np.linspace(0.0, 100.0, 200, endpoint=False),
+            np.linspace(100.0, -100.0, 400, endpoint=False),
+            np.linspace(-100.0, 0.0, 200, endpoint=False),
+            np.zeros(500),
+        ])
+        t, dpos = profile(dvel)
+        m = SignalMetrics.compute_all(
+            t, base_params(dpos, noise(len(t), 0.002)), axis=0)
+        assert m["phases"]["n_reversals"] == 1
+        assert m["phases"]["reversal_pct"] > 0.0
+
+    def test_dither_capture_is_not_analysable(self):
+        # Rapid demand dither: every crossing is a reversal, no clean move
+        t = np.arange(3000) / FS
+        dpos = 0.2 * np.sin(2 * np.pi * 30.0 * t)
+        m = SignalMetrics.compute_all(
+            t, base_params(dpos, noise(len(t), 0.002)), axis=0)
+        assert m["data_sufficiency"] == "INSUFFICIENT"
+        assert any("no analysable move" in w for w in m["warnings"])
+
+
+class TestAutoBandRobustness:
+    def test_correlated_noise_does_not_collapse_band(self):
+        # Real FE noise is often slow wander with tiny sample-to-sample
+        # steps (quantization). A diff-only sigma collapses the band to
+        # ~1e-5 and everything reads "not settled" + false integral advice.
+        dvel = trapezoid_dvel()
+        t, dpos = profile(dvel)
+        white = np.random.default_rng(3).normal(0, 1.0, len(t))
+        slow = np.convolve(white, np.ones(400) / 400, mode="same")
+        slow *= 0.0025 / max(float(np.std(slow)), 1e-12)
+        fe = slow + 0.0016  # wander + small offset, well inside real noise
+        m = SignalMetrics.compute_all(t, base_params(dpos, fe), axis=0)
+        settle = m["settle"]
+        assert settle["band"] > 0.004  # floored by idle value spread
+        assert settle["settled_within_window"] is True
+        assert settle["ringing"] is False
+        assert settle["steady_state_offset_nonzero"] is False
+        assert settle["natural_freq_hz"] is None
+        # The collapsed band previously produced these exact false alarms
+        issues = " ".join(m["health"]["position_issues"])
+        assert "not settled" not in issues
+        assert "ringing" not in issues.lower()
+        assert "integral" not in issues
+
+
+# ---------------------------------------------------------------------------
 # Axis binding
 # ---------------------------------------------------------------------------
 class TestAxisBinding:

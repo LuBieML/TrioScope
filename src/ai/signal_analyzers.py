@@ -61,14 +61,26 @@ def estimate_settle_band(fe: np.ndarray, phases: dict,
     if user_band is not None and user_band > 0:
         return float(user_band), "user"
 
+    def _diff_sigma(x: np.ndarray) -> float:
+        d = np.diff(x)
+        d = d[np.isfinite(d)]
+        if d.size >= 10:
+            return 1.4826 * float(np.median(np.abs(d - np.median(d)))) / math.sqrt(2.0)
+        return float(np.std(x)) if x.size else 0.0
+
     idle = phases.get("idle")
-    source = fe[idle] if idle is not None and idle.sum() >= 50 else fe
-    d = np.diff(source)
-    d = d[np.isfinite(d)]
-    if d.size >= 10:
-        sigma = 1.4826 * float(np.median(np.abs(d - np.median(d)))) / math.sqrt(2.0)
+    if idle is not None and idle.sum() >= 50:
+        source = fe[idle]
+        # Difference-based sigma alone collapses on correlated or quantized
+        # FE (tiny sample-to-sample steps, real slow wander) and produces a
+        # microscopic band that nothing ever "settles" into. The idle-value
+        # spread is the floor: FE cannot be judged below its own idle wander.
+        value_sigma = 1.4826 * float(
+            np.median(np.abs(source - np.median(source))))
+        sigma = max(_diff_sigma(source), value_sigma)
     else:
-        sigma = float(np.std(source)) if source.size else 0.0
+        # No usable idle stretch — differences only (values include motion).
+        sigma = _diff_sigma(fe)
     band = max(SETTLE_BAND_SIGMA * sigma, 1e-12)
     return band, "auto (4x noise)"
 
@@ -307,7 +319,7 @@ def analyze_settling(fe: np.ndarray, t: np.ndarray, phases: dict,
         crossings, flip_idx = _hysteresis_flips(resid, band)
 
         natural_freq: float | None = None
-        if crossings >= 2:
+        if crossings >= 4:  # at least two full periods — fewer is noise
             flip_times = tw[flip_idx]
             half_periods = np.diff(flip_times)
             if half_periods.size and np.median(half_periods) > 0:
