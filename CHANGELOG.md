@@ -3,6 +3,23 @@
 Notable changes to TrioScope are recorded here. New entries are generated from
 Conventional Commit pull-request titles by Release Please.
 
+## [0.4.0](https://github.com/LuBieML/TrioScope/compare/v0.3.0...v0.4.0) (2026-07-13)
+
+
+### Features
+
+* add tuning iteration history to the servo loop analyser ([a115a87](https://github.com/LuBieML/TrioScope/commit/a115a8786c468a1ea5b39ecd516141d9aac8a52e))
+* offline rule-based tuning recommendations with score ([c94a85d](https://github.com/LuBieML/TrioScope/commit/c94a85d57dd8c054ef529876868d7195ccffbe4c))
+* Welch-averaged spectra, interpolated peaks, true coherence gating ([89ae378](https://github.com/LuBieML/TrioScope/commit/89ae378f08449a94510d4d6fb94b735b661be106))
+
+
+### Bug Fixes
+
+* added parameters to setup axis ([f2b6ec5](https://github.com/LuBieML/TrioScope/commit/f2b6ec5a36121c880789ca3e5db8da9be6ddcf85))
+* changed recommendation for notch filter ([6f284ec](https://github.com/LuBieML/TrioScope/commit/6f284eca90ac3dc33ad1f4962d12dd5daecdcbae))
+* distinguish ambiguous oscillation phase from missing capture data ([0bc18e8](https://github.com/LuBieML/TrioScope/commit/0bc18e8624521e9bcf4a659d6d6d6e6d713de7ab))
+* robust reversal detection, settle-band floor, honest no-move status ([4db2522](https://github.com/LuBieML/TrioScope/commit/4db252270b1ae7f839588ab3db1504e35b3aa34e))
+
 ## [0.3.0](https://github.com/LuBieML/TrioScope/compare/v0.2.2...v0.3.0) (2026-07-12)
 
 
