@@ -224,17 +224,60 @@ def _blocking_rules(metrics: dict, profile: dict | None) -> list[Recommendation]
                 parameter="Pn104", proposed=proposed,
             ))
         else:
-            found.append(Recommendation(
-                rule_id="oscillation_unresolved",
-                severity="action", root_cause="position",
-                action=("Capture DRIVE_TORQUE (or current) together with "
-                        "MSPEED to discriminate resonance (+90°) from loop "
-                        "instability (0°) before changing gains"),
-                diagnosis=(f"oscillation.fe dominant_hz={freq} is "
-                           f"significant but current-vs-velocity phase is "
-                           f"unavailable or ambiguous"),
-                expected="a phase verdict on the next capture",
-            ))
+            channels = metrics.get("channels_detected") or {}
+            have_signals = bool(channels.get("current")) and bool(
+                channels.get("measured_vel"))
+            if not have_signals:
+                found.append(Recommendation(
+                    rule_id="oscillation_unresolved",
+                    severity="action", root_cause="position",
+                    action=("Capture DRIVE_TORQUE (or current) together "
+                            "with MSPEED to discriminate resonance (+90°) "
+                            "from loop instability (0°) before changing "
+                            "gains"),
+                    diagnosis=(f"oscillation.fe dominant_hz={freq} is "
+                               f"significant but no current/velocity "
+                               f"channels were captured for the phase test"),
+                    expected="a phase verdict on the next capture",
+                ))
+            elif phase_deg is None:
+                found.append(Recommendation(
+                    rule_id="oscillation_no_coherent_phase",
+                    severity="action", root_cause="position",
+                    action=("Re-capture with 2-3 repeated moves and a "
+                            "longer cruise (>0.3 s each) — current and "
+                            "velocity are captured but no coherent shared "
+                            "line passed the gate, and the resonance-vs-"
+                            "instability verdict needs more spectral "
+                            "averages"),
+                    diagnosis=(f"oscillation.fe dominant_hz={freq} is "
+                               f"significant but the current-vs-velocity "
+                               f"cross-spectrum found no coherent bin"),
+                    expected="a phase verdict on the next capture",
+                ))
+            else:
+                found.append(Recommendation(
+                    rule_id="oscillation_ambiguous_phase",
+                    severity="action", root_cause="position",
+                    action=(f"Phase {phase_deg:.0f}° sits between the "
+                            f"instability (~0°) and resonance (~+90°) "
+                            f"signatures — reduce P_GAIN (CSP) or Pn104 "
+                            f"(drive-closed loop) by ~15% and re-capture: "
+                            f"if the {freq} Hz peak shifts with the gain it "
+                            f"is loop-related; if it stays fixed, apply a "
+                            f"notch at {freq} Hz instead. Do not increase "
+                            f"any gain while the oscillation persists"),
+                    diagnosis=(f"oscillation.fe dominant_hz={freq} with "
+                               f"current_vs_velocity_phase "
+                               f"{phase_deg:.0f}°{confidence} — outside both "
+                               f"classification windows (measurement and "
+                               f"filter lag can shift a true resonance "
+                               f"beyond +90°)"),
+                    expected=("the {0} Hz peak's response to the gain "
+                              "change identifies the root cause".format(freq)),
+                    parameter="Pn104",
+                    proposed=_propose(profile, "pn104", "Pn104", factor=0.85),
+                ))
 
     return found
 
@@ -411,7 +454,8 @@ def _apply_mode_gating(recs: list[Recommendation],
         if rigidity_added:
             continue
         softer = rec.rule_id in ("loop_instability", "velocity_overshoot",
-                                 "underdamped_settle")
+                                 "underdamped_settle",
+                                 "oscillation_ambiguous_phase")
         direction = "Reduce" if softer else "Increase"
         factor = 0.85 if softer else 1.15
         gated.append(Recommendation(

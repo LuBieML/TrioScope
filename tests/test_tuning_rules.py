@@ -114,6 +114,63 @@ class TestBlockingRules:
         assert _rule_ids(report) == ["oscillation_unresolved"]
         assert "DRIVE_TORQUE" in report.recommendations[0].action
 
+    def test_ambiguous_phase_with_current_captured_gives_gain_probe(self):
+        # Field case: current IS captured, phase 122° falls between the
+        # instability and resonance windows — must NOT ask to capture what
+        # is already on screen
+        metrics = _ok_metrics(
+            channels_detected={"current": "DRIVE_CURRENT(0)",
+                               "measured_vel": "MSPEED(0)"},
+            oscillation={
+                "fe": {"has_significant_oscillation": True,
+                       "dominant_hz": 25.0},
+                "current_vs_velocity_phase": {
+                    "phase_deg": 122.0, "dominant_freq_hz": 25.0,
+                    "coherence": 0.96},
+            },
+        )
+        report = evaluate(metrics, _DX4_PROFILE)
+        assert _rule_ids(report) == ["oscillation_ambiguous_phase"]
+        rec = report.recommendations[0]
+        assert "Capture DRIVE_TORQUE" not in rec.action
+        assert "122°" in rec.action
+        assert "notch at 25.0 Hz" in rec.action
+        assert rec.proposed == "Pn104 40 → 34"   # −15%
+        assert "coherence 0.96" in rec.diagnosis
+
+    def test_ambiguous_phase_gated_to_rigidity_in_auto_mode(self):
+        metrics = _ok_metrics(
+            channels_detected={"current": "DRIVE_CURRENT(0)",
+                               "measured_vel": "MSPEED(0)"},
+            oscillation={
+                "fe": {"has_significant_oscillation": True,
+                       "dominant_hz": 25.0},
+                "current_vs_velocity_phase": {
+                    "phase_deg": 122.0, "dominant_freq_hz": 25.0},
+            },
+        )
+        profile = dict(_DX4_PROFILE, pn100_tuning_mode=3, pn101=71)
+        report = evaluate(metrics, profile)
+        rec = report.recommendations[0]
+        assert rec.parameter == "Pn101"
+        assert rec.proposed == "Pn101 71 → 60"   # softer → −15%
+
+    def test_no_coherent_phase_with_signals_asks_for_longer_capture(self):
+        metrics = _ok_metrics(
+            channels_detected={"current": "DRIVE_CURRENT(0)",
+                               "measured_vel": "MSPEED(0)"},
+            oscillation={
+                "fe": {"has_significant_oscillation": True,
+                       "dominant_hz": 120.0},
+                "current_vs_velocity_phase": {
+                    "note": "no coherent oscillation detected",
+                    "dominant_freq_hz": None},
+            },
+        )
+        report = evaluate(metrics, _DX4_PROFILE)
+        assert _rule_ids(report) == ["oscillation_no_coherent_phase"]
+        assert "Re-capture" in report.recommendations[0].action
+
 
 # ---------------------------------------------------------------------------
 # Velocity and FE rules
