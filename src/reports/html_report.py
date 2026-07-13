@@ -10,12 +10,14 @@ from typing import Mapping, Sequence
 import numpy as np
 
 try:
+    from scope.fft_analysis import amplitude_spectrum
     from scope.measurements import (
         TraceMeasurement,
         compute_capture_summary,
         compute_trace_measurements,
     )
 except ImportError:  # pragma: no cover - used by tests importing through src.*
+    from src.scope.fft_analysis import amplitude_spectrum
     from src.scope.measurements import (
         TraceMeasurement,
         compute_capture_summary,
@@ -94,7 +96,11 @@ def build_html_report(
     generated = generated_at or datetime.now().astimezone()
     ordered_params = _ordered_params(params, trace_order)
     summary = compute_capture_summary(np.asarray(time_arr), list(segment_breaks or []))
-    measurements = compute_trace_measurements(np.asarray(time_arr), ordered_params)
+    measurements = compute_trace_measurements(
+        np.asarray(time_arr),
+        ordered_params,
+        segment_breaks=list(segment_breaks or []),
+    )
     colors = _color_map(ordered_params, trace_colors)
     fft_flags = dict(trace_fft_flags or {})
 
@@ -434,7 +440,11 @@ def _plots_section(
     cards: list[str] = []
     for name, values in params.items():
         color = colors[name]
-        fft_freqs, fft_mag = _fft_spectrum(time_arr, values)
+        fft_freqs, fft_mag = _fft_spectrum(
+            time_arr,
+            values,
+            segment_breaks=segment_breaks,
+        )
         time_svg = _line_plot_svg(
             x=time_arr,
             y=np.asarray(values),
@@ -617,40 +627,14 @@ def _fft_spectrum(
     time_arr: np.ndarray,
     values: np.ndarray,
     max_samples: int = 16384,
+    segment_breaks: Sequence[int] | None = None,
 ) -> tuple[np.ndarray | None, np.ndarray | None]:
-    n = min(len(time_arr), len(values))
-    if n < 4:
-        return None, None
-    t = np.asarray(time_arr[:n], dtype=float)
-    y = np.asarray(values[:n], dtype=float)
-    finite = np.isfinite(t) & np.isfinite(y)
-    t = t[finite]
-    y = y[finite]
-    if len(t) < 4:
-        return None, None
-    if len(t) > max_samples:
-        t = t[-max_samples:]
-        y = y[-max_samples:]
-    diffs = np.diff(t)
-    diffs = diffs[np.isfinite(diffs) & (diffs > 0)]
-    if diffs.size == 0:
-        return None, None
-    dt = float(np.median(diffs))
-    if dt <= 0:
-        return None, None
-    centered = y - float(np.mean(y))
-    if float(np.max(np.abs(centered))) <= 0:
-        return None, None
-    window = np.hanning(len(centered))
-    window_sum = float(np.sum(window))
-    if window_sum <= 0:
-        window = np.ones(len(centered))
-        window_sum = float(len(centered))
-    freqs = np.fft.rfftfreq(len(centered), d=dt)
-    magnitude = np.abs(np.fft.rfft(centered * window)) * 2.0 / window_sum
-    if magnitude.size:
-        magnitude[0] = 0.0
-    return freqs, magnitude
+    return amplitude_spectrum(
+        time_arr,
+        values,
+        max_samples=max_samples,
+        segment_breaks=segment_breaks,
+    )
 
 
 def _fft_peaks(

@@ -25,6 +25,13 @@ panel.
 The sample rate is derived from the **Sample Period × servo cycle time**
 (Controller SCOPE) or the **Drive Scope period** (DX3/DX4). The FFT
 automatically uses the correct rate so frequencies are reported in real Hz.
+Imported timestamps must be uniformly spaced; TrioScope allows small CSV
+rounding differences but does not calculate a conventional FFT for irregularly
+sampled data.
+
+In continuous Controller SCOPE mode, TrioScope treats each TABLE rollover as a
+segment boundary. It keeps a rolling FFT across those boundaries while ignoring
+the timestamp gap caused by samples missed during the rollover.
 
 ## Window Function
 
@@ -55,5 +62,5 @@ without contamination from idle periods.
 ## Performance
 
 FFT computation is cached so repeatedly toggling cursors does not recompute
-unnecessarily. For very large captures (>16k samples) the FFT is downsampled
-to keep the UI responsive when cursors are not active.
+unnecessarily. For very large captures and cursor selections, the FFT uses the
+most recent 16,384 samples in the selected range to keep the UI responsive.

@@ -248,7 +248,11 @@ class MeasurementPanel(QMainWindow):
             return
 
         summary = compute_capture_summary(time_arr, segment_breaks)
-        measurements = compute_trace_measurements(time_arr, params)
+        measurements = compute_trace_measurements(
+            time_arr,
+            params,
+            segment_breaks=segment_breaks,
+        )
         self._set_summary(summary)
         self.scope_label.setText(label)
         self._populate_table(measurements)

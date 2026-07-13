@@ -374,6 +374,7 @@ class MainWindowActions(WindowBackedController):
                 self._segment_breaks = []
             self._last_consumed_state = None
             self._virtual_buffers = {}
+            self._reset_fft_state()
 
             # Ensure we're not in auto-scroll/running state
             self.auto_scroll = False

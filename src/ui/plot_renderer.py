@@ -7,6 +7,13 @@ from PySide6.QtWidgets import QDialog, QMessageBox
 import pyqtgraph as pg
 
 from plot.viewbox import ScopeViewBox
+from scope.fft_analysis import (
+    MIN_FFT_SAMPLES,
+    amplitude_spectrum,
+    estimate_sample_period,
+    hann_window,
+    one_sided_amplitude,
+)
 from ui.compare_window import CompareWindow, _CompareTracePicker, TraceWindow
 from ui.path_hover import nearest_xy_point_index
 from ui.theme import CURSOR_COLORS
@@ -48,6 +55,14 @@ class PlotRenderer(WindowBackedController):
         self._last_freqs = None
         self._hover_pending_pos = None
         self._hover_update_scheduled = False
+
+    def _reset_fft_state(self):
+        """Invalidate spectra whenever the capture or trace configuration changes."""
+        self._fft_cache = {}
+        self._fft_window_cache = (0, None)
+        self._fft_peak_cache = {}
+        self._last_freqs = None
+        self._fft_dirty = True
 
     def _create_scope_plot(self):
         """Add a PlotItem as a new row in the shared GraphicsLayoutWidget."""
@@ -607,13 +622,9 @@ class PlotRenderer(WindowBackedController):
                     cached = self._fft_cache.get(id(trace))
                     trace_freqs = None
                     magnitude = None
-                    if cached and 'magnitude' in cached:
+                    if cached and 'magnitude' in cached and 'freqs' in cached:
                         magnitude = cached['magnitude']
-                        if len(data['time']) > 1:
-                            sample_dt = float(data['time'][1] - data['time'][0])
-                            if sample_dt > 0:
-                                n_fft = max(1, len(magnitude) * 2 - 2)
-                                trace_freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
+                        trace_freqs = cached['freqs']
                     if magnitude is None or trace_freqs is None:
                         trace_freqs, magnitude = self._compute_fft_payload_for_trace(
                             trace, data)
@@ -633,29 +644,14 @@ class PlotRenderer(WindowBackedController):
         """Compute FFT data for a companion window when the main cache is absent."""
         time_arr = data['time']
         values = data['params'].get(trace.get_display_name())
-        if values is None or len(time_arr) < 2 or len(values) < 2:
+        if values is None:
             return None, None
-
-        sample_dt = float(time_arr[1] - time_arr[0])
-        if sample_dt <= 0:
-            return None, None
-
-        fft_values = values
-        if len(fft_values) > self._fft_max_samples:
-            fft_values = fft_values[-self._fft_max_samples:]
-
-        n_fft = len(fft_values)
-        freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
-        window = np.hanning(n_fft)
-        window_sum = np.sum(window)
-        if window_sum <= 0:
-            window = np.ones(n_fft)
-            window_sum = n_fft
-        centered = fft_values - np.mean(fft_values)
-        fft_vals = np.fft.rfft(centered * window)
-        magnitude = np.abs(fft_vals) * 2.0 / window_sum
-        magnitude[0] /= 2.0
-        return freqs, magnitude
+        return amplitude_spectrum(
+            time_arr,
+            values,
+            max_samples=self._fft_max_samples,
+            segment_breaks=data.get('segment_breaks'),
+        )
 
     def _toggle_cursors(self, checked):
         """Toggle cursor measurement mode on/off."""
@@ -1072,14 +1068,8 @@ class PlotRenderer(WindowBackedController):
             # If FFT mode, also snapshot the computed FFT spectrum
             if trace.is_fft():
                 cached = self._fft_cache.get(trace_id)
-                if cached and 'magnitude' in cached:
-                    sample_dt = float(
-                        self.accumulated_data['time'][1]
-                        - self.accumulated_data['time'][0]
-                    ) if len(self.accumulated_data['time']) > 1 else 1.0
-                    n_fft = len(cached['magnitude']) * 2 - 2  # inverse of rfftfreq
-                    trace.ref_data['fft_freqs'] = np.fft.rfftfreq(
-                        n_fft, d=sample_dt).copy()
+                if cached and 'magnitude' in cached and 'freqs' in cached:
+                    trace.ref_data['fft_freqs'] = cached['freqs'].copy()
                     trace.ref_data['fft_magnitude'] = cached['magnitude'].copy()
         else:
             trace.ref_data = None
@@ -1259,54 +1249,90 @@ class PlotRenderer(WindowBackedController):
             {t.get_display_name() for t in enabled_traces if t.is_fft()}
             if has_fft_traces else set()
         )
-        if has_fft_traces and len(time_arr) >= 2:
-            sample_dt = float(time_arr[1] - time_arr[0])
-            if sample_dt > 0:
-                # Windowed FFT: if cursors are enabled, use C1\u2013C2 time window
-                if self._cursors_enabled:
-                    t1 = min(self._cursor_pos['c1'], self._cursor_pos['c2'])
-                    t2 = max(self._cursor_pos['c1'], self._cursor_pos['c2'])
-                    mask = (time_arr >= t1) & (time_arr <= t2)
-                    if np.sum(mask) >= 2:
-                        fft_time = time_arr[mask]
-                        fft_params = {
-                            k: plot_data['params'][k][mask]
-                            for k in fft_needed_names
-                            if k in plot_data['params']
-                        }
-                        duration = float(fft_time[-1] - fft_time[0])
-                        freq_res = 1.0 / duration if duration > 0 else 0
-                        self.path_info_label.setText(
-                            f"FFT window: {t1:.3f}s \u2192 {t2:.3f}s "
-                            f"({duration:.3f}s, {len(fft_time)} pts, "
-                            f"\u0394f={freq_res:.2f} Hz)")
-                    else:
-                        self.path_info_label.setText(
-                            "FFT: cursor window too narrow \u2014 using full data")
-                else:
-                    # Cap FFT size to last N samples for performance
-                    if len(fft_time) > self._fft_max_samples:
-                        fft_time = fft_time[-self._fft_max_samples:]
-                        fft_params = {
-                            k: plot_data['params'][k][-self._fft_max_samples:]
-                            for k in fft_needed_names
-                            if k in plot_data['params']
-                        }
-                    else:
-                        fft_params = {
-                            k: plot_data['params'][k]
-                            for k in fft_needed_names
-                            if k in plot_data['params']
-                        }
-                    self.path_info_label.setText(
-                        f"FFT: last {len(fft_time)} pts (enable cursors to window)")
-                n_fft = len(fft_time)
+        if has_fft_traces and len(time_arr) >= MIN_FFT_SAMPLES:
+            used_cursor_window = False
+            t1 = t2 = None
+            selection_start = 0
+            selection_stop = len(time_arr)
+
+            # Windowed FFT: if cursors are enabled, use the C1-C2 time window.
+            if self._cursors_enabled:
+                t1 = min(self._cursor_pos['c1'], self._cursor_pos['c2'])
+                t2 = max(self._cursor_pos['c1'], self._cursor_pos['c2'])
+                selected = np.flatnonzero((time_arr >= t1) & (time_arr <= t2))
+                if len(selected) >= MIN_FFT_SAMPLES:
+                    used_cursor_window = True
+                    selection_start = int(selected[0])
+                    selection_stop = int(selected[-1]) + 1
+
+            fft_time = time_arr[selection_start:selection_stop]
+            fft_params = {
+                k: plot_data['params'][k][selection_start:selection_stop]
+                for k in fft_needed_names
+                if k in plot_data['params']
+            }
+            fft_segment_breaks = [
+                int(boundary) - selection_start
+                for boundary in plot_data.get('segment_breaks', [])
+                if selection_start < int(boundary) < selection_stop
+            ]
+
+            # Keep FFT work bounded even for a very large cursor selection.
+            selected_count = len(fft_time)
+            was_capped = selected_count > self._fft_max_samples
+            if was_capped:
+                removed_count = selected_count - self._fft_max_samples
+                fft_time = fft_time[-self._fft_max_samples:]
+                fft_params = {
+                    k: values[-self._fft_max_samples:]
+                    for k, values in fft_params.items()
+                }
+                fft_segment_breaks = [
+                    boundary - removed_count
+                    for boundary in fft_segment_breaks
+                    if removed_count < boundary
+                ]
+
+            n_fft = len(fft_time)
+            sample_dt = estimate_sample_period(
+                fft_time,
+                segment_breaks=fft_segment_breaks,
+            )
+            if sample_dt is None:
+                self.path_info_label.setText(
+                    "FFT unavailable: timestamps are non-uniform")
+            elif n_fft >= MIN_FFT_SAMPLES:
                 freqs = np.fft.rfftfreq(n_fft, d=sample_dt)
-                # Cache Hanning window — reuse if size unchanged
+                freq_res = float(freqs[1] - freqs[0])
                 if self._fft_window_cache[0] != n_fft:
-                    self._fft_window_cache = (n_fft, np.hanning(n_fft))
-                fft_cursor_key = (round(self._cursor_pos['c1'], 6),
-                                  round(self._cursor_pos['c2'], 6)) if self._cursors_enabled else None
+                    window, _ = hann_window(n_fft)
+                    self._fft_window_cache = (n_fft, window)
+                fft_cursor_key = (
+                    selection_start,
+                    selection_stop,
+                    round(self._cursor_pos['c1'], 6),
+                    round(self._cursor_pos['c2'], 6),
+                ) if self._cursors_enabled else (
+                    selection_start,
+                    selection_stop,
+                )
+
+                if used_cursor_window:
+                    point_summary = (
+                        f"{selected_count} selected, last {n_fft} used"
+                        if was_capped
+                        else f"{n_fft} pts"
+                    )
+                    self.path_info_label.setText(
+                        f"FFT window: {t1:.3f}s \u2192 {t2:.3f}s "
+                        f"({point_summary}, \u0394f={freq_res:.2f} Hz)")
+                elif self._cursors_enabled:
+                    self.path_info_label.setText(
+                        f"FFT: cursor window needs at least {MIN_FFT_SAMPLES} "
+                        f"points \u2014 using last {n_fft} pts")
+                else:
+                    self.path_info_label.setText(
+                        f"FFT: last {n_fft} pts (enable cursors to window)")
         self._fft_dirty = False
         if has_fft_traces:
             self._last_freqs = freqs
@@ -1324,6 +1350,9 @@ class PlotRenderer(WindowBackedController):
             if trace.is_fft():
                 # ── FFT rendering for this trace ──
                 if freqs is None or param_name not in fft_params:
+                    self._fft_cache.pop(trace_id, None)
+                    if trace_id in self.curves:
+                        self.curves[trace_id].setData([], [])
                     continue
                 values = fft_params[param_name]
                 n_fft = len(fft_time)
@@ -1336,15 +1365,13 @@ class PlotRenderer(WindowBackedController):
                     magnitude = cached['magnitude']
                 else:
                     # Compute single-sided amplitude spectrum
-                    centered = values - np.mean(values)
                     window = self._fft_window_cache[1]
-                    windowed = centered * window
-                    fft_vals = np.fft.rfft(windowed)
-                    window_sum = np.sum(window)
-                    magnitude = np.abs(fft_vals) * 2.0 / window_sum
-                    magnitude[0] /= 2.0
+                    magnitude = one_sided_amplitude(values, window)
+                    if magnitude is None:
+                        continue
                     self._fft_cache[trace_id] = {
                         'key': cache_key,
+                        'freqs': freqs,
                         'magnitude': magnitude,
                     }
 
@@ -1547,6 +1574,7 @@ class PlotRenderer(WindowBackedController):
                 break
 
     def clear_data(self):
+        self._reset_fft_state()
         self.accumulated_data = None
         self.total_samples = 0
         self._last_consumed_state = None

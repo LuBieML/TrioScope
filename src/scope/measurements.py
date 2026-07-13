@@ -7,9 +7,11 @@ be used by dock widgets, reports, and tests.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import numpy as np
+
+from .fft_analysis import amplitude_spectrum
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,7 @@ def compute_trace_measurement(
     values: np.ndarray,
     *,
     fft_max_samples: int = 16384,
+    segment_breaks: Sequence[int] | None = None,
 ) -> TraceMeasurement:
     """Return scalar measurements for one trace."""
     n = min(len(time_arr), len(values))
@@ -114,7 +117,12 @@ def compute_trace_measurement(
         if duration > 0:
             slope = float((y[-1] - y[0]) / duration)
 
-    peak_freq, peak_mag = _dominant_frequency(t, y, fft_max_samples)
+    peak_freq, peak_mag = _dominant_frequency(
+        t,
+        y,
+        fft_max_samples,
+        segment_breaks,
+    )
 
     return TraceMeasurement(
         name=name,
@@ -137,6 +145,7 @@ def compute_trace_measurements(
     params: Mapping[str, np.ndarray],
     *,
     fft_max_samples: int = 16384,
+    segment_breaks: Sequence[int] | None = None,
 ) -> list[TraceMeasurement]:
     """Compute trace measurements in parameter insertion order."""
     return [
@@ -145,6 +154,7 @@ def compute_trace_measurements(
             time_arr,
             values,
             fft_max_samples=fft_max_samples,
+            segment_breaks=segment_breaks,
         )
         for name, values in params.items()
     ]
@@ -154,45 +164,20 @@ def _dominant_frequency(
     time_arr: np.ndarray,
     values: np.ndarray,
     fft_max_samples: int,
+    segment_breaks: Sequence[int] | None = None,
 ) -> tuple[float | None, float | None]:
     n = min(len(time_arr), len(values))
     if n < 4:
         return None, None
 
-    if n > fft_max_samples:
-        time_arr = time_arr[-fft_max_samples:]
-        values = values[-fft_max_samples:]
-        n = len(values)
-
-    dt = _positive_dt(time_arr)
-    if not dt or dt <= 0:
+    freqs, magnitude = amplitude_spectrum(
+        time_arr,
+        values,
+        max_samples=fft_max_samples,
+        segment_breaks=segment_breaks,
+    )
+    if freqs is None or magnitude is None or magnitude.size <= 1:
         return None, None
-
-    y = values.astype(float, copy=False)
-    if not np.all(np.isfinite(y)):
-        finite = np.isfinite(y)
-        y = y[finite]
-        n = len(y)
-        if n < 4:
-            return None, None
-
-    centered = y - float(np.mean(y))
-    if float(np.max(np.abs(centered))) <= 0.0:
-        return None, None
-
-    window = np.hanning(n)
-    window_sum = float(np.sum(window))
-    if window_sum <= 0:
-        window = np.ones(n)
-        window_sum = float(n)
-
-    fft_vals = np.fft.rfft(centered * window)
-    freqs = np.fft.rfftfreq(n, d=dt)
-    magnitude = np.abs(fft_vals) * 2.0 / window_sum
-    if magnitude.size <= 1:
-        return None, None
-
-    magnitude[0] = 0.0
     idx = int(np.argmax(magnitude))
     peak_mag = float(magnitude[idx])
     if peak_mag <= 0.0:

@@ -151,6 +151,7 @@ class CaptureController(WindowBackedController):
         # Rebuild subplots and clear old curves
         self.curves = {}
         self.stats_texts = {}
+        self._reset_fft_state()
         self._recreate_subplots()
 
         try:
@@ -250,6 +251,7 @@ class CaptureController(WindowBackedController):
         # Rebuild subplots
         self.curves = {}
         self.stats_texts = {}
+        self._reset_fft_state()
         self._recreate_subplots()
 
         try:
@@ -568,6 +570,7 @@ class CaptureController(WindowBackedController):
                     try:
                         scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
                         if scope_pos < last_sample_idx and last_sample_idx > 0:
+                            self._push_segment_break()
                             sample_offset += samples_per_param
                             last_sample_idx = 0
                             continue
@@ -669,6 +672,7 @@ class CaptureController(WindowBackedController):
                     try:
                         scope_pos = self.scope_engine.connection.GetSystemParameter_SCOPE_POS()
                         if scope_pos < last_sample_idx and last_sample_idx > 0:
+                            self._push_segment_break()
                             sample_offset += samples_per_param
                             last_sample_idx = 0
                             continue
