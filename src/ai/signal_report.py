@@ -77,8 +77,8 @@ def format_for_llm(metrics: dict) -> str:
 
     osc = metrics.get("oscillation", {})
     if osc:
-        lines.append("\n## Oscillation (FFT of longest contiguous cruise run, "
-                     "hann-windowed)")
+        lines.append("\n## Oscillation (Welch-averaged FFT over contiguous "
+                     "cruise runs, hann-windowed, interpolated peaks)")
         for sig in ("fe", "velocity_error", "current"):
             if sig in osc:
                 lines.append(f"  {sig}: {osc[sig]}")

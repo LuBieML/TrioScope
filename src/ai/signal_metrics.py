@@ -136,6 +136,7 @@ class SignalMetrics:
             demand_vel_source = f"{ch['demand_vel_native']} (native velocity units)"
         elif ch["demand_vel_raw"] is not None:
             raw = _arr(ch["demand_vel_raw"])
+            assert raw is not None
             if servo_period_sec and servo_period_sec > 0:
                 dvel = raw / float(servo_period_sec)
                 demand_vel_source = (
@@ -155,6 +156,7 @@ class SignalMetrics:
                 "no DPOS or demand-velocity channel — cannot segment motion phases")
             return result
         result["channels_detected"]["demand_vel_source"] = demand_vel_source
+        assert dvel is not None  # every surviving branch assigned an array
 
         # Data sufficiency: is anything actually moving?
         v_peak = float(np.max(np.abs(dvel)))
@@ -176,6 +178,13 @@ class SignalMetrics:
             "reversal_pct": round(100 * phases["reversal"].sum() / n, 1),
             "peak_demand_velocity": round(v_peak, 4),
         }
+        if phases["n_moves"] == 0:
+            result["data_sufficiency"] = "INSUFFICIENT"
+            result["warnings"].append(
+                "no analysable move — demand velocity never rose above the "
+                "motion threshold outside reversal windows; capture DPOS "
+                "over at least one complete move (with post-move dwell)")
+            return result
 
         # --- FE per-phase + cruise slope vs velocity ---
         if fe is not None:
