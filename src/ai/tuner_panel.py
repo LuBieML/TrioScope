@@ -1,5 +1,5 @@
 """
-Servo Loop Analyser Panel — dockable Qt widget for scope-based loop diagnostics.
+Servo Loop Analyser — standalone window for scope-based loop diagnostics.
 
 Combines:
   - Drive profile editor (axis selector, Pn parameter spinboxes, CoE Read/Write)
@@ -19,7 +19,7 @@ import threading
 from typing import Callable
 
 from PySide6.QtWidgets import (
-    QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QSizePolicy,
     QMessageBox, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
     QFormLayout, QGroupBox,
@@ -61,15 +61,22 @@ class _CoESignals(QObject):
 # ---------------------------------------------------------------------------
 # Main panel
 # ---------------------------------------------------------------------------
-class TunerPanel(QDockWidget):
-    """Dockable servo loop analyser panel with drive profile editor."""
+class TunerPanel(QMainWindow):
+    """Standalone servo loop analyser window with drive profile editor.
+
+    The historical ``TunerPanel`` name is retained because the analysis and
+    profile APIs are used throughout the application.  The widget itself is a
+    top-level window so opening it never takes space away from the scope plot.
+    """
 
     analysis_complete = Signal()
 
     def __init__(self, parent=None):
-        super().__init__("Servo Loop Analyser", parent)
-        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.setMinimumWidth(560)
+        super().__init__(parent)
+        self.setWindowTitle("Servo Loop Analyser")
+        self.setWindowFlag(Qt.Window, True)
+        self.resize(1120, 780)
+        self.setMinimumSize(780, 520)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         # --- State ---
@@ -132,8 +139,9 @@ class TunerPanel(QDockWidget):
 
     def _build_ui(self):
         container = QWidget()
+        container.setObjectName("tunerRoot")
         container.setStyleSheet(
-            f"QWidget {{ background-color: {BG_DARK}; color: {TEXT}; }}"
+            f"QWidget#tunerRoot {{ background-color: {BG_DARK}; color: {TEXT}; }}"
         )
         root = QVBoxLayout(container)
         root.setContentsMargins(8, 8, 8, 8)
@@ -286,8 +294,13 @@ class TunerPanel(QDockWidget):
         scroll.setWidget(self._scroll_content)
         root.addWidget(scroll, 1)
 
-        self.setWidget(container)
+        self.setCentralWidget(container)
         self._reset_display()
+
+    def closeEvent(self, event):
+        """Hide instead of destroying so tuning history and edits are retained."""
+        self.hide()
+        event.ignore()
 
     # ================================================================
     # Drive profile section

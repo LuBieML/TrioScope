@@ -3,7 +3,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
@@ -636,8 +636,9 @@ class MainWindowActions(WindowBackedController):
         # ── View menu ──────────────────────────────────────────────
         view_menu = menubar.addMenu("&View")
 
-        act_tuner = QAction("&Servo Tuner", self)
+        act_tuner = QAction("&Servo Tuner Window", self)
         act_tuner.setShortcut(QKeySequence("Ctrl+T"))
+        act_tuner.setToolTip("Open the Servo Loop Analyser in a separate window")
         act_tuner.triggered.connect(self.window._toggle_tuner_panel)
         view_menu.addAction(act_tuner)
 
@@ -747,7 +748,7 @@ class MainWindowActions(WindowBackedController):
         )
 
     def _toggle_tuner_panel(self):
-        """Show/hide the servo tuner dock panel."""
+        """Show/hide the standalone servo tuner window."""
         if TunerPanel is None:
             QMessageBox.warning(self.window, "Servo Tuner",
                                 "Tuner module not available. Check src/ai/ is present.")
@@ -762,15 +763,16 @@ class MainWindowActions(WindowBackedController):
             app_settings = SettingsStore().load()
             if app_settings.drive_profiles:
                 self._tuner_panel.set_all_profiles(app_settings.drive_profiles)
-            # Preserve window geometry — adding the dock triggers a deferred
-            # layout pass that inflates the main window's minimumSizeHint.
-            saved_size = self.size()
-            self.setFixedWidth(saved_size.width())
-            self.addDockWidget(Qt.RightDockWidgetArea, self._tuner_panel)
-            # Release the width lock after the layout settles
-            QTimer.singleShot(0, lambda: self.setMaximumWidth(16777215))
+            self._tuner_panel.show()
+            self._tuner_panel.raise_()
+            self._tuner_panel.activateWindow()
         else:
-            self._tuner_panel.setVisible(not self._tuner_panel.isVisible())
+            if self._tuner_panel.isVisible():
+                self._tuner_panel.hide()
+            else:
+                self._tuner_panel.show()
+                self._tuner_panel.raise_()
+                self._tuner_panel.activateWindow()
 
     def _toggle_measurement_panel(self):
         """Show/hide the live measurements window."""
@@ -1062,6 +1064,8 @@ class MainWindowActions(WindowBackedController):
         self._disable_motion_axes_before_disconnect()
         if self._measurement_panel is not None:
             self._measurement_panel.hide()
+        if self._tuner_panel is not None:
+            self._tuner_panel.hide()
         if self._motion_window is not None:
             self._motion_window.close()
         for compare_window in list(self._compare_windows):

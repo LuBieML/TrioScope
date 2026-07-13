@@ -8,9 +8,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from PySide6.QtWidgets import QApplication, QSpinBox
+from PySide6.QtWidgets import QApplication, QMainWindow, QSpinBox
 
 from src.ai.tuner_panel import TunerPanel
+from src.ai.tuner_theme import RED
 from src.ai.tuning_history import KPI_DEFS
 from src.ai.zn_calculator import zn_pi_table
 
@@ -41,6 +42,38 @@ def _capture(axis=0, fe_sigma=0.002, seed=1):
         f"MSPEED({axis})": dvel + rng.normal(0, 0.05, len(t)),
     }
     return t, params, 0.001, []
+
+
+def test_tuner_is_a_separate_resizable_window(qt_app):
+    main_window = QMainWindow()
+    main_window.resize(900, 600)
+    original_size = main_window.size()
+
+    panel = TunerPanel(main_window)
+    panel.show()
+    qt_app.processEvents()
+
+    assert panel.isWindow()
+    assert panel.parent() is main_window
+    assert main_window.size() == original_size
+    assert panel.size().width() >= 1000
+    assert panel.minimumWidth() < panel.width()
+    panel.hide()
+
+
+def test_tuner_close_hides_without_losing_state(qt_app):
+    panel = TunerPanel()
+    panel.set_data_provider(_capture)
+    panel._on_analyze()
+    metrics = panel.last_metrics()
+    panel.show()
+    qt_app.processEvents()
+
+    panel.close()
+    qt_app.processEvents()
+
+    assert not panel.isVisible()
+    assert panel.last_metrics() is metrics
 
 
 def test_analyze_populates_cards_and_status(qt_app):
@@ -144,7 +177,7 @@ def test_history_marks_worse_run_red(qt_app):
     newest_cell = table.item(0, cruise_col)
     assert newest_cell is not None
     assert "▲" in newest_cell.text()                      # value increased
-    assert newest_cell.foreground().color().name() == "#e74c3c"  # RED = worse
+    assert newest_cell.foreground().color().name() == RED  # theme error = worse
 
 
 def test_history_shows_pn_changes_between_runs(qt_app):

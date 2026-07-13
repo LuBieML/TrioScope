@@ -1,4 +1,4 @@
-"""Shared colours and small widgets for the Servo Loop Analyser panel."""
+"""TrioScope-themed colours and widgets for the Servo Loop Analyser."""
 
 from __future__ import annotations
 
@@ -6,19 +6,21 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QWidget
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QRadialGradient
 
-BG_DARK      = "#1a1a22"
-BG_CARD      = "#22222c"
-BG_PANEL     = "#2a2a36"
-BORDER       = "#3a3a4a"
-BORDER_LIGHT = "#4b4b5a"
+# Keep these aligned with ``ui.theme.DARK_STYLESHEET``.  The tuner has its
+# own compact card styles, but it should still look like the same instrument.
+BG_DARK      = "#2e2e2e"
+BG_CARD      = "#353536"
+BG_PANEL     = "#4b4a4a"
+BORDER       = "#4b4a4a"
+BORDER_LIGHT = "#606060"
 TEXT         = "#d4d4d4"
-TEXT_DIM     = "#888899"
-TEXT_BRIGHT  = "#f0f0f5"
+TEXT_DIM     = "#888888"
+TEXT_BRIGHT  = "#f0f2f4"
 ACCENT       = "#FFA500"
-CYAN         = "#00d4aa"
-GREEN        = "#2ecc71"
+CYAN         = "#03DAC6"
+GREEN        = "#2e8b3e"
 AMBER        = "#f39c12"
-RED          = "#e74c3c"
+RED          = "#f14c4c"
 
 GROUP_STYLE = (
     f"QGroupBox {{ color: {TEXT_DIM}; font-size: 8pt;"

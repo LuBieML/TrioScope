@@ -161,7 +161,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Settings window
         self._settings_window = None
 
-        # Classical Tuner
+        # Standalone Servo Loop Analyser window
         self._tuner_panel = None
 
         # Measurement panel
