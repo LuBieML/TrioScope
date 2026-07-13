@@ -3,6 +3,13 @@
 Notable changes to TrioScope are recorded here. New entries are generated from
 Conventional Commit pull-request titles by Release Please.
 
+## [0.5.0](https://github.com/LuBieML/TrioScope/compare/v0.4.0...v0.5.0) (2026-07-13)
+
+
+### Features
+
+* updates to fft calculations ([c102005](https://github.com/LuBieML/TrioScope/commit/c1020056bba367bc54f91da4655debf6fbe4e3a3))
+
 ## [0.4.0](https://github.com/LuBieML/TrioScope/compare/v0.3.0...v0.4.0) (2026-07-13)
 
 
