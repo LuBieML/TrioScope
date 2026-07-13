@@ -67,6 +67,72 @@ QLabel#motionTitle {
 }
 QLabel#motionSubtitle { color: #9aa3ad; font-size: 9pt; }
 QFrame#motionAccentRule { background-color: #f3a712; border: none; }
+QFrame#motionTestCalculator {
+    background-color: #292d32;
+    border: 1px solid #444b53;
+    border-left: 3px solid #37a698;
+    border-radius: 5px;
+}
+QLabel#motionCalcEyebrow,
+QLabel#motionCalcInputLabel,
+QLabel#motionCalcReadoutLabel {
+    color: #79c7bd;
+    font-family: 'Consolas';
+    font-size: 7.5pt;
+    font-weight: 700;
+}
+QLabel#motionCalcTitle {
+    color: #edf2f2;
+    font-size: 12pt;
+    font-weight: 600;
+}
+QLabel#motionCalcDescription {
+    color: #9da8b1;
+    font-size: 8.5pt;
+}
+QDoubleSpinBox#motionCalcInput,
+QComboBox#motionCalcAxis {
+    background-color: #202429;
+    color: #edf1f3;
+    border: 1px solid #48515a;
+    border-radius: 3px;
+    padding: 6px 8px;
+    font-family: 'Consolas';
+    font-size: 9.5pt;
+}
+QDoubleSpinBox#motionCalcInput:focus,
+QComboBox#motionCalcAxis:focus { border-color: #55b9ab; }
+QFrame#motionCalcReadout {
+    background-color: #202a2b;
+    border: 1px solid #375657;
+    border-radius: 4px;
+}
+QLabel#motionCalcDistance {
+    color: #9ce4da;
+    font-family: 'Consolas';
+    font-size: 21pt;
+    font-weight: 700;
+}
+QLabel#motionCalcUnits { color: #7f9798; font-size: 8pt; }
+QLabel#motionCalcDetail {
+    color: #9fb2b2;
+    font-family: 'Consolas';
+    font-size: 7.5pt;
+}
+QPushButton#motionCalcApplyButton {
+    background-color: #245f59;
+    color: #e7fffb;
+    border: 1px solid #3e8e84;
+    border-radius: 3px;
+    padding: 6px 10px;
+    font-weight: 600;
+}
+QPushButton#motionCalcApplyButton:hover { background-color: #2d756d; }
+QPushButton#motionCalcApplyButton:disabled {
+    background-color: #34383d;
+    color: #6f777f;
+    border-color: #454a50;
+}
 QLabel#motionColumnLabel {
     color: #8e98a3;
     font-family: 'Consolas';

@@ -57,6 +57,27 @@ axis. For each axis you can:
 The currently selected axis's drive type and parameters are sent with each
 prompt, giving the AI direct visibility into your current tuning state.
 
+## Preparing an Analyzer-Ready Test Move
+
+Open **View → Axis Motion** and use the **Test stroke calculator** before a
+tuning capture. Enter the desired constant speed and the acceleration already
+configured on the controller axis. TrioScope calculates the minimum symmetric
+trapezoidal-move distance that provides:
+
+- 0.8 seconds at constant speed for low-frequency and Welch-averaged analysis;
+- distinct acceleration and deceleration phases for feedforward diagnostics;
+- enough distance to reach the requested speed before deceleration starts.
+
+Select an axis row and press **Apply speed + distance** to copy the result into
+the move. The calculator does not write the controller's `ACCEL` parameter; set
+the axis to the same acceleration value before running the move. Capture at
+least 0.3 seconds of stationary data both before and after the move so the
+noise floor and settling window are available.
+
+The calculation assumes equal linear acceleration and deceleration:
+
+`distance = speed × 0.8 s + speed² ÷ acceleration`
+
 ## Effective Prompts
 
 Good things to ask:

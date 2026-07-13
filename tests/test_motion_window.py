@@ -49,6 +49,30 @@ def test_motion_window_remove_and_duplicate_validation(qt_app):
         window.set_commands([MotionAxisCommand(axis=3), MotionAxisCommand(axis=3)])
 
 
+def test_test_move_calculator_applies_speed_and_distance_to_selected_axis(qt_app):
+    window = AxisMotionWindow()
+    window.set_commands(
+        [
+            MotionAxisCommand(axis=2, speed=10.0, distance=5.0),
+            MotionAxisCommand(axis=7, speed=20.0, distance=6.0),
+        ]
+    )
+    calculator = window.test_move_calculator
+    calculator.speed_edit.setValue(100.0)
+    calculator.acceleration_edit.setValue(500.0)
+    calculator.axis_combo.setCurrentIndex(calculator.axis_combo.findData(7))
+
+    assert calculator.profile.recommended_distance == pytest.approx(100.0)
+    assert "Capture ≥1.8 s" in calculator.detail_label.text()
+    calculator.apply_button.click()
+
+    assert window.commands() == [
+        MotionAxisCommand(axis=2, speed=10.0, distance=5.0),
+        MotionAxisCommand(axis=7, speed=100.0, distance=100.0),
+    ]
+    assert "Set controller ACCEL to 500" in window.status_label.text()
+
+
 def test_start_and_stop_emit_future_uapi_hooks(qt_app):
     window = AxisMotionWindow()
     window.set_commands(

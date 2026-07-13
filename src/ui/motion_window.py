@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .theme import MOTION_WINDOW_STYLESHEET
+from .test_move_calculator import TestMoveCalculator
 try:
     from ..models.motion_axis_command import MotionAxisCommand
 except ImportError:  # App runtime imports ui as a top-level package.
@@ -54,8 +55,8 @@ class AxisMotionWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window)
         self.setWindowTitle("Axis Motion")
-        self.setMinimumSize(680, 410)
-        self.resize(760, 500)
+        self.setMinimumSize(860, 590)
+        self.resize(960, 680)
         self._rows: List[_MotionRow] = []
         self._connection_available = False
         self._armed = False
@@ -97,6 +98,12 @@ class AxisMotionWindow(QMainWindow):
         accent_rule.setObjectName("motionAccentRule")
         accent_rule.setFixedHeight(2)
         layout.addWidget(accent_rule)
+
+        self.test_move_calculator = TestMoveCalculator()
+        self.test_move_calculator.applyRequested.connect(
+            self._apply_test_move_calculation
+        )
+        layout.addWidget(self.test_move_calculator)
 
         column_header = QHBoxLayout()
         column_header.setContentsMargins(13, 0, 13, 0)
@@ -253,6 +260,7 @@ class AxisMotionWindow(QMainWindow):
         remove_button.clicked.connect(lambda _=False, r=row: self._remove_row(r))
 
         self._refresh_row_indices()
+        self._refresh_test_move_axes()
         self._refresh_controls()
         self._set_status(f"Axis {command.axis} added to the move scheme.")
         return True
@@ -305,6 +313,7 @@ class AxisMotionWindow(QMainWindow):
         for command in commands:
             self.add_axis(command)
         self._refresh_row_indices()
+        self._refresh_test_move_axes()
         self._refresh_controls()
         self._set_status(
             f"Loaded {len(commands)} axis move{'s' if len(commands) != 1 else ''}."
@@ -439,6 +448,40 @@ class AxisMotionWindow(QMainWindow):
             and bool(self._moving_axes)
             and not self._busy
         )
+        self.test_move_calculator.set_editable(not self._busy)
+
+    def _refresh_test_move_axes(self) -> None:
+        self.test_move_calculator.set_axes(
+            int(row.axis_combo.currentData()) for row in self._rows
+        )
+
+    def _apply_test_move_calculation(
+        self, axis: int, speed: float, distance: float, acceleration: float
+    ) -> None:
+        row = next(
+            (
+                candidate
+                for candidate in self._rows
+                if int(candidate.axis_combo.currentData()) == axis
+            ),
+            None,
+        )
+        if row is None:
+            self._set_status(f"Axis {axis} is no longer in this move.", True)
+            return
+        if distance > row.distance_edit.maximum():
+            self._set_status(
+                "Calculated distance exceeds the motion field limit; reduce "
+                "speed or increase acceleration.",
+                True,
+            )
+            return
+        row.speed_edit.setValue(speed)
+        row.distance_edit.setValue(distance)
+        self._set_status(
+            f"Applied analyzer test speed and distance to axis {axis}. "
+            f"Set controller ACCEL to {acceleration:g} before moving."
+        )
 
     @staticmethod
     def _command_for_row(row: _MotionRow, direction: int) -> MotionAxisCommand:
@@ -471,6 +514,7 @@ class AxisMotionWindow(QMainWindow):
             self._set_status(f"Axis {new_axis} is already in this move.", True)
             return
         row.axis_combo.setProperty("previousAxis", new_axis)
+        self._refresh_test_move_axes()
         self._set_status(f"Axis {previous_axis} changed to axis {new_axis}.")
 
     def _remove_row(self, row: _MotionRow) -> None:
@@ -480,6 +524,7 @@ class AxisMotionWindow(QMainWindow):
         row.frame.setParent(None)
         row.frame.deleteLater()
         self._refresh_row_indices()
+        self._refresh_test_move_axes()
         self._refresh_controls()
         if self._rows:
             self._set_status(f"Axis {axis} removed from the move scheme.")
