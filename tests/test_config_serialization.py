@@ -81,7 +81,15 @@ class TestConfigSerialization(unittest.TestCase):
                 display=DisplaySettings(plot_mode="xyzw", path_view_scale=2.0),
                 traces=[TraceConfig(param="FE", axis=2, enabled=False)],
                 axis_parameters=[
-                    AxisParameterConfig(axis=2, speed=175.0, fe_limit=4.5),
+                    AxisParameterConfig(
+                        axis=2,
+                        speed=175.0,
+                        fe_limit=4.5,
+                        drive_fe_limit=12,
+                        fe_range=6.5,
+                        fs_limit=1250.0,
+                        rs_limit=-750.0,
+                    ),
                     AxisParameterConfig(axis=7, units=1048576.0),
                 ],
             )
@@ -103,6 +111,10 @@ class TestConfigSerialization(unittest.TestCase):
             self.assertEqual(loaded.axis_parameters[0].axis, 2)
             self.assertEqual(loaded.axis_parameters[0].speed, 175.0)
             self.assertEqual(loaded.axis_parameters[0].fe_limit, 4.5)
+            self.assertEqual(loaded.axis_parameters[0].drive_fe_limit, 12)
+            self.assertEqual(loaded.axis_parameters[0].fe_range, 6.5)
+            self.assertEqual(loaded.axis_parameters[0].fs_limit, 1250.0)
+            self.assertEqual(loaded.axis_parameters[0].rs_limit, -750.0)
             self.assertEqual(loaded.axis_parameters[1].axis, 7)
             self.assertEqual(loaded.axis_parameters[1].units, 1048576.0)
         finally:

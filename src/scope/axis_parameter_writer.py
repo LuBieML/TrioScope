@@ -1,8 +1,7 @@
 """UAPI transport for applying Trio controller axis parameters.
 
-The dedicated setter names and value types come from
-``Trio_UnifiedApi_CPP.pdf`` sections 6.3.3.545, 573, 601, 602, 619,
-628, 658, 671 and 691.
+The dedicated setter names and value types come from the
+``Trio_UnifiedApi_CPP.pdf`` axis-parameter setter reference.
 """
 
 from dataclasses import dataclass
@@ -34,6 +33,15 @@ AXIS_PARAMETER_SETTERS = (
     AxisParameterSetter("fwd_in", "FWD_IN", "SetAxisParameter_FWD_IN", int),
     AxisParameterSetter("rev_in", "REV_IN", "SetAxisParameter_REV_IN", int),
     AxisParameterSetter("fe_limit", "FE_LIMIT", "SetAxisParameter_FE_LIMIT", float),
+    AxisParameterSetter(
+        "drive_fe_limit",
+        "DRIVE_FE_LIMIT",
+        "SetAxisParameter_DRIVE_FE_LIMIT",
+        int,
+    ),
+    AxisParameterSetter("fe_range", "FE_RANGE", "SetAxisParameter_FE_RANGE", float),
+    AxisParameterSetter("fs_limit", "FS_LIMIT", "SetAxisParameter_FS_LIMIT", float),
+    AxisParameterSetter("rs_limit", "RS_LIMIT", "SetAxisParameter_RS_LIMIT", float),
 )
 
 

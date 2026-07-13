@@ -29,11 +29,11 @@ from .theme import AXIS_PARAMETERS_STYLESHEET
 
 try:
     from ..models.axis_parameter_config import AxisParameterConfig
-    from ..scope.axis_parameter_writer import write_axis_parameters
+    from ..scope.axis_parameter_writer import AXIS_PARAMETER_SETTERS, write_axis_parameters
     from ..storage.axis_config_io import load_axis_config, save_axis_config
 except ImportError:  # App runtime imports ui as a top-level package.
     from models.axis_parameter_config import AxisParameterConfig
-    from scope.axis_parameter_writer import write_axis_parameters
+    from scope.axis_parameter_writer import AXIS_PARAMETER_SETTERS, write_axis_parameters
     from storage.axis_config_io import load_axis_config, save_axis_config
 
 
@@ -50,7 +50,34 @@ PARAMETER_COLUMNS = (
     ("fwd_in", "Fwd In", "Forward travel input assignment; -1 disables it."),
     ("rev_in", "Rev In", "Reverse travel input assignment; -1 disables it."),
     ("fe_limit", "FE Limit", "Following-error limit for the axis."),
+    (
+        "drive_fe_limit",
+        "Drive FE Limit",
+        "Drive following-error limit for the axis.",
+    ),
+    ("fe_range", "FE Range", "Following-error warning range for the axis."),
+    ("fs_limit", "FS Limit", "Forward software travel limit for the axis."),
+    ("rs_limit", "RS Limit", "Reverse software travel limit for the axis."),
 )
+
+AXIS_COLUMN_WIDTH = 54
+PARAMETER_COLUMN_WIDTHS = {
+    "speed": 76,
+    "units": 94,
+    "accel": 78,
+    "decel": 78,
+    "fast_dec": 82,
+    "jerk": 82,
+    "fwd_in": 68,
+    "rev_in": 68,
+    "fe_limit": 72,
+    "drive_fe_limit": 88,
+    "fe_range": 76,
+    "fs_limit": 76,
+    "rs_limit": 76,
+}
+COPY_COLUMN_WIDTH = 170
+REMOVE_COLUMN_WIDTH = 70
 
 
 class CompactDoubleSpinBox(QDoubleSpinBox):
@@ -158,14 +185,14 @@ class AxisParametersTab(QWidget):
         horizontal = self.table.horizontalHeader()
         horizontal.setSectionResizeMode(QHeaderView.Fixed)
         horizontal.setStretchLastSection(False)
-        self.table.setColumnWidth(0, 92)
-        for column, (_, _, tooltip) in enumerate(PARAMETER_COLUMNS, start=1):
-            self.table.setColumnWidth(column, 126 if column != 2 else 146)
+        self.table.setColumnWidth(0, AXIS_COLUMN_WIDTH)
+        for column, (field_name, _, tooltip) in enumerate(PARAMETER_COLUMNS, start=1):
+            self.table.setColumnWidth(column, PARAMETER_COLUMN_WIDTHS[field_name])
             item = self.table.horizontalHeaderItem(column)
             if item is not None:
                 item.setToolTip(tooltip)
-        self.table.setColumnWidth(1 + len(PARAMETER_COLUMNS), 210)
-        self.table.setColumnWidth(2 + len(PARAMETER_COLUMNS), 76)
+        self.table.setColumnWidth(1 + len(PARAMETER_COLUMNS), COPY_COLUMN_WIDTH)
+        self.table.setColumnWidth(2 + len(PARAMETER_COLUMNS), REMOVE_COLUMN_WIDTH)
         layout.addWidget(self.table, 1)
 
         footer = QHBoxLayout()
@@ -213,7 +240,7 @@ class AxisParametersTab(QWidget):
             else:
                 editor = CompactDoubleSpinBox()
                 editor.setRange(-1_000_000_000_000.0, 1_000_000_000_000.0)
-                editor.setDecimals(6)
+                editor.setDecimals(0 if field_name == "drive_fe_limit" else 6)
                 editor.setSingleStep(1.0)
                 editor.setValue(float(getattr(config, field_name)))
             editor.setKeyboardTracking(False)
@@ -254,6 +281,7 @@ class AxisParametersTab(QWidget):
         configs = []
         for row in self._rows:
             values = {name: editor.value() for name, editor in row.editors.items()}
+            values["drive_fe_limit"] = int(values["drive_fe_limit"])
             config = AxisParameterConfig(axis=int(row.axis_combo.currentData()), **values)
             config.validate()
             configs.append(config)
@@ -355,7 +383,8 @@ class AxisParametersTab(QWidget):
         reply = QMessageBox.question(
             self,
             "Write axis parameters",
-            f"Write 9 parameters to {len(configs)} {axis_word} "
+            f"Write {len(AXIS_PARAMETER_SETTERS)} parameters to "
+            f"{len(configs)} {axis_word} "
             f"({axes})?\n\nThis changes the connected controller immediately.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,

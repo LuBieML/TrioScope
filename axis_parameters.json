@@ -12,7 +12,11 @@
       "jerk": 100000.0,
       "fwd_in": -1,
       "rev_in": -1,
-      "fe_limit": 10.0
+      "fe_limit": 10.0,
+      "drive_fe_limit": 10,
+      "fe_range": 10.0,
+      "fs_limit": 1000.0,
+      "rs_limit": -1000.0
     },
     {
       "axis": 1,
@@ -24,7 +28,11 @@
       "jerk": 100000.0,
       "fwd_in": -1,
       "rev_in": -1,
-      "fe_limit": 10.0
+      "fe_limit": 10.0,
+      "drive_fe_limit": 10,
+      "fe_range": 10.0,
+      "fs_limit": 1000.0,
+      "rs_limit": -1000.0
     },
     {
       "axis": 2,
@@ -36,7 +44,11 @@
       "jerk": 100000.0,
       "fwd_in": -1,
       "rev_in": -1,
-      "fe_limit": 10.0
+      "fe_limit": 10.0,
+      "drive_fe_limit": 10,
+      "fe_range": 10.0,
+      "fs_limit": 1000.0,
+      "rs_limit": -1000.0
     }
   ]
 }
