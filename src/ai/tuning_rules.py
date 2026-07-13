@@ -93,12 +93,15 @@ def _tuning_mode(profile: dict | None) -> int | None:
     return _pn(profile, "pn100_tuning_mode")
 
 
-def _phase_band(metrics: dict) -> tuple[float | None, float | None]:
-    """(phase_deg, dominant_freq_hz) from the current-vs-velocity spectrum."""
+def _phase_band(metrics: dict) -> tuple[float | None, float | None, str]:
+    """(phase_deg, dominant_freq_hz, confidence_note) from the
+    current-vs-velocity cross-spectrum."""
     cvp = (metrics.get("oscillation") or {}).get("current_vs_velocity_phase")
     if not cvp:
-        return None, None
-    return cvp.get("phase_deg"), cvp.get("dominant_freq_hz")
+        return None, None, ""
+    coherence = cvp.get("coherence")
+    note = f", coherence {coherence}" if coherence is not None else ""
+    return cvp.get("phase_deg"), cvp.get("dominant_freq_hz"), note
 
 
 def _max_saturation(metrics: dict) -> float:
@@ -189,7 +192,7 @@ def _blocking_rules(metrics: dict, profile: dict | None) -> list[Recommendation]
 
     osc_fe = (metrics.get("oscillation") or {}).get("fe") or {}
     if osc_fe.get("has_significant_oscillation"):
-        phase_deg, phase_freq = _phase_band(metrics)
+        phase_deg, phase_freq, confidence = _phase_band(metrics)
         freq = osc_fe.get("dominant_hz")
         if phase_deg is not None and 60 < phase_deg < 120:
             found.append(Recommendation(
@@ -200,8 +203,8 @@ def _blocking_rules(metrics: dict, profile: dict | None) -> list[Recommendation]
                         f"position gains"),
                 diagnosis=(f"oscillation.fe dominant_hz={freq} with "
                            f"current_vs_velocity_phase ≈ +90° "
-                           f"({phase_deg:.0f}°) — current leads velocity: "
-                           f"mechanical resonance"),
+                           f"({phase_deg:.0f}°{confidence}) — current leads "
+                           f"velocity: mechanical resonance"),
                 expected="oscillation peak gone at the notch frequency",
             ))
         elif phase_deg is not None and -30 < phase_deg < 30:
@@ -214,7 +217,8 @@ def _blocking_rules(metrics: dict, profile: dict | None) -> list[Recommendation]
                         "reduce integral action instead"),
                 diagnosis=(f"oscillation.fe dominant_hz={freq} with "
                            f"current_vs_velocity_phase ≈ 0° "
-                           f"({phase_deg:.0f}°) — in phase: loop instability"),
+                           f"({phase_deg:.0f}°{confidence}) — in phase: "
+                           f"loop instability"),
                 expected="has_significant_oscillation = false",
                 parameter="Pn104", proposed=proposed,
             ))

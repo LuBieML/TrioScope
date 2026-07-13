@@ -12,3 +12,6 @@ REVERSAL_HALF_WIDTH_S = 0.080  # ± window around demand-velocity zero crossings
 SETTLE_BAND_SIGMA = 4.0   # auto tolerance band = 4x robust noise sigma
 RINGING_CROSSINGS_MAX = 3  # more hysteresis crossings than this = ringing
 MAX_PER_MOVE_REPORTED = 8  # cap per-move detail lists in reports
+MIN_FFT_SAMPLES = 64       # shortest cruise run / Welch window worth analyzing
+WELCH_MAX_NPERSEG = 1024   # Welch window cap (1.024 s at 1 kHz servo rate)
+MIN_COHERENCE = 0.7        # magnitude-squared coherence gate for phase claims
