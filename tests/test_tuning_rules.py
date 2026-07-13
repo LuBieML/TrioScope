@@ -90,6 +90,21 @@ class TestBlockingRules:
         assert "340" in report.recommendations[0].action
         assert report.root_cause == "mechanical"
 
+    def test_resonance_below_drive_limit_does_not_recommend_notch(self):
+        metrics = _ok_metrics(
+            oscillation={
+                "fe": {"has_significant_oscillation": True,
+                       "dominant_hz": 25.0},
+                "current_vs_velocity_phase": {"phase_deg": 88.0,
+                                              "dominant_freq_hz": 25.0},
+            },
+        )
+        report = evaluate(metrics, _DX4_PROFILE)
+        rec = report.recommendations[0]
+        assert rec.rule_id == "mechanical_resonance"
+        assert "notch filter cannot be set below 50 Hz" in rec.action
+        assert "notch filter at ~25" not in rec.action
+
     def test_instability_recommends_gain_reduction(self):
         metrics = _ok_metrics(
             oscillation={
@@ -134,7 +149,8 @@ class TestBlockingRules:
         rec = report.recommendations[0]
         assert "Capture DRIVE_TORQUE" not in rec.action
         assert "122°" in rec.action
-        assert "notch at 25.0 Hz" in rec.action
+        assert "notch filter cannot target frequencies below 50 Hz" in rec.action
+        assert "notch at 25.0 Hz" not in rec.action
         assert rec.proposed == "Pn104 40 → 34"   # −15%
         assert "coherence 0.96" in rec.diagnosis
 

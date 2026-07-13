@@ -108,6 +108,13 @@ class TestCoherence:
         assert "RESONANCE" in cvp["interpretation"]
         assert cvp["n_averages"] >= 2
 
+    def test_low_frequency_resonance_is_outside_notch_range(self):
+        cvp = self._cross(shared_hz=25.0, coherent=True,
+                          phase_rad=np.pi / 2)
+        assert cvp["dominant_freq_hz"] == pytest.approx(25.0, abs=3.0)
+        assert "RESONANCE" in cvp["interpretation"]
+        assert "below 50 Hz notch-filter range" in cvp["interpretation"]
+
     def test_in_phase_oscillation_reads_instability(self):
         cvp = self._cross(coherent=True, phase_rad=0.0)
         assert -30 < cvp["phase_deg"] < 30

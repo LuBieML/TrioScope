@@ -7,8 +7,8 @@ capture therefore average together, cutting variance, and a long cruise
 contributes several overlapping windows.
 
 Peak frequencies are refined by parabolic interpolation of the peak bin
-and its neighbours, so a notch filter can be placed to a fraction of the
-bin width rather than 1/duration.
+and its neighbours. Peaks in the drive's valid notch range can therefore
+be targeted to a fraction of the bin width rather than 1/duration.
 
 The current-vs-velocity phase test uses real magnitude-squared coherence
 when at least two windows are available (a single window has coherence
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from .drive_profile import MIN_NOTCH_FILTER_HZ
 from .signal_constants import (
     NOISE_FLOOR_SIGMA, MIN_OSCILLATION_HZ, MIN_CRUISE_DURATION_S,
     MIN_CYCLES_FOR_PEAK, MIN_FFT_SAMPLES, WELCH_MAX_NPERSEG, MIN_COHERENCE,
@@ -239,8 +240,12 @@ def cross_phase(a: np.ndarray, b: np.ndarray, cruise_mask: np.ndarray,
     idx = np.where(valid)[0][idx_rel]
     phase_deg = float(np.degrees(np.angle(s_ab[idx])))
 
-    if 60 < phase_deg < 120:
+    peak_freq = float(freqs[idx])
+    if 60 < phase_deg < 120 and peak_freq >= MIN_NOTCH_FILTER_HZ:
         interp = "~+90° (current leads velocity) → MECHANICAL RESONANCE → notch filter"
+    elif 60 < phase_deg < 120:
+        interp = ("~+90° (current leads velocity) → MECHANICAL RESONANCE "
+                  f"→ below {MIN_NOTCH_FILTER_HZ:g} Hz notch-filter range")
     elif -30 < phase_deg < 30:
         interp = "~0° (in-phase) → LOOP INSTABILITY → reduce Pn102 or position gain"
     elif -120 < phase_deg < -60:
@@ -250,7 +255,7 @@ def cross_phase(a: np.ndarray, b: np.ndarray, cruise_mask: np.ndarray,
 
     return {
         "analysis_band_hz": f"{MIN_OSCILLATION_HZ} to {round(fs / 2, 1)}",
-        "dominant_freq_hz": round(float(freqs[idx]), 1),
+        "dominant_freq_hz": round(peak_freq, 1),
         "phase_deg": round(phase_deg, 1),
         "interpretation": interp,
         "coherence": (round(float(coherence[idx]), 2)

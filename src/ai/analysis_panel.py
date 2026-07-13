@@ -134,10 +134,17 @@ resonance from peaks below 3 Hz, even if the phase happens to fall in
 the ~0° or ~+90° ranges — the cross-spectrum phase at motion-profile
 frequencies is meaningless as a servo diagnostic.
 
+NOTCH FILTER LIMIT: DX drive notch-filter frequency parameters accept
+values >=50 Hz only. Never recommend setting a notch below 50 Hz and
+never clamp a lower detected peak to 50 Hz. For a mechanical resonance
+below 50 Hz, recommend investigating mounting, compliance, backlash, or
+load and explicitly state that it is outside the drive's notch range.
+
 oscillation.fe.has_significant_oscillation = true
   AND oscillation.current_vs_velocity_phase ≈ +90°
-  → MECHANICAL RESONANCE. Apply notch filter at dominant_hz. Do NOT
-    increase position gains.
+  → MECHANICAL RESONANCE. If dominant_hz >= 50 Hz, apply a notch at
+    dominant_hz. Below 50 Hz, do not recommend a notch. Do NOT increase
+    position gains.
 
 oscillation.fe.has_significant_oscillation = true
   AND oscillation.current_vs_velocity_phase ≈ 0°
@@ -209,7 +216,7 @@ FE spikes at accel/decel | current OK | velocity tracks
 FE spikes at accel/decel | current SATURATED | velocity can't reach
   → Torque-limited, reduce profile
 FE oscillating fixed freq | current leads velocity ~90° | same freq
-  → Mechanical resonance → notch filter
+  → Mechanical resonance → notch filter only when freq >= 50 Hz
 FE oscillating variable freq | all three in-phase | same freq
   → Loop instability → reduce gain
 FE steady offset after move | low DC current | velocity zero
@@ -243,7 +250,7 @@ Per iteration, at most:
 
 4. DIAGNOSTIC ORDER — always inside-out:
    a) current.* first. Saturated? → torque-limited, stop.
-      Oscillatory + phase ~+90°? → resonance, notch.
+      Oscillatory + phase ~+90°? → resonance; notch only at >=50 Hz.
    b) velocity.* second. Overshooting/not reaching? Adjust Pn102.
    c) fe.* last. Apply FE rules above.
    Never chase an FE symptom whose root cause is in velocity or current.

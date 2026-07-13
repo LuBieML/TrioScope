@@ -31,6 +31,11 @@ ETHERCAT_OBJECT_IDS: dict[str, int] = {
     "pn135": 0x31EB,  # Encoder speed filter time (speed feedback low-pass)
 }
 
+# DX drive notch-filter frequency parameters reject values below this floor.
+# Keep recommendation logic aligned with the hardware range even though the
+# notch parameters are not currently editable in the drive profile panel.
+MIN_NOTCH_FILTER_HZ = 50.0
+
 # ---------------------------------------------------------------------------
 # Pn100 sub-field definitions (nibble-packed composite parameter)
 # ---------------------------------------------------------------------------

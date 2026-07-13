@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .drive_profile import PARAM_DEFS
+from .drive_profile import MIN_NOTCH_FILTER_HZ, PARAM_DEFS
 
 # Spinbox bounds from the drive profile definitions: attr → (min, max)
 _PN_BOUNDS: dict[str, tuple[int, int]] = {
@@ -103,6 +103,15 @@ def _phase_band(metrics: dict) -> tuple[float | None, float | None, str]:
     coherence = cvp.get("coherence")
     note = f", coherence {coherence}" if coherence is not None else ""
     return cvp.get("phase_deg"), cvp.get("dominant_freq_hz"), note
+
+
+def _notch_frequency(phase_freq: float | None,
+                     oscillation_freq: float | None) -> float | None:
+    """Return a detected frequency only when the drive can notch it."""
+    frequency = phase_freq if phase_freq is not None else oscillation_freq
+    if frequency is None or frequency < MIN_NOTCH_FILTER_HZ:
+        return None
+    return frequency
 
 
 def _max_saturation(metrics: dict) -> float:
@@ -196,17 +205,29 @@ def _blocking_rules(metrics: dict, profile: dict | None) -> list[Recommendation]
         phase_deg, phase_freq, confidence = _phase_band(metrics)
         freq = osc_fe.get("dominant_hz")
         if phase_deg is not None and 60 < phase_deg < 120:
+            notch_freq = _notch_frequency(phase_freq, freq)
+            if notch_freq is not None:
+                action = (f"Apply the drive's notch filter at ~{notch_freq} Hz "
+                          f"(drive commissioning tool); do NOT increase "
+                          f"position gains")
+                expected = "oscillation peak gone at the notch frequency"
+            else:
+                action = (
+                    f"Investigate the mechanical resonance at ~{phase_freq or freq} Hz "
+                    f"(mounting, compliance, backlash, or load); the drive's "
+                    f"notch filter cannot be set below "
+                    f"{MIN_NOTCH_FILTER_HZ:g} Hz. Do NOT increase position gains"
+                )
+                expected = "mechanical resonance reduced without an invalid notch setting"
             found.append(Recommendation(
                 rule_id="mechanical_resonance",
                 severity="action", root_cause="mechanical",
-                action=(f"Apply the drive's notch filter at ~{phase_freq or freq} Hz "
-                        f"(drive commissioning tool); do NOT increase "
-                        f"position gains"),
+                action=action,
                 diagnosis=(f"oscillation.fe dominant_hz={freq} with "
                            f"current_vs_velocity_phase ≈ +90° "
                            f"({phase_deg:.0f}°{confidence}) — current leads "
                            f"velocity: mechanical resonance"),
-                expected="oscillation peak gone at the notch frequency",
+                expected=expected,
             ))
         elif phase_deg is not None and -30 < phase_deg < 30:
             proposed = _propose(profile, "pn104", "Pn104", factor=0.8)
@@ -256,6 +277,14 @@ def _blocking_rules(metrics: dict, profile: dict | None) -> list[Recommendation]
                     expected="a phase verdict on the next capture",
                 ))
             else:
+                if freq is not None and freq >= MIN_NOTCH_FILTER_HZ:
+                    fixed_peak_action = f"apply a notch at {freq} Hz instead"
+                else:
+                    fixed_peak_action = (
+                        "investigate the fixed mechanical resonance instead; "
+                        f"the drive notch filter cannot target frequencies below "
+                        f"{MIN_NOTCH_FILTER_HZ:g} Hz"
+                    )
                 found.append(Recommendation(
                     rule_id="oscillation_ambiguous_phase",
                     severity="action", root_cause="position",
@@ -264,8 +293,8 @@ def _blocking_rules(metrics: dict, profile: dict | None) -> list[Recommendation]
                             f"signatures — reduce P_GAIN (CSP) or Pn104 "
                             f"(drive-closed loop) by ~15% and re-capture: "
                             f"if the {freq} Hz peak shifts with the gain it "
-                            f"is loop-related; if it stays fixed, apply a "
-                            f"notch at {freq} Hz instead. Do not increase "
+                            f"is loop-related; if it stays fixed, "
+                            f"{fixed_peak_action}. Do not increase "
                             f"any gain while the oscillation persists"),
                     diagnosis=(f"oscillation.fe dominant_hz={freq} with "
                                f"current_vs_velocity_phase "
