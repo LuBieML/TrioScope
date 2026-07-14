@@ -607,12 +607,15 @@ class ParameterScopeOscilloscope(QMainWindow):
 
 def main():
     # Enable OpenGL multisampling for proper antialiasing
-    from PySide6.QtGui import QSurfaceFormat
+    from PySide6.QtGui import QIcon, QSurfaceFormat
+    from ui.app_icon import app_icon_path
+
     fmt = QSurfaceFormat()
     fmt.setSamples(8)  # 4x MSAA
     QSurfaceFormat.setDefaultFormat(fmt)
 
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(str(app_icon_path())))
     app.setStyleSheet(DARK_STYLESHEET)
     window = ParameterScopeOscilloscope()
     window.show()

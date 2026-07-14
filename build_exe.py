@@ -17,6 +17,14 @@ except ImportError:
     __version__ = "1.0.0"
 
 VENV_SITE = ROOT / ".venv" / "Lib" / "site-packages"
+ICON_FILE = ROOT / "assets" / "trioscope.ico"
+APP_ICON_FILE = ROOT / "assets" / "trioscope-icon.png"
+
+if not ICON_FILE.is_file() or not APP_ICON_FILE.is_file():
+    raise FileNotFoundError(
+        "TrioScope icon assets are missing; expected "
+        f"{ICON_FILE} and {APP_ICON_FILE}"
+    )
 
 # Trio .pyd and its companion DLLs
 trio_binaries = [
@@ -40,11 +48,16 @@ licenses_file = ROOT / "THIRD_PARTY_LICENSES.txt"
 if licenses_file.is_file():
     add_data_args += ["--add-data", f"{licenses_file};."]
 
+# The ICO is embedded in the executable by --icon. The PNG is also bundled so
+# Qt can use the same artwork for the running app's windows and taskbar entry.
+add_data_args += ["--add-data", f"{APP_ICON_FILE};assets"]
+
 cmd = [
     sys.executable, "-m", "PyInstaller",
     "--name", f"TrioScope_v{__version__}",
     "--onedir",
     "--windowed",
+    "--icon", str(ICON_FILE),
     # Include local src/ package
     "--paths", str(ROOT / "src"),
     # Include Trio native binaries
