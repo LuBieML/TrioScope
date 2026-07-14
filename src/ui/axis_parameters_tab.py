@@ -27,13 +27,13 @@ from PySide6.QtWidgets import (
 
 from .theme import AXIS_PARAMETERS_STYLESHEET
 
-try:
+if __package__ and __package__.startswith("src."):
     from ..models.axis_parameter_config import AxisParameterConfig
-    from ..scope.axis_parameter_writer import AXIS_PARAMETER_SETTERS, write_axis_parameters
+    from ..scope import AXIS_PARAMETER_SETTERS, write_axis_parameters
     from ..storage.axis_config_io import load_axis_config, save_axis_config
-except ImportError:  # App runtime imports ui as a top-level package.
+else:  # App runtime and PyInstaller import ui as a top-level package.
     from models.axis_parameter_config import AxisParameterConfig
-    from scope.axis_parameter_writer import AXIS_PARAMETER_SETTERS, write_axis_parameters
+    from scope import AXIS_PARAMETER_SETTERS, write_axis_parameters
     from storage.axis_config_io import load_axis_config, save_axis_config
 
 

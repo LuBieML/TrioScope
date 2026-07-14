@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 from typing import Iterable, List
 
-try:
+if __package__ and __package__.startswith("src."):
     from ..models.axis_parameter_config import AxisParameterConfig
-except ImportError:  # App runtime imports storage as a top-level package.
+else:  # App runtime and PyInstaller import storage as a top-level package.
     from models.axis_parameter_config import AxisParameterConfig
 
 

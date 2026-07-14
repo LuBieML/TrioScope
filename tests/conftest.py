@@ -9,7 +9,15 @@ code through fakes/mocks, so the stub never needs real functionality.
 """
 
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
+
+# Modules under src/ import their siblings by bare name (``scope.measurements``),
+# the same way the app and the frozen build do.  Tests import them through the
+# ``src.*`` package, so src/ must also be importable for those bare names to
+# resolve.  Keep both namespaces working off one copy of the code: a second
+# import root would make PyInstaller collect the packages twice.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 try:
     import Trio_UnifiedApi  # noqa: F401

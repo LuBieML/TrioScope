@@ -57,6 +57,7 @@ cmd = [
     "--name", f"TrioScope_v{__version__}",
     "--onedir",
     "--windowed",
+    "--noconfirm",
     "--icon", str(ICON_FILE),
     # Include local src/ package
     "--paths", str(ROOT / "src"),
@@ -64,9 +65,15 @@ cmd = [
     *add_binary_args,
     # Include user manual markdown files
     *add_data_args,
+    # Bundle every module of the local packages, so a new module is picked up
+    # without having to be added to a hidden-import list by hand.
+    "--collect-submodules", "scope",
+    "--collect-submodules", "ai",
+    "--collect-submodules", "ui",
+    "--collect-submodules", "models",
+    "--collect-submodules", "storage",
     # Hidden imports that PyInstaller may miss
     "--hidden-import", "Trio_UnifiedApi",
-    "--hidden-import", "scope.scope_engine",
     "--hidden-import", "help_window",
     "--hidden-import", "pyqtgraph.opengl",
     "--hidden-import", "OpenGL",

@@ -4,13 +4,16 @@ The dedicated setter names and value types come from the
 ``Trio_UnifiedApi_CPP.pdf`` axis-parameter setter reference.
 """
 
-from dataclasses import dataclass
-from typing import Callable, Iterable, Optional
+from __future__ import annotations
 
-try:
-    from ..models.axis_parameter_config import AxisParameterConfig
-except ImportError:  # App runtime imports scope as a top-level package.
-    from models.axis_parameter_config import AxisParameterConfig
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, Iterable, Optional
+
+if TYPE_CHECKING:
+    if __package__ and __package__.startswith("src."):
+        from ..models.axis_parameter_config import AxisParameterConfig
+    else:
+        from models.axis_parameter_config import AxisParameterConfig
 
 
 @dataclass(frozen=True)

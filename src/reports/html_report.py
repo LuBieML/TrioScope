@@ -9,20 +9,12 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-try:
-    from scope.fft_analysis import amplitude_spectrum
-    from scope.measurements import (
-        TraceMeasurement,
-        compute_capture_summary,
-        compute_trace_measurements,
-    )
-except ImportError:  # pragma: no cover - used by tests importing through src.*
-    from src.scope.fft_analysis import amplitude_spectrum
-    from src.scope.measurements import (
-        TraceMeasurement,
-        compute_capture_summary,
-        compute_trace_measurements,
-    )
+from scope.fft_analysis import amplitude_spectrum
+from scope.measurements import (
+    TraceMeasurement,
+    compute_capture_summary,
+    compute_trace_measurements,
+)
 
 
 _DEFAULT_COLORS = [
