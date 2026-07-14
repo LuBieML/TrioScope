@@ -3,6 +3,15 @@
 Notable changes to TrioScope are recorded here. New entries are generated from
 Conventional Commit pull-request titles by Release Please.
 
+## [0.5.1](https://github.com/LuBieML/TrioScope/compare/v0.5.0...v0.5.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* added distance calc ([fbffcf6](https://github.com/LuBieML/TrioScope/commit/fbffcf676262490ac41ed9bf94c506376f8cd99a))
+* added icons ([3f02ba7](https://github.com/LuBieML/TrioScope/commit/3f02ba7927b7b47578bf49d2248a858f486f473b))
+* fixed build script ([218b767](https://github.com/LuBieML/TrioScope/commit/218b767b90018030f19251db76f379dadddf9b34))
+
 ## [0.5.0](https://github.com/LuBieML/TrioScope/compare/v0.4.0...v0.5.0) (2026-07-13)
 
 
