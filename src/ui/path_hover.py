@@ -39,6 +39,34 @@ def nearest_xy_point_index(
     return index
 
 
+def block_screen_distances_sq(projected_corners, mouse_x: float, mouse_y: float) -> np.ndarray:
+    """Squared screen distance from the cursor to each block's bounding box.
+
+    Takes the projected ``(m, 8, 2)`` screen positions of each block's bounding
+    box corners. A box lying entirely in front of the camera projects inside the
+    convex hull of its projected corners, so this distance is a lower bound on
+    the distance to any sample in the block -- a block farther than the hover
+    radius cannot contain a hit and can be skipped without touching its samples.
+    A block with any corner behind the camera has no valid screen bounds, and is
+    reported at distance zero so it is never wrongly skipped.
+    """
+    corners = np.asarray(projected_corners, dtype=float)
+    if corners.ndim != 3 or corners.shape[1:] != (8, 2) or len(corners) == 0:
+        return np.zeros(len(corners), dtype=float)
+
+    finite = np.isfinite(corners).all(axis=2)
+    unprojectable = ~finite.all(axis=1)
+    safe = np.where(finite[:, :, None], corners, [mouse_x, mouse_y])
+    x_min = safe[:, :, 0].min(axis=1)
+    x_max = safe[:, :, 0].max(axis=1)
+    y_min = safe[:, :, 1].min(axis=1)
+    y_max = safe[:, :, 1].max(axis=1)
+    zero = np.zeros(len(corners))
+    dx = np.maximum.reduce([x_min - mouse_x, zero, mouse_x - x_max])
+    dy = np.maximum.reduce([y_min - mouse_y, zero, mouse_y - y_max])
+    return np.where(unprojectable, 0.0, dx * dx + dy * dy)
+
+
 def nearest_projected_point_index(
     projected_points,
     mouse_x: float,

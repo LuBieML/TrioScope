@@ -65,8 +65,10 @@ Add traces and re-select the plot mode.
 
 ### 3D view is laggy
 
-The OpenGL viewport renders every captured sample. For very long captures,
-clear the buffer (`⏧ Clear`) more often or reduce the capture **Duration**.
+The OpenGL viewport keeps every captured sample and only collapses
+straight travel for drawing. Zooming in brings the original samples back
+at pixel scale. If the view still lags on a very noisy path, clear the
+buffer (`Clear`) more often or reduce the capture **Duration**.
 
 ### Auto-scroll seems stuck
 

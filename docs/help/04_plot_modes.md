@@ -28,6 +28,9 @@ relationship between two signals — e.g. plotting `MPOS` of axis 0 against
 
 Trace 1 → X, Trace 2 → Y, Trace 3 → Z. Renders a **3D path** in an OpenGL
 viewport. Useful for visualising true 3D toolpaths or 3-axis robot motion.
+Straight travel is collapsed by geometry while capturing. Zooming in rebuilds
+the path from the original samples at pixel scale, so close-up views keep
+full capture resolution.
 
 - Drag with the left mouse button to **orbit**.
 - Wheel scroll to **dolly** in/out.
