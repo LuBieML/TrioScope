@@ -150,7 +150,7 @@ class PositionLoopCard(_MetricCard):
         self.add_row("Settle time (to ±band)", "--", "ms")
         self.add_row("Ringing crossings", "--")
         self.add_row("Post-move FE peak", "--", "u")
-        self.add_row("Steady-state FE", "--", "u")
+        self.add_row("Late-window FE", "--", "u")
         self.add_row("Damping ratio", "--")
         self.add_row("Tolerance band", "--", "u")
 
@@ -189,7 +189,7 @@ class PositionLoopCard(_MetricCard):
 
         steady = settle.get("fe_steady_state", 0.0)
         ss_color = RED if settle.get("steady_state_offset_nonzero") else CYAN
-        self.add_row("Steady-state FE", f"{steady:.4g}", "u", ss_color)
+        self.add_row("Late-window FE", f"{steady:.4g}", "u", ss_color)
 
         damping = settle.get("damping_ratio")
         if damping is not None:

@@ -75,10 +75,13 @@ def segment_phases(t: np.ndarray, dvel: np.ndarray, dt: float,
     settle statistics.
     """
     n = len(dvel)
-    dacc = per_segment_gradient(dvel, t, bounds)
+    # Phase names describe change in *speed magnitude*, not the sign of the
+    # axis acceleration.  Using d(dvel)/dt swaps accel/decel for every
+    # negative-direction move (0 -> -v has negative signed acceleration).
+    dspeed = per_segment_gradient(np.abs(dvel), t, bounds)
 
     v_max = float(np.max(np.abs(dvel)))
-    a_max = float(np.max(np.abs(dacc)))
+    a_max = float(np.max(np.abs(dspeed)))
     v_thresh = EPS_VEL_FRAC * v_max if v_max > 0 else 1e-9
     a_thresh = EPS_ACC_FRAC * a_max if a_max > 0 else 1e-9
 
@@ -115,8 +118,8 @@ def segment_phases(t: np.ndarray, dvel: np.ndarray, dt: float,
     # --- Phase masks (reversal excluded from everything) ---
     kinematic_idle = np.abs(dvel) <= v_thresh
     moving = ~kinematic_idle & ~reversal
-    accel = moving & (dacc > a_thresh)
-    decel = moving & (dacc < -a_thresh)
+    accel = moving & (dspeed > a_thresh)
+    decel = moving & (dspeed < -a_thresh)
     cruise = moving & ~accel & ~decel
     idle = kinematic_idle & ~reversal
 

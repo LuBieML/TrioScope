@@ -90,7 +90,10 @@ class MainWindowActions(WindowBackedController):
 
         try:
             data = self.accumulated_data
-            CSVStorage.export_data(path, data['time'], data['params'])
+            CSVStorage.export_data(
+                path, data['time'], data['params'],
+                segment_breaks=data.get('segment_breaks', []),
+            )
             self.status_label.setText(f"Exported {len(data['params'])} channel(s) to {path}")
         except Exception as e:
             QMessageBox.critical(self.window, "Export Error", str(e))
@@ -334,7 +337,9 @@ class MainWindowActions(WindowBackedController):
             return
 
         try:
-            time_arr, params, traces_data = CSVStorage.import_data(path)
+            time_arr, params, traces_data, segment_breaks = (
+                CSVStorage.import_data_with_metadata(path)
+            )
 
             # --- Reconfigure traces to match imported columns ---
             # Remove all existing traces
@@ -355,7 +360,7 @@ class MainWindowActions(WindowBackedController):
                 'time': time_arr,
                 'num_samples': len(time_arr),
                 'params': params,
-                'segment_breaks': [],
+                'segment_breaks': segment_breaks,
             }
             self.total_samples = len(time_arr)
             self.sample_counter_label.setText(f"Samples: {self.total_samples}")
@@ -373,7 +378,7 @@ class MainWindowActions(WindowBackedController):
                     buf[:n_import] = v
                     self._param_buffers[k] = buf
                 self._buffer_len = n_import
-                self._segment_breaks = []
+                self._segment_breaks = list(segment_breaks)
             self._last_consumed_state = None
             self._virtual_buffers = {}
             self._reset_fft_state()

@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from src.ai.signal_metrics import SignalMetrics
 from src.ai.signal_channels import resolve_channels, detect_axes
+from src.ai.signal_phases import segment_phases
 
 FS = 1000.0
 DT = 1.0 / FS
@@ -152,6 +153,16 @@ class TestVffSlope:
         assert fit["proportional_to_velocity"] is True
         assert fit["slope"] == pytest.approx(k, rel=0.25)
 
+    def test_one_cruise_speed_does_not_invent_vff_slope(self):
+        dvel = trapezoid_dvel(v=50.0)
+        t, dpos = profile(dvel)
+        fe = 0.002 * dvel + noise(len(t), 1e-4)
+        m = SignalMetrics.compute_all(t, base_params(dpos, fe), axis=0)
+        fit = m["fe"]["cruise_fe_vs_velocity"]
+        assert fit["proportional_to_velocity"] is False
+        assert "slope" not in fit
+        assert "two materially different speeds" in fit["note"]
+
     def test_symmetric_viscous_fe_is_not_asymmetry(self):
         # +kv one way, -kv the other: symmetric physics, must NOT flag
         k = 0.002
@@ -193,7 +204,36 @@ class TestResonance:
         fe = 0.05 * np.sin(2 * np.pi * 120.0 * t) + noise(len(t), 0.001)
         m = SignalMetrics.compute_all(t, base_params(dpos, fe), axis=0)
         assert m["health"]["position"] is False
-        assert any("120" in i for i in m["health"]["position_issues"])
+        assert m["oscillation"]["fe"]["dominant_hz"] == pytest.approx(
+            120.0, abs=3.0)
+
+
+class TestDirectionIndependentPhases:
+    def test_negative_move_accel_and_decel_are_not_swapped(self):
+        dvel = trapezoid_dvel(direction=-1.0)
+        t = np.arange(len(dvel)) / FS
+        phases = segment_phases(t, dvel, DT, [(0, len(dvel))])
+
+        accel_slice = slice(300, 500)
+        decel_slice = slice(1100, 1300)
+        assert phases["accel"][accel_slice].sum() > 150
+        assert phases["accel"][decel_slice].sum() == 0
+        assert phases["decel"][decel_slice].sum() > 150
+        assert phases["decel"][accel_slice].sum() == 0
+
+    @pytest.mark.parametrize("direction", [1.0, -1.0])
+    def test_overshoot_uses_peak_after_demand_ramp(self, direction):
+        dvel = trapezoid_dvel(direction=direction)
+        t, dpos = profile(dvel)
+        mvel = dvel.copy()
+        mvel[520] = direction * 120.0  # peak is in cruise, not accel
+        metrics = SignalMetrics.compute_all(
+            t, base_params(dpos, noise(len(t), 0.001),
+                           **{"MSPEED(0)": mvel}),
+            axis=0,
+        )
+        overshoot = metrics["velocity"]["velocity_overshoot_per_move"]
+        assert overshoot["max_pct"] == pytest.approx(20.0, abs=0.1)
 
 
 class TestRingdown:

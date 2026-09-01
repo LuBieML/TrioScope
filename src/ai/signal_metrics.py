@@ -220,8 +220,13 @@ class SignalMetrics:
 
         # --- Phase relationship between current and velocity ---
         if cur is not None and mvel is not None:
+            fe_osc = result["oscillation"].get("fe", {})
+            phase_target = (fe_osc.get("dominant_hz")
+                            if fe_osc.get("has_significant_oscillation")
+                            else None)
             result["oscillation"]["current_vs_velocity_phase"] = cross_phase(
-                cur - np.mean(cur), mvel - np.mean(mvel), cruise_mask, fs, bounds)
+                cur - np.mean(cur), mvel - np.mean(mvel), cruise_mask, fs, bounds,
+                target_freq_hz=phase_target)
 
         # --- Asymmetry (+ vs - direction) ---
         if fe is not None:

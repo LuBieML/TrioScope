@@ -7,6 +7,7 @@ NOISE_FLOOR_SIGMA = 5.0  # FFT peak threshold above median noise floor
 SATURATION_FRAC = 0.95   # |current| > 95% of observed peak = near-saturation
 MIN_OSCILLATION_HZ = 5.0  # position loop bandwidth floor
 MIN_CRUISE_DURATION_S = 0.3  # need >=300 ms of contiguous cruise for FFT
+SPECTRAL_GUARD_S = 0.020  # trim demand-transition edges from cruise FFT runs
 MIN_CYCLES_FOR_PEAK = 3      # peak must fit >=3 cycles in analyzed window
 REVERSAL_HALF_WIDTH_S = 0.080  # ± window around demand-velocity zero crossings
 SETTLE_BAND_SIGMA = 4.0   # auto tolerance band = 4x robust noise sigma

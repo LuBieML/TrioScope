@@ -197,7 +197,8 @@ class TestConfigSerialization(unittest.TestCase):
                 "MPOS(0)": np.array([10.0, 11.0, 12.0]),
                 "DPOS(1)": np.array([10.5, 11.5, 12.5])
             }
-            CSVStorage.export_data(tmp_name, time_data, params_data)
+            CSVStorage.export_data(
+                tmp_name, time_data, params_data, segment_breaks=[2])
             
             # Read back
             time_arr, params_dict, traces = CSVStorage.import_data(tmp_name)
@@ -205,5 +206,11 @@ class TestConfigSerialization(unittest.TestCase):
             np.testing.assert_array_equal(params_dict["MPOS(0)"], params_data["MPOS(0)"])
             np.testing.assert_array_equal(params_dict["DPOS(1)"], params_data["DPOS(1)"])
             self.assertEqual(traces, [("MPOS", 0), ("DPOS", 1)])
+
+            _, params_meta, _, segment_breaks = (
+                CSVStorage.import_data_with_metadata(tmp_name)
+            )
+            self.assertEqual(segment_breaks, [2])
+            self.assertNotIn("__TRIOSCOPE_SEGMENT__", params_meta)
         finally:
             os.remove(tmp_name)

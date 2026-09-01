@@ -99,19 +99,29 @@ def analyze_fe(fe: np.ndarray, dvel: np.ndarray, phases: dict,
     if cruise.sum() > 20:
         v = dvel[cruise]
         f = fe[cruise]
-        if np.std(v) > 1e-9:
+        mean_speed = float(np.mean(np.abs(v)))
+        relative_span = float(np.ptp(v)) / max(mean_speed, 1e-9)
+        # A slope cannot be identified from one almost-constant cruise speed.
+        # DPOS differentiation leaves tiny quantisation jitter that otherwise
+        # makes polyfit return a large, meaningless VFF slope.
+        if relative_span >= 0.05:
             slope, intercept = np.polyfit(v, f, 1)
             residual = f - (slope * v + intercept)
             signal = slope * np.mean(np.abs(v))
             noise = np.std(residual)
+            proportional = bool(abs(signal) > 2 * noise)
+            if slope > 0:
+                note = ("positive slope with proportional_to_velocity=true "
+                        "→ insufficient VFF_GAIN/Pn112")
+            else:
+                note = ("negative slope with proportional_to_velocity=true "
+                        "→ possible excess feedforward or sign mismatch")
             entry = {
                 "slope": round(float(slope), 6),
                 "intercept": round(float(intercept), 4),
-                "proportional_to_velocity": bool(abs(signal) > 2 * noise),
-                "note": (
-                    "slope>0 with proportional_to_velocity=true → FE scales with "
-                    "speed → insufficient VFF_GAIN/Pn112"
-                ),
+                "proportional_to_velocity": proportional,
+                "relative_velocity_span": round(relative_span, 3),
+                "note": note,
             }
             if not velocity_units_known:
                 entry["units_note"] = (
@@ -119,6 +129,13 @@ def analyze_fe(fe: np.ndarray, dvel: np.ndarray, phases: dict,
                     "unknown); the proportionality flag is still valid"
                 )
             result["cruise_fe_vs_velocity"] = entry
+        else:
+            result["cruise_fe_vs_velocity"] = {
+                "proportional_to_velocity": False,
+                "relative_velocity_span": round(relative_span, 3),
+                "note": ("insufficient cruise-speed spread for VFF slope; "
+                         "capture at least two materially different speeds"),
+            }
     return result
 
 
@@ -132,24 +149,30 @@ def analyze_velocity(mvel: np.ndarray, dvel: np.ndarray, phases: dict) -> dict:
         if mask.sum() > 5:
             result[phase_name + "_err"] = PhaseStats.from_array(err[mask]).as_dict()
 
-    # Per-move velocity overshoot, normalised to that move's peak demand
-    accel_mask = phases["accel"]
+    # Per-move speed overshoot, normalised to that move's peak demand.  The
+    # measured peak normally occurs just *after* the demand acceleration ramp,
+    # so restricting this calculation to the accel mask misses real overshoot.
+    # Project measured velocity along the move direction to make the metric
+    # symmetric for positive and negative moves.
     moves = phases.get("moves", [])
     per_move: list[float] = []
     per_move_pct: list[float] = []
     for start, stop in moves:
-        move_slice = slice(start, stop)
-        move_accel = accel_mask[move_slice]
-        if move_accel.sum() == 0:
+        move_dvel = dvel[start:stop]
+        move_mvel = mvel[start:stop]
+        move_vpeak = float(np.max(np.abs(move_dvel)))
+        if move_vpeak <= 1e-9:
             continue
-        seg_err = err[move_slice][move_accel]
-        seg_dvel = dvel[move_slice][move_accel]
-        signed_err = seg_err * np.sign(seg_dvel)
-        peak = float(np.max(signed_err))
-        move_vpeak = float(np.max(np.abs(dvel[move_slice])))
-        per_move.append(round(peak, 4))
-        if move_vpeak > 1e-9:
-            per_move_pct.append(round(100.0 * peak / move_vpeak, 2))
+        meaningful = np.abs(move_dvel) > 0.02 * move_vpeak
+        if not meaningful.any():
+            continue
+        direction = float(np.sign(np.median(move_dvel[meaningful])))
+        if direction == 0:
+            continue
+        measured_peak = float(np.max(move_mvel * direction))
+        overshoot = max(0.0, measured_peak - move_vpeak)
+        per_move.append(round(overshoot, 4))
+        per_move_pct.append(round(100.0 * overshoot / move_vpeak, 2))
     result["velocity_overshoot_per_move"] = {
         "per_move": per_move[:MAX_PER_MOVE_REPORTED],
         "max": round(max(per_move), 4) if per_move else 0.0,
@@ -414,8 +437,8 @@ def build_health(result: dict) -> dict:
                 f"Post-move ringing ({settle['zero_crossings']} band crossings)")
         if settle.get("steady_state_offset_nonzero"):
             position_issues.append(
-                f"Steady-state FE offset {settle['fe_steady_state']:g} exceeds "
-                f"±{band:g} — insufficient integral action")
+                f"Late-window FE offset {settle['fe_steady_state']:g} exceeds "
+                f"±{band:g} — verify tolerance, dwell, load, and position bias")
         fe_osc = osc.get("fe", {})
         if fe_osc.get("has_significant_oscillation"):
             position_issues.append(

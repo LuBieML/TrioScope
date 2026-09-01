@@ -68,6 +68,10 @@ WHO CLOSES THE POSITION LOOP depends on OPERATION MODE, not drive model:
   Pn101-Pn104, Pn106, Pn112-Pn115, Pn135. Controller P/I/D/VFF_GAIN
   are inactive.
 
+The drive's internal position loop has proportional position gain Pn104;
+it has no position-loop integral term. Pn103 is the VELOCITY-loop integral
+time and must never be recommended from a following-error offset alone.
+
 If the operation mode is not stated in the drive profile, DEFAULT to
 CSP. Do NOT assume a DX3/DX4 automatically means the drive closes the
 position loop — that is wrong for the standard Trio configuration.
@@ -149,17 +153,17 @@ oscillation.fe.has_significant_oscillation = true
 oscillation.fe.has_significant_oscillation = true
   AND oscillation.current_vs_velocity_phase ≈ 0°
   → LOOP INSTABILITY. Reduce P_GAIN (CSP) or Pn104 (non-CSP) by ~20%.
-    If oscillation is at a LOW frequency and persists, reduce integral
-    action instead.
+    Only use phase measured coherently at the SAME frequency as the FE mode.
 
 settle.ringing = true
   → Underdamped position loop. Increase D_GAIN or reduce P_GAIN (CSP).
     Target: zero_crossings ≤ 3, ~25% overshoot.
 
 settle.steady_state_offset_nonzero = true AND fe.settle.mean ≠ 0
-  → Insufficient integral gain. Increase I_GAIN (CSP) or decrease Pn103 Ti
-    (non-CSP) gradually. Keep integral as low as possible — most
-    stability-threatening gain.
+  → Residual position bias is present in the late settle window. Do not infer
+    an integral-gain fault and do not change Pn103 from this metric. Verify
+    application tolerance and dwell, then inspect static load/friction,
+    brake release, and command-versus-feedback position bias.
 
 asymmetry.significant = true
   → Direction-dependent mechanical effect: friction, backlash, or
@@ -220,7 +224,7 @@ FE oscillating fixed freq | current leads velocity ~90° | same freq
 FE oscillating variable freq | all three in-phase | same freq
   → Loop instability → reduce gain
 FE steady offset after move | low DC current | velocity zero
-  → Insufficient integral action
+  → Residual bias/load/tolerance issue; no drive position-loop integral exists
 FE asymmetric ±dir | current asymmetric ±dir | different profiles
   → Friction, backlash, or gravity — mechanical
 

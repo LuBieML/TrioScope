@@ -107,6 +107,7 @@ class TestCoherence:
         assert 60 < cvp["phase_deg"] < 120
         assert "RESONANCE" in cvp["interpretation"]
         assert cvp["n_averages"] >= 2
+        assert cvp["classification_reliable"] is True
 
     def test_low_frequency_resonance_is_outside_notch_range(self):
         cvp = self._cross(shared_hz=25.0, coherent=True,
@@ -137,6 +138,21 @@ class TestCoherence:
             pytest.skip("segmentation produced multiple windows")
         assert "proxy" in cvp["method"]
         assert cvp["coherence"] is None
+        assert cvp["classification_reliable"] is False
+
+    def test_fe_mode_does_not_borrow_phase_from_different_frequency(self):
+        t, dpos, velocity, current = self._phase_inputs(
+            shared_hz=200.0, coherent=True, n_moves=3)
+        fe = 0.05 * np.sin(2 * np.pi * 30.0 * t)
+        metrics = SignalMetrics.compute_all(
+            t, {"DPOS(0)": dpos, "MSPEED(0)": velocity,
+                "DRIVE_TORQUE(0)": current, "DRIVE_FE(0)": fe},
+            axis=0)
+        cvp = metrics["oscillation"]["current_vs_velocity_phase"]
+        assert cvp["target_freq_hz"] == pytest.approx(30.0, abs=2.0)
+        assert cvp["dominant_freq_hz"] is None
+        assert cvp["classification_reliable"] is False
+        assert "at the FE oscillation frequency" in cvp["note"]
 
 
 class TestGates:

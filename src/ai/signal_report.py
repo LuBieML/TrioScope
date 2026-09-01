@@ -44,11 +44,17 @@ def format_for_llm(metrics: dict) -> str:
                 )
         if "cruise_fe_vs_velocity" in fe:
             c = fe["cruise_fe_vs_velocity"]
-            lines.append(
-                f"  cruise_fe_vs_velocity: slope={c['slope']} "
-                f"intercept={c['intercept']} "
-                f"proportional_to_velocity={c['proportional_to_velocity']}"
-            )
+            if "slope" in c:
+                lines.append(
+                    f"  cruise_fe_vs_velocity: slope={c['slope']} "
+                    f"intercept={c['intercept']} "
+                    f"proportional_to_velocity={c['proportional_to_velocity']}"
+                )
+            else:
+                lines.append(
+                    "  cruise_fe_vs_velocity: not fitted "
+                    f"({c.get('note', 'insufficient velocity spread')})"
+                )
             lines.append(f"    note: {c['note']}")
             if "units_note" in c:
                 lines.append(f"    units_note: {c['units_note']}")

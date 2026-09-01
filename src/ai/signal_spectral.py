@@ -24,14 +24,26 @@ from .drive_profile import MIN_NOTCH_FILTER_HZ
 from .signal_constants import (
     NOISE_FLOOR_SIGMA, MIN_OSCILLATION_HZ, MIN_CRUISE_DURATION_S,
     MIN_CYCLES_FOR_PEAK, MIN_FFT_SAMPLES, WELCH_MAX_NPERSEG, MIN_COHERENCE,
+    SPECTRAL_GUARD_S,
 )
 from .signal_phases import contiguous_runs
 
 
-def _usable_runs(mask: np.ndarray,
-                 bounds: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    return [r for r in contiguous_runs(mask, bounds)
-            if r[1] - r[0] >= MIN_FFT_SAMPLES]
+def _usable_runs(mask: np.ndarray, bounds: list[tuple[int, int]],
+                 fs: float) -> list[tuple[int, int]]:
+    """Cruise runs with demand-transition edges removed.
+
+    Demand acceleration can end before measured velocity and FE finish their
+    transient.  Trimming a small, fixed guard from both edges prevents that
+    one-off response from being presented as a sustained cruise oscillation.
+    """
+    guard = max(0, int(round(SPECTRAL_GUARD_S * fs))) if fs > 0 else 0
+    runs = []
+    for start, stop in contiguous_runs(mask, bounds):
+        guarded = (start + guard, stop - guard)
+        if guarded[1] - guarded[0] >= MIN_FFT_SAMPLES:
+            runs.append(guarded)
+    return runs
 
 
 def _pick_nperseg(runs: list[tuple[int, int]]) -> int:
@@ -106,7 +118,7 @@ def fft_peaks(signal: np.ndarray, cruise_mask: np.ndarray, fs: float,
     """Dominant oscillation peaks, Welch-averaged over all cruise runs."""
     if fs <= 0:
         return _insufficient(0.0, 0)
-    runs = _usable_runs(cruise_mask, bounds)
+    runs = _usable_runs(cruise_mask, bounds, fs)
     if not runs:
         return _insufficient(0.0, 0)
 
@@ -159,12 +171,14 @@ def fft_peaks(signal: np.ndarray, cruise_mask: np.ndarray, fs: float,
         "n_cruise_runs": len(runs),
         "n_averages": n_averages,
         "resolution_hz": round(df, 2),
+        "edge_guard_ms": round(SPECTRAL_GUARD_S * 1000.0, 1),
         "note": "peak frequencies parabolically interpolated below bin width",
     }
 
 
 def cross_phase(a: np.ndarray, b: np.ndarray, cruise_mask: np.ndarray,
-                fs: float, bounds: list[tuple[int, int]]) -> dict | None:
+                fs: float, bounds: list[tuple[int, int]], *,
+                target_freq_hz: float | None = None) -> dict | None:
     """Phase of ``a`` relative to ``b`` at their strongest shared frequency.
 
     Used for current-vs-velocity: ~+90° = mechanical resonance, ~0° = loop
@@ -174,7 +188,7 @@ def cross_phase(a: np.ndarray, b: np.ndarray, cruise_mask: np.ndarray,
     """
     if fs <= 0:
         return None
-    runs = _usable_runs(cruise_mask, bounds)
+    runs = _usable_runs(cruise_mask, bounds, fs)
     if not runs:
         return None
     duration = sum(stop - start for start, stop in runs) / fs
@@ -233,11 +247,30 @@ def cross_phase(a: np.ndarray, b: np.ndarray, cruise_mask: np.ndarray,
             "cruise_duration_s": round(duration, 3),
             "n_averages": n_averages,
             "method": method,
+            "resolution_hz": round(df, 2),
+            "target_freq_hz": target_freq_hz,
+            "classification_reliable": False,
         }
 
-    weight = np.abs(s_ab)
-    idx_rel = int(np.argmax(weight[valid]))
-    idx = np.where(valid)[0][idx_rel]
+    if target_freq_hz is not None:
+        idx = int(np.argmin(np.abs(freqs - float(target_freq_hz))))
+        if not valid[idx]:
+            return {
+                "note": ("no coherent current/velocity line at the FE "
+                         f"oscillation frequency {target_freq_hz:g} Hz"),
+                "dominant_freq_hz": None,
+                "analysis_band_hz": f"{MIN_OSCILLATION_HZ} to {round(fs / 2, 1)}",
+                "cruise_duration_s": round(duration, 3),
+                "n_averages": n_averages,
+                "method": method,
+                "resolution_hz": round(df, 2),
+                "target_freq_hz": round(float(target_freq_hz), 1),
+                "classification_reliable": False,
+            }
+    else:
+        weight = np.abs(s_ab)
+        idx_rel = int(np.argmax(weight[valid]))
+        idx = np.where(valid)[0][idx_rel]
     phase_deg = float(np.degrees(np.angle(s_ab[idx])))
 
     peak_freq = float(freqs[idx])
@@ -263,4 +296,12 @@ def cross_phase(a: np.ndarray, b: np.ndarray, cruise_mask: np.ndarray,
         "cruise_duration_s": round(duration, 3),
         "n_averages": n_averages,
         "method": method,
+        "resolution_hz": round(df, 2),
+        "target_freq_hz": (round(float(target_freq_hz), 1)
+                           if target_freq_hz is not None else None),
+        "frequency_error_hz": (round(abs(peak_freq - float(target_freq_hz)), 2)
+                               if target_freq_hz is not None else None),
+        # A single FFT window has no usable coherence estimate.  Its phase is
+        # diagnostic context only and must never drive an automatic gain rule.
+        "classification_reliable": coherence is not None,
     }
