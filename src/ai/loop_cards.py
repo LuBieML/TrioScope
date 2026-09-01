@@ -249,12 +249,20 @@ class FePhaseCard(_MetricCard):
         fit = fe.get("cruise_fe_vs_velocity")
         if fit:
             proportional = fit.get("proportional_to_velocity")
-            color = AMBER if proportional else CYAN
-            self.add_row("Cruise FE vs velocity",
-                         f"slope {fit['slope']:.3g}", "", color)
-            if proportional:
+            slope = fit.get("slope")
+            if slope is None:
+                self.add_row("Cruise FE vs velocity", "not fitted", "",
+                             TEXT_DIM)
+            else:
+                color = AMBER if proportional else CYAN
+                self.add_row("Cruise FE vs velocity",
+                             f"slope {slope:.3g}", "", color)
+            if proportional and slope is not None and slope > 0:
                 hints.append(
                     "FE scales with speed → increase VFF_GAIN (CSP) / Pn112")
+            elif proportional and slope is not None and slope < 0:
+                hints.append(
+                    "Negative FE/speed slope → check excess feedforward or sign")
 
         rev = fe.get("reversal")
         cruise = fe.get("cruise")
