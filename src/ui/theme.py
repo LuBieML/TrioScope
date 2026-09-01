@@ -16,6 +16,8 @@ TRACE_COLORS = [
 CURSOR_COLORS = {
     'c1': '#FFD700',  # Gold
     'c2': '#00CED1',  # Dark Turquoise
+    'y1': '#F06292',  # Pink — horizontal Y cursor 1
+    'y2': '#9CCC65',  # Light green — horizontal Y cursor 2
 }
 
 AXIS_PARAMETERS_STYLESHEET = """

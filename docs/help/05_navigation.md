@@ -54,6 +54,19 @@ Each cursor reports:
    are active (instead of the live latest sample).
 4. Click the cursor button again to hide them and return to live readout.
 
+### Y Cursors (Horizontal Value Range)
+
+The **Y Cursors** toolbar button adds two horizontal markers, **Y1** (pink)
+and **Y2** (green), to every time-domain plot. Each subplot has its own
+independent pair because current, speed, position, and following error use
+different units and scales. The readout shows Y1, Y2, and the absolute ΔY for
+each trace.
+
+For a like-for-like inertia measurement, place Y1 and Y2 on the speed plot at
+the required speed limits, then place C1 and C2 where the speed trace crosses
+those boundaries. This selects the same speed range in both directions even
+when the ramp durations or sample counts differ.
+
 ### Tips
 
 - **Settling time**: drop C1 at the end of a move and C2 where the following

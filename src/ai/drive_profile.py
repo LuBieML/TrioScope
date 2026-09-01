@@ -129,10 +129,10 @@ PARAM_DEFS: list[tuple] = [
         "position tracking. Must stay below ~1/3 of speed loop bandwidth.",
     ),
     (
-        "pn106", "Pn106", "Load Inertia", "%",
+        "pn106", "Pn106", "Load Inertia", "raw",
         0, 9999, 0,
-        "Load-to-motor inertia ratio in percent. "
-        "(load inertia / motor rotor inertia) × 100. "
+        "Raw drive value: load-to-motor inertia ratio × 100. "
+        "For example, Pn106=470 means a 4.70:1 load/motor ratio. "
         "Required for modes 3 and 5; used by auto-tuning to scale gains.",
     ),
     (
@@ -199,7 +199,7 @@ class DriveProfile:
     pn102: Optional[int] = None   # Speed loop gain (rad/s)
     pn103: Optional[int] = None   # Speed loop Ti (×0.1ms)
     pn104: Optional[int] = None   # Position loop gain (1/s)
-    pn106: Optional[int] = None   # Load inertia (%)
+    pn106: Optional[int] = None   # Raw value; 100 = 1.00:1 load/motor
     pn112: Optional[int] = None   # Speed feedforward (%)
     pn113: Optional[int] = None   # Speed feedforward filter (×0.1ms)
     pn114: Optional[int] = None   # Torque feedforward (%)
@@ -277,8 +277,8 @@ class DriveProfile:
              "speed loop integral time — lower = faster integral action"),
             ("pn104", "Pn104 Position Loop Gain ", "1/s",
              "outer position loop Kp — higher = tighter position tracking"),
-            ("pn106", "Pn106 Load Inertia       ", "%",
-             "load/motor inertia ratio — critical for gain scaling"),
+            ("pn106", "Pn106 Load Inertia       ", "raw",
+             "raw register; 100 = 1.00:1 load/motor ratio"),
             ("pn112", "Pn112 Speed Feedforward  ", "%",
              "reduces position following error during constant-velocity moves"),
             ("pn113", "Pn113 Speed FF Filter    ", "×0.1 ms",

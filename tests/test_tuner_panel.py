@@ -156,6 +156,15 @@ def test_inertia_card_uses_cursor_average_and_tracks_tuning_axis(qt_app):
     assert "Axis 3" in panel.inertia_card.status_label.text()
 
 
+def test_inertia_card_only_exposes_acceleration_deceleration_method(qt_app):
+    panel = TunerPanel()
+    card = panel.inertia_card
+
+    assert not hasattr(card, "method_combo")
+    assert card.deceleration_average_edit.isEnabled()
+    assert card.btn_capture_deceleration.isEnabled()
+
+
 def test_detected_motor_parameters_populate_inertia_fields(qt_app):
     panel = TunerPanel()
     card = panel.inertia_card
@@ -198,6 +207,7 @@ def test_inertia_estimate_can_be_applied_to_current_drive_profile(qt_app):
     card.signal_combo.setCurrentIndex(card.signal_combo.findData("raw_torque"))
     card.acceleration_average_edit.setValue(250.0)
     card.steady_average_edit.setValue(50.0)
+    card.deceleration_average_edit.setValue(-150.0)
     card.encoder_resolution_edit.setValue(100.0)
     panel.motion_panel.acceleration_edit.setValue(1000.0)
     card.rated_torque_edit.setValue(2.0)
@@ -208,13 +218,17 @@ def test_inertia_estimate_can_be_applied_to_current_drive_profile(qt_app):
     assert (
         estimate.total_inertia_kgm2 - estimate.load_inertia_kgm2
     ) == pytest.approx(0.001)
-    expected = int(round(estimate.pn106_percent))
+    expected = int(round(estimate.pn106_value))
     assert card.btn_apply_pn106.isEnabled()
+    assert card.pn106_label.text() == f"Pn106  {expected}"
+    assert "%" not in card.pn106_label.text()
+    assert "Load / motor inertia" in card.inertia_ratio_label.text()
+    assert ": 1" in card.inertia_ratio_label.text()
 
     card.btn_apply_pn106.click()
 
     assert panel._param_widgets["pn106"].value() == expected
-    assert f"Pn106 set to {expected}%" in panel._status_label.text()
+    assert f"Pn106 set to raw value {expected}" in panel._status_label.text()
 
 
 def test_analyze_populates_cards_and_status(qt_app):

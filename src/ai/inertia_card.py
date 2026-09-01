@@ -21,8 +21,6 @@ from PySide6.QtWidgets import (
 )
 
 from .inertia_estimator import (
-    ACCEL_MINUS_STEADY,
-    ACCEL_VS_DECEL,
     CURRENT_AMPS,
     RAW_CURRENT,
     RAW_TORQUE,
@@ -66,11 +64,6 @@ class InertiaCalculatorCard(QGroupBox):
         ("Current · A", CURRENT_AMPS),
         ("Torque · Nm", TORQUE_NM),
     )
-    _METHOD_OPTIONS = (
-        ("Acceleration − steady", ACCEL_MINUS_STEADY),
-        ("Acceleration ↔ deceleration (recommended)", ACCEL_VS_DECEL),
-    )
-
     def __init__(self, parent=None):
         super().__init__("Inertia estimate", parent)
         self.setObjectName("inertiaCalculator")
@@ -85,7 +78,6 @@ class InertiaCalculatorCard(QGroupBox):
         self._motion_source_error = ""
         self._motor_read_available = False
         self._build_ui()
-        self._update_method_controls()
         self._update_signal_controls()
         self._recalculate()
 
@@ -149,20 +141,13 @@ class InertiaCalculatorCard(QGroupBox):
         hint.setWordWrap(True)
         outer.addWidget(hint)
 
-        outer.addWidget(self._step_label("1 · SELECT THE MEASUREMENT METHOD"))
+        outer.addWidget(self._step_label("1 · SELECT THE CAPTURED SIGNAL"))
         self.signal_combo = QComboBox()
         self.signal_combo.setObjectName("inertiaChoice")
         for label, value in self._SIGNAL_OPTIONS:
             self.signal_combo.addItem(label, value)
         self.signal_combo.currentIndexChanged.connect(self._update_signal_controls)
         outer.addWidget(self.signal_combo)
-
-        self.method_combo = QComboBox()
-        self.method_combo.setObjectName("inertiaChoice")
-        for label, value in self._METHOD_OPTIONS:
-            self.method_combo.addItem(label, value)
-        self.method_combo.currentIndexChanged.connect(self._update_method_controls)
-        outer.addWidget(self.method_combo)
 
         outer.addWidget(self._step_label("2 · CAPTURE PHASE AVERAGES"))
         measurement_grid = QGridLayout()
@@ -317,6 +302,9 @@ class InertiaCalculatorCard(QGroupBox):
         self.pn106_label = QLabel("Pn106  —")
         self.pn106_label.setObjectName("inertiaPn106")
         result_layout.addWidget(self.pn106_label)
+        self.inertia_ratio_label = QLabel("Load / motor inertia  —")
+        self.inertia_ratio_label.setObjectName("inertiaDetails")
+        result_layout.addWidget(self.inertia_ratio_label)
         self.result_details = QLabel("Enter test-motion and motor data to calculate.")
         self.result_details.setObjectName("inertiaDetails")
         self.result_details.setWordWrap(True)
@@ -489,12 +477,6 @@ class InertiaCalculatorCard(QGroupBox):
         if index >= 0:
             self.signal_combo.setCurrentIndex(index)
 
-    def _update_method_controls(self) -> None:
-        recommended = self.method_combo.currentData() == ACCEL_VS_DECEL
-        self.deceleration_average_edit.setEnabled(recommended)
-        self.btn_capture_deceleration.setEnabled(recommended)
-        self._recalculate()
-
     def _update_signal_controls(self) -> None:
         mode = self.signal_combo.currentData()
         uses_current = mode in {RAW_CURRENT, CURRENT_AMPS}
@@ -556,11 +538,11 @@ class InertiaCalculatorCard(QGroupBox):
                 ),
                 motor_count=self.motor_count_edit.value(),
                 signal_mode=str(self.signal_combo.currentData()),
-                method=str(self.method_combo.currentData()),
             )
         except ValueError as exc:
             self._last_estimate = None
             self.pn106_label.setText("Pn106  —")
+            self.inertia_ratio_label.setText("Load / motor inertia  —")
             self.result_details.setText(
                 "Enter the required phase, test-motion and motor values."
             )
@@ -569,8 +551,11 @@ class InertiaCalculatorCard(QGroupBox):
             return
 
         self._last_estimate = estimate
-        rounded_pn106 = int(round(estimate.pn106_percent))
-        self.pn106_label.setText(f"Pn106  {rounded_pn106} %")
+        rounded_pn106 = int(round(estimate.pn106_value))
+        self.pn106_label.setText(f"Pn106  {rounded_pn106}")
+        self.inertia_ratio_label.setText(
+            f"Load / motor inertia  {estimate.load_motor_ratio:.6g} : 1"
+        )
         mode = self.signal_combo.currentData()
         if mode == RAW_CURRENT:
             raw_current = abs(estimate.signal_delta)
@@ -607,7 +592,7 @@ class InertiaCalculatorCard(QGroupBox):
             )
         elif not valid_pn106:
             self._set_status(
-                "The estimate is outside the drive's Pn106 range (0–9999%).",
+                "The estimate is outside the drive's Pn106 raw range (0–9999).",
                 error=True,
             )
         elif (
@@ -636,7 +621,7 @@ class InertiaCalculatorCard(QGroupBox):
     def _request_apply(self) -> None:
         if self._last_estimate is None:
             return
-        value = int(round(self._last_estimate.pn106_percent))
+        value = int(round(self._last_estimate.pn106_value))
         if 0 <= value <= 9999:
             self.applyPn106Requested.emit(value)
 

@@ -3,8 +3,6 @@ import math
 import pytest
 
 from src.ai.inertia_estimator import (
-    ACCEL_MINUS_STEADY,
-    ACCEL_VS_DECEL,
     CURRENT_AMPS,
     RAW_CURRENT,
     RAW_TORQUE,
@@ -18,6 +16,7 @@ def test_raw_torque_estimates_load_inertia_and_pn106():
     result = estimate_inertia(
         acceleration_average=250.0,
         steady_average=50.0,
+        deceleration_average=-150.0,
         motor_acceleration_rpm_s=600.0,
         rated_torque_nm=2.0,
         motor_inertia_kgm2=0.001,
@@ -31,7 +30,10 @@ def test_raw_torque_estimates_load_inertia_and_pn106():
     assert result.load_inertia_kgm2 == pytest.approx(
         result.total_inertia_kgm2 - 0.001
     )
-    assert result.pn106_percent == pytest.approx(
+    assert result.load_motor_ratio == pytest.approx(
+        result.load_inertia_kgm2 / 0.001
+    )
+    assert result.pn106_value == pytest.approx(
         result.load_inertia_kgm2 / 0.001 * 100.0
     )
 
@@ -58,6 +60,7 @@ def test_raw_current_reports_acceleration_current_and_uses_motor_ratio():
     result = estimate_inertia(
         acceleration_average=450.0,
         steady_average=300.0,
+        deceleration_average=150.0,
         motor_acceleration_rpm_s=1000.0,
         rated_torque_nm=3.0,
         rated_current_a=6.0,
@@ -69,7 +72,7 @@ def test_raw_current_reports_acceleration_current_and_uses_motor_ratio():
     assert result.torque_per_motor_nm == pytest.approx(0.45)
 
 
-def test_recommended_method_uses_accel_and_decel_and_reports_symmetry():
+def test_estimator_uses_accel_and_decel_and_reports_symmetry():
     result = estimate_inertia(
         acceleration_average=220.0,
         steady_average=60.0,
@@ -78,7 +81,6 @@ def test_recommended_method_uses_accel_and_decel_and_reports_symmetry():
         rated_torque_nm=2.5,
         motor_inertia_kgm2=0.0003,
         signal_mode=RAW_TORQUE,
-        method=ACCEL_VS_DECEL,
     )
 
     assert result.signal_delta == pytest.approx(150.0)
@@ -89,6 +91,7 @@ def test_identical_gantry_motors_sum_torque_and_rotor_inertia():
     one = estimate_inertia(
         acceleration_average=200.0,
         steady_average=0.0,
+        deceleration_average=-200.0,
         motor_acceleration_rpm_s=600.0,
         rated_torque_nm=2.0,
         motor_inertia_kgm2=0.001,
@@ -98,6 +101,7 @@ def test_identical_gantry_motors_sum_torque_and_rotor_inertia():
     two = estimate_inertia(
         acceleration_average=200.0,
         steady_average=0.0,
+        deceleration_average=-200.0,
         motor_acceleration_rpm_s=600.0,
         rated_torque_nm=2.0,
         motor_inertia_kgm2=0.001,
@@ -108,7 +112,7 @@ def test_identical_gantry_motors_sum_torque_and_rotor_inertia():
     assert two.combined_torque_nm == pytest.approx(2 * one.combined_torque_nm)
     assert two.total_inertia_kgm2 == pytest.approx(2 * one.total_inertia_kgm2)
     assert two.load_inertia_kgm2 == pytest.approx(2 * one.load_inertia_kgm2)
-    assert two.pn106_percent == pytest.approx(one.pn106_percent)
+    assert two.pn106_value == pytest.approx(one.pn106_value)
 
 
 def test_current_amps_requires_rated_current():
@@ -116,11 +120,11 @@ def test_current_amps_requires_rated_current():
         estimate_inertia(
             acceleration_average=10.0,
             steady_average=2.0,
+            deceleration_average=-6.0,
             motor_acceleration_rpm_s=100.0,
             rated_torque_nm=1.0,
             motor_inertia_kgm2=0.001,
             signal_mode=CURRENT_AMPS,
-            method=ACCEL_MINUS_STEADY,
         )
 
 
@@ -128,11 +132,11 @@ def test_raw_current_can_omit_rated_current_when_only_torque_is_needed():
     result = estimate_inertia(
         acceleration_average=10.0,
         steady_average=2.0,
+        deceleration_average=-6.0,
         motor_acceleration_rpm_s=100.0,
         rated_torque_nm=1.0,
         motor_inertia_kgm2=0.001,
         signal_mode=RAW_CURRENT,
-        method=ACCEL_MINUS_STEADY,
     )
 
     assert result.acceleration_current_a is None

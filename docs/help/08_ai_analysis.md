@@ -86,32 +86,34 @@ The **Inertia estimate** card is intended for gantries, limited-travel axes,
 and other mechanisms where the drive's repeated-rotation inertia routine is
 not practical. The result is inertia reflected to the motor shafts.
 
-1. Select the captured signal and calculation method. `DRIVE_TORQUE` in
+1. Select the captured signal. `DRIVE_TORQUE` in
    0.1% rated torque is preferred. `DRIVE_CURRENT` in 0.1% rated current is
    also supported directly in its normalized scale. Rated motor current is
    optional for this mode and is only used to display equivalent amperes.
-2. Place C1 and C2 around a constant-acceleration interval and click
-   **Use AVG** beside Acceleration. Repeat for a steady-speed interval.
-3. For better rejection of friction and gravity, select the recommended
-   acceleration/deceleration method and capture all three phase averages.
-4. Under **Test motion data**, verify the separate **Axis scaling (UNITS)**
+2. Capture all three phase averages from the same move: constant acceleration,
+   steady speed, and constant deceleration. Acceleration and deceleration
+   should be measured at comparable speeds.
+3. Under **Test motion data**, verify the separate **Axis scaling (UNITS)**
    value loaded from Axis setup and enter the motor encoder resolution in
    counts/revolution. **Calculated acceleration** then updates automatically
    in rev/s² from the Test motion `ACCEL` value.
-5. When connected to a DX3 or DX4 drive, click **Read from drive** to load
+4. When connected to a DX3 or DX4 drive, click **Read from drive** to load
    rated torque (Pn810), rated current (Pn812), motor rotor inertia (Pn831),
    and encoder resolution bits (Pn880) over CoE. Successful values replace
    their fields; unavailable values remain editable for manual entry. Rotor
    inertia uses `1e-8 kg·m²` (for example, `230` means `2.30e-6 kg·m²`).
    Also enter the number of identical equally-loaded gantry motors.
-6. Review acceleration-only current/torque, total inertia, load inertia, and
-   the calculated Pn106 percentage. **Apply estimate to Pn106** copies the
-   rounded value into the selected DX drive profile; use **Write** to send it.
+5. Review acceleration-only current/torque, total inertia, load inertia, the
+   physical load/motor ratio, and the calculated raw Pn106 register value.
+   For example, Pn106 `470` represents a `4.70:1` load/motor inertia ratio.
+   **Apply estimate to Pn106** copies the raw integer into the selected DX
+   drive profile; use **Write** to send it.
 
-The simple method subtracts steady torque/current from acceleration. The
-recommended method compares acceleration with deceleration and reports a
-phase-symmetry warning when the two sides do not agree. Repeat the measurement
-at comparable speed if the mismatch exceeds 20%.
+The estimator calculates acceleration torque/current as half the signed
+difference between acceleration and deceleration. This rejects steady load,
+friction and gravity more reliably than subtracting a steady-speed sample.
+The steady-speed value is retained only for the phase-symmetry check. Repeat
+the measurement at comparable speed if the mismatch exceeds 20%.
 
 The motor acceleration conversion is:
 

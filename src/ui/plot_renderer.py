@@ -103,6 +103,8 @@ class PlotRenderer(WindowBackedController):
         self._stats_cache = {}
         self._cursor_lines_c1.clear()
         self._cursor_lines_c2.clear()
+        self._y_cursor_lines_y1.clear()
+        self._y_cursor_lines_y2.clear()
         self._xy_auto_range = True
 
         enabled_traces = self.get_enabled_traces()
@@ -177,6 +179,8 @@ class PlotRenderer(WindowBackedController):
         # Re-add cursor lines if cursors are active
         if self._cursors_enabled:
             self._add_cursors_to_plots()
+        if self._y_cursors_enabled:
+            self._add_y_cursors_to_plots()
 
     def _configure_plot(self, plot_item, show_xlabel=True):
         """Configure a PlotItem with standard settings"""
@@ -669,7 +673,10 @@ class PlotRenderer(WindowBackedController):
             )
         else:
             self._remove_cursors_from_plots()
-            self.cursor_readout.hide()
+            if not self._y_cursors_enabled:
+                self.cursor_readout.hide()
+            else:
+                self._update_cursor_readout()
             self.btn_cursors.setStyleSheet("")
         self._sync_measurement_panel(force=True)
         # Re-render FFT traces with/without cursor window
@@ -772,6 +779,143 @@ class PlotRenderer(WindowBackedController):
             if not self._update_timer.isActive() and self.accumulated_data is not None:
                 self._render_plots()
 
+    def _toggle_y_cursors(self, checked):
+        """Toggle generic horizontal value cursors on time-domain plots."""
+        self._y_cursors_enabled = checked
+        if checked:
+            self._init_y_cursor_positions()
+            self._add_y_cursors_to_plots()
+            if self.plot_mode == 'time':
+                self.cursor_readout.show()
+            self._update_cursor_readout()
+            self.btn_y_cursors.setStyleSheet(
+                "background-color: #3d3044; border: 1px solid #F06292;"
+            )
+        else:
+            self._remove_y_cursors_from_plots()
+            if not self._cursors_enabled:
+                self.cursor_readout.hide()
+            else:
+                self._update_cursor_readout()
+            self.btn_y_cursors.setStyleSheet("")
+
+    def _y_trace_entries(self):
+        """Return every enabled time-domain trace with its PlotItem."""
+        entries = []
+        for trace in self.get_enabled_traces():
+            plot_key = id(trace)
+            if not trace.is_fft() and plot_key in self.plot_items:
+                entries.append((trace, plot_key, self.plot_items[plot_key]))
+        return entries
+
+    def _default_y_cursor_positions(self, trace, plot_item):
+        """Calculate useful initial Y1/Y2 positions for one trace."""
+        values = None
+        if self.accumulated_data is not None:
+            values = self.accumulated_data.get('params', {}).get(
+                trace.get_display_name()
+            )
+        if values is not None:
+            finite = np.asarray(values, dtype=float)
+            finite = finite[np.isfinite(finite)]
+        else:
+            finite = np.asarray([], dtype=float)
+
+        if finite.size:
+            value_min = float(np.min(finite))
+            value_max = float(np.max(finite))
+        else:
+            value_min, value_max = plot_item.getViewBox().viewRange()[1]
+
+        span = float(value_max - value_min)
+        if abs(span) < 1e-12:
+            span = max(abs(float(value_min)) * 0.2, 2.0)
+            value_min -= span / 2.0
+        return {
+            'y1': value_min + span * 0.33,
+            'y2': value_min + span * 0.67,
+        }
+
+    def _init_y_cursor_positions(self):
+        """Initialize an independent Y1/Y2 range for every trace."""
+        entries = self._y_trace_entries()
+        self._y_cursor_pos = {
+            plot_key: self._default_y_cursor_positions(trace, plot_item)
+            for trace, plot_key, plot_item in entries
+        }
+        self._y_cursor_trace_names = {
+            plot_key: trace.get_display_name()
+            for trace, plot_key, _plot_item in entries
+        }
+
+    def _add_y_cursors_to_plots(self):
+        """Add draggable horizontal Y1/Y2 lines to time-domain plots."""
+        self._remove_y_cursors_from_plots()
+        if self.plot_mode != 'time':
+            return
+        entries = self._y_trace_entries()
+        active_keys = {plot_key for _trace, plot_key, _plot_item in entries}
+        self._y_cursor_pos = {
+            key: value for key, value in self._y_cursor_pos.items()
+            if key in active_keys
+        }
+        self._y_cursor_trace_names = {
+            key: value for key, value in self._y_cursor_trace_names.items()
+            if key in active_keys
+        }
+        for trace, plot_key, plot_item in entries:
+            trace_name = trace.get_display_name()
+            if self._y_cursor_trace_names.get(plot_key) != trace_name:
+                self._y_cursor_pos[plot_key] = self._default_y_cursor_positions(
+                    trace, plot_item
+                )
+            self._y_cursor_trace_names[plot_key] = trace_name
+            positions = self._y_cursor_pos[plot_key]
+            for cid, color, store in (
+                ('y1', CURSOR_COLORS['y1'], self._y_cursor_lines_y1),
+                ('y2', CURSOR_COLORS['y2'], self._y_cursor_lines_y2),
+            ):
+                line = pg.InfiniteLine(
+                    pos=positions[cid],
+                    angle=0,
+                    movable=True,
+                    pen=pg.mkPen(color, width=1.5, style=Qt.DashLine),
+                    hoverPen=pg.mkPen(color, width=2.5),
+                    label=cid.upper(),
+                    labelOpts={
+                        'position': 0.04,
+                        'color': color,
+                        'fill': pg.mkBrush('#2B2B2BBB'),
+                        'movable': True,
+                    },
+                )
+                line.setZValue(1001)
+                line._y_cursor_id = cid
+                line._y_cursor_plot_key = plot_key
+                line.sigPositionChanged.connect(
+                    self.window._on_y_cursor_line_moved
+                )
+                plot_item.addItem(line, ignoreBounds=True)
+                store[plot_key] = line
+
+    def _remove_y_cursors_from_plots(self):
+        """Remove all horizontal Y cursor lines."""
+        for store in (self._y_cursor_lines_y1, self._y_cursor_lines_y2):
+            for plot_key, line in list(store.items()):
+                if plot_key in self.plot_items:
+                    try:
+                        self.plot_items[plot_key].removeItem(line)
+                    except Exception:
+                        pass
+            store.clear()
+
+    def _on_y_cursor_line_moved(self, line):
+        """Update the independent Y range for the line's subplot."""
+        cid = line._y_cursor_id
+        plot_key = line._y_cursor_plot_key
+        self._y_cursor_pos.setdefault(plot_key, {})[cid] = float(line.value())
+        self._update_cursor_readout()
+
     def _get_nearest_index(self, t):
         if self.accumulated_data is None:
             return None
@@ -790,14 +934,65 @@ class PlotRenderer(WindowBackedController):
 
     def _update_cursor_readout(self):
         """Update the cursor readout panel with current cursor values."""
-        if not self._cursors_enabled or self.plot_mode in ('xy', 'xyz'):
+        time_enabled = self._cursors_enabled
+        y_enabled = getattr(self, '_y_cursors_enabled', False)
+        if (not time_enabled and not y_enabled) or self.plot_mode != 'time':
             self.cursor_readout_label.setText("")
             return
+        if hasattr(self, 'cursor_readout'):
+            if time_enabled and y_enabled:
+                self.cursor_readout.setFixedHeight(152)
+            elif y_enabled:
+                self.cursor_readout.setFixedHeight(82)
+            else:
+                self.cursor_readout.setFixedHeight(100)
 
         # Only show readout for time-domain traces
         enabled_traces = [t for t in self.get_enabled_traces() if not t.is_fft()]
         if not enabled_traces:
             self.cursor_readout_label.setText("")
+            return
+        y_row = ''
+        if y_enabled:
+            y_cells = []
+            for trace, plot_key, _plot_item in self._y_trace_entries():
+                positions = self._y_cursor_pos.get(plot_key)
+                if not positions:
+                    continue
+                y1 = positions['y1']
+                y2 = positions['y2']
+                y_cells.append(
+                    f'<td style="padding: 0 12px; vertical-align:top;">'
+                    f'<span style="color:{trace.get_color()};">'
+                    f'{escape(trace.get_display_name())}:</span><br>'
+                    f'<span style="color:{CURSOR_COLORS["y1"]};">Y1</span> '
+                    f'{y1:.4f}<br>'
+                    f'<span style="color:{CURSOR_COLORS["y2"]};">Y2</span> '
+                    f'{y2:.4f}<br>'
+                    f'<span style="color:#FFA500;">ΔY</span> '
+                    f'{abs(y2 - y1):.4f}</td>'
+                )
+            if y_cells:
+                y_row = (
+                    '<tr><td style="color:#F06292; font-weight:bold; '
+                    'padding-right:8px; vertical-align:top;">Y</td>'
+                    '<td style="padding: 0 12px; vertical-align:top;">'
+                    'Value range</td>'
+                    f'{"".join(y_cells)}</tr>'
+                )
+            else:
+                y_row = (
+                    '<tr><td colspan="5" style="color:#F06292;">'
+                    'Y cursors need an enabled time-domain trace.</td></tr>'
+                )
+
+        if not time_enabled:
+            html = (
+                '<table cellspacing="0" cellpadding="1" '
+                'style="font-family: Consolas; font-size: 9pt;">'
+                f'{y_row}</table>'
+            )
+            self.cursor_readout_label.setText(html)
             return
         t1 = self._cursor_pos['c1']
         t2 = self._cursor_pos['c2']
@@ -880,6 +1075,7 @@ class PlotRenderer(WindowBackedController):
             f'<tr><td style="color:#03DAC6; font-weight:bold; padding-right:8px;">AVG</td>'
             f'<td style="padding: 0 12px;">n = {range_stats.sample_count} samples</td>'
             f'{"".join(param_cells_average)}</tr>'
+            f'{y_row}'
             '</table>'
         )
         self.cursor_readout_label.setText(html)
@@ -946,7 +1142,7 @@ class PlotRenderer(WindowBackedController):
             self.plot_splitter.show()
 
         # Cursor readout visible when any trace is in time mode
-        if self._cursors_enabled:
+        if self._cursors_enabled or self._y_cursors_enabled:
             has_time = self.plot_mode == 'time' and any(
                 not t.is_fft() for t in self.get_enabled_traces())
             self.cursor_readout.setVisible(has_time)
@@ -1562,7 +1758,7 @@ class PlotRenderer(WindowBackedController):
                         self._hover_labels[trace_id].setPos(*new_pos)
 
         # Update cursor readout if cursors are active (time-domain traces only)
-        if self._cursors_enabled:
+        if self._cursors_enabled or self._y_cursors_enabled:
             self._update_cursor_readout()
 
     def toggle_auto_scroll(self):
@@ -1617,7 +1813,7 @@ class PlotRenderer(WindowBackedController):
         self._recreate_subplots()
         self.sample_counter_label.setText("Samples: 0")
         self.status_label.setText("Data cleared")
-        if self._cursors_enabled:
+        if self._cursors_enabled or self._y_cursors_enabled:
             self._update_cursor_readout()
         self._sync_measurement_panel(force=True)
 

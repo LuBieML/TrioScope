@@ -31,6 +31,7 @@ class _CursorReadoutStub:
 
     def __init__(self):
         self._cursors_enabled = True
+        self._y_cursors_enabled = False
         self.plot_mode = "time"
         self._cursor_pos = {"c1": 0.1, "c2": 0.3}
         self.accumulated_data = {
@@ -86,6 +87,39 @@ def test_cursor_readout_displays_sample_count_and_trace_average():
 
     assert "n = 3 samples" in readout.cursor_readout_label.text
     assert "AVG CURRENT(0):</span> 20.0000" in readout.cursor_readout_label.text
+
+
+class _YCursorReadoutStub:
+    _update_cursor_readout = PlotRenderer._update_cursor_readout
+    _y_trace_entries = PlotRenderer._y_trace_entries
+
+    def __init__(self):
+        self._cursors_enabled = False
+        self._y_cursors_enabled = True
+        self.plot_mode = "time"
+        self.plot_items = {}
+        self.accumulated_data = None
+        self.cursor_readout_label = _Label()
+        self.trace = _Trace()
+        self.plot_items[id(self.trace)] = object()
+        self._y_cursor_pos = {
+            id(self.trace): {"y1": -100.0, "y2": -50.0}
+        }
+
+    def get_enabled_traces(self):
+        return [self.trace]
+
+
+def test_y_cursor_readout_displays_range_for_any_trace_type():
+    readout = _YCursorReadoutStub()
+
+    readout._update_cursor_readout()
+
+    assert "CURRENT(0):</span><br>" in readout.cursor_readout_label.text
+    assert "Y1" in readout.cursor_readout_label.text
+    assert "-100.0000" in readout.cursor_readout_label.text
+    assert "Y2</span> -50.0000" in readout.cursor_readout_label.text
+    assert "ΔY</span> 50.0000" in readout.cursor_readout_label.text
 
 
 class _TuningCursorProviderStub:

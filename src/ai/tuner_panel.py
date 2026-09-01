@@ -680,7 +680,7 @@ class TunerPanel(QMainWindow):
             return
         widget.setValue(int(value))
         self._set_status(
-            f"Axis {self._current_axis()} Pn106 set to {int(value)}%. "
+            f"Axis {self._current_axis()} Pn106 set to raw value {int(value)}. "
             "Use Write to send the profile to the drive.",
             ACCENT,
         )

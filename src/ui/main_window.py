@@ -157,6 +157,11 @@ class ParameterScopeOscilloscope(QMainWindow):
         self._cursor_lines_c2 = {}
         self._cursor_pos = {'c1': 0.0, 'c2': 0.0}
         self._cursor_updating = False  # prevent recursive signal loops
+        self._y_cursors_enabled = False
+        self._y_cursor_lines_y1 = {}  # {plot_key: InfiniteLine}
+        self._y_cursor_lines_y2 = {}
+        self._y_cursor_pos = {}  # {plot_key: {'y1': value, 'y2': value}}
+        self._y_cursor_trace_names = {}  # reset positions when a trace is retyped
 
         # Settings window
         self._settings_window = None
@@ -516,6 +521,15 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.btn_cursors.setCheckable(True)
         self.btn_cursors.toggled.connect(self._toggle_cursors)
         status_layout.addWidget(self.btn_cursors)
+
+        self.btn_y_cursors = QPushButton("\u2195 Y Cursors")
+        self.btn_y_cursors.setFixedWidth(105)
+        self.btn_y_cursors.setCheckable(True)
+        self.btn_y_cursors.setToolTip(
+            "Show two horizontal value cursors on every time-domain plot"
+        )
+        self.btn_y_cursors.toggled.connect(self._toggle_y_cursors)
+        status_layout.addWidget(self.btn_y_cursors)
 
         self.btn_compare = QPushButton("\u29c9 Compare")
         self.btn_compare.setFixedWidth(110)
