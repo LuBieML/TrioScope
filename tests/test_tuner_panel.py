@@ -14,6 +14,9 @@ from src.ai.tuner_panel import TunerPanel
 from src.ai.tuner_theme import RED
 from src.ai.tuning_history import KPI_DEFS
 from src.ai.zn_calculator import zn_pi_table
+from src.ai.inertia_estimator import RAW_CURRENT
+from src.ai.motor_parameters import DetectedMotorParameters
+from src.models.motion_axis_command import MotionAxisCommand
 
 FS = 1000.0
 
@@ -61,6 +64,24 @@ def test_tuner_is_a_separate_resizable_window(qt_app):
     panel.hide()
 
 
+def test_workspace_is_grouped_into_task_tabs(qt_app):
+    panel = TunerPanel()
+
+    assert panel._workspace_tabs.count() == 3
+    assert [panel._workspace_tabs.tabText(i) for i in range(3)] == [
+        "TUNE & ANALYZE",
+        "MOTION & INERTIA",
+        "HISTORY",
+    ]
+    assert panel._workspace_tabs.currentWidget() is panel._analysis_tab
+
+    panel.focus_motion()
+
+    assert panel._workspace_tabs.currentWidget() is panel._motion_tab
+    assert panel.motion_panel.minimumWidth() >= 330
+    assert panel.inertia_card.minimumWidth() >= 400
+
+
 def test_tuner_close_hides_without_losing_state(qt_app):
     panel = TunerPanel()
     panel.set_data_provider(_capture)
@@ -74,6 +95,126 @@ def test_tuner_close_hides_without_losing_state(qt_app):
 
     assert not panel.isVisible()
     assert panel.last_metrics() is metrics
+
+
+def test_tuner_combines_drive_profile_and_single_axis_motion(qt_app):
+    panel = TunerPanel()
+
+    assert panel.motion_panel is not None
+    panel._axis_combo.setCurrentText("4")
+    assert panel.motion_panel.axis == 4
+
+    panel.motion_panel.distance_edit.setValue(80.0)
+    panel.motion_panel.speed_edit.setValue(125.0)
+    panel.motion_panel.acceleration_edit.setValue(750.0)
+    assert panel.motion_panel.commands() == [
+        MotionAxisCommand(
+            axis=4,
+            distance=80.0,
+            speed=125.0,
+            acceleration=750.0,
+        )
+    ]
+
+    panel.motion_panel.axis_combo.setCurrentIndex(2)
+    assert panel._current_axis() == 2
+
+
+def test_motor_acceleration_is_derived_from_motion_and_encoder_resolution(qt_app):
+    panel = TunerPanel()
+    panel.set_axis_units_provider(lambda axis: 400.0 if axis == 0 else 800.0)
+    panel.inertia_card.encoder_resolution_edit.setValue(4000.0)
+    panel.motion_panel.acceleration_edit.setValue(500.0)
+
+    assert panel.inertia_card.motor_acceleration_edit.isReadOnly()
+    assert panel.inertia_card.axis_units_edit.value() == pytest.approx(400.0)
+    assert panel.inertia_card.motor_acceleration_edit.value() == pytest.approx(50.0)
+    assert "ACCEL 500" in panel.inertia_card.motion_conversion_label.text()
+    assert "UNITS 400" in panel.inertia_card.motion_conversion_label.text()
+
+    panel.inertia_card.encoder_resolution_edit.setValue(2000.0)
+
+    assert panel.inertia_card.motor_acceleration_edit.value() == pytest.approx(100.0)
+
+
+def test_inertia_card_uses_cursor_average_and_tracks_tuning_axis(qt_app):
+    panel = TunerPanel()
+    panel.set_cursor_statistics_provider(
+        lambda axis: {
+            "source": f"DRIVE_CURRENT({axis})",
+            "average": 425.5,
+            "sample_count": 80,
+        }
+    )
+    panel._axis_combo.setCurrentText("3")
+
+    panel.inertia_card.btn_capture_acceleration.click()
+
+    assert panel.inertia_card.acceleration_average_edit.value() == pytest.approx(425.5)
+    assert panel.inertia_card.signal_combo.currentData() == RAW_CURRENT
+    assert "80 samples" in panel.inertia_card.status_label.text()
+    assert "Axis 3" in panel.inertia_card.status_label.text()
+
+
+def test_detected_motor_parameters_populate_inertia_fields(qt_app):
+    panel = TunerPanel()
+    card = panel.inertia_card
+    parameters = DetectedMotorParameters(
+        rated_torque_nm=0.15,
+        rated_current_a=0.9,
+        rotor_inertia_units=230,
+        encoder_resolution_counts=8_388_608,
+    )
+
+    card.apply_detected_motor_parameters(parameters)
+
+    assert card.rated_torque_edit.value() == pytest.approx(0.15)
+    assert card.rated_current_edit.value() == pytest.approx(0.9)
+    assert card.motor_inertia_edit.value() == pytest.approx(230)
+    assert card.encoder_resolution_edit.value() == pytest.approx(8_388_608)
+    assert "read rated torque" in card.status_label.text()
+
+
+def test_motor_read_button_tracks_connection_and_selected_axis(qt_app):
+    panel = TunerPanel()
+    requested = []
+    panel.inertia_card.readMotorRequested.connect(requested.append)
+
+    assert not panel.inertia_card.btn_read_motor.isEnabled()
+    panel.set_connection(object())
+    panel._axis_combo.setCurrentText("3")
+    panel.inertia_card.btn_read_motor.click()
+
+    assert requested == [3]
+    panel.set_connection(None)
+    assert not panel.inertia_card.btn_read_motor.isEnabled()
+
+
+def test_inertia_estimate_can_be_applied_to_current_drive_profile(qt_app):
+    panel = TunerPanel()
+    panel.set_axis_units_provider(lambda axis: 1.0)
+    panel._drive_combo.setCurrentText("DX4")
+    card = panel.inertia_card
+    card.signal_combo.setCurrentIndex(card.signal_combo.findData("raw_torque"))
+    card.acceleration_average_edit.setValue(250.0)
+    card.steady_average_edit.setValue(50.0)
+    card.encoder_resolution_edit.setValue(100.0)
+    panel.motion_panel.acceleration_edit.setValue(1000.0)
+    card.rated_torque_edit.setValue(2.0)
+    card.motor_inertia_edit.setValue(100_000.0)
+
+    estimate = card.last_estimate
+    assert estimate is not None
+    assert (
+        estimate.total_inertia_kgm2 - estimate.load_inertia_kgm2
+    ) == pytest.approx(0.001)
+    expected = int(round(estimate.pn106_percent))
+    assert card.btn_apply_pn106.isEnabled()
+
+    card.btn_apply_pn106.click()
+
+    assert panel._param_widgets["pn106"].value() == expected
+    assert f"Pn106 set to {expected}%" in panel._status_label.text()
 
 
 def test_analyze_populates_cards_and_status(qt_app):

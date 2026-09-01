@@ -28,6 +28,8 @@ except ImportError:
 from models.app_settings import AppSettings
 from models.trace_config import TraceConfig
 from reports.html_report import write_html_report
+from ai.signal_channels import resolve_channels
+from scope.cursor_statistics import calculate_cursor_range_statistics
 from scope.drive_scope_engine import TRIGGER_MODES
 from storage.csv_io import CSVStorage
 from storage.profiles import ProfileStore
@@ -637,9 +639,9 @@ class MainWindowActions(WindowBackedController):
         # ── View menu ──────────────────────────────────────────────
         view_menu = menubar.addMenu("&View")
 
-        act_tuner = QAction("&Servo Tuner Window", self)
+        act_tuner = QAction("&Servo Tuning Workspace", self)
         act_tuner.setShortcut(QKeySequence("Ctrl+T"))
-        act_tuner.setToolTip("Open the Servo Loop Analyser in a separate window")
+        act_tuner.setToolTip("Open drive tuning, test motion and analysis together")
         act_tuner.triggered.connect(self.window._toggle_tuner_panel)
         view_menu.addAction(act_tuner)
 
@@ -652,8 +654,9 @@ class MainWindowActions(WindowBackedController):
         act_ecat.triggered.connect(self.window._open_ethercat_map)
         view_menu.addAction(act_ecat)
 
-        act_motion = QAction("Axis &Motion...", self)
+        act_motion = QAction("Tuning Axis &Motion...", self)
         act_motion.setShortcut(QKeySequence("Ctrl+Shift+M"))
+        act_motion.setToolTip("Open the integrated tuning workspace at test motion")
         act_motion.triggered.connect(self.window._open_motion_window)
         view_menu.addAction(act_motion)
 
@@ -749,31 +752,44 @@ class MainWindowActions(WindowBackedController):
         )
 
     def _toggle_tuner_panel(self):
-        """Show/hide the standalone servo tuner window."""
+        """Show/hide the combined servo tuning workspace."""
+        if self._tuner_panel is not None and self._tuner_panel.isVisible():
+            self._tuner_panel.hide()
+            return
+        self._show_tuner_panel()
+
+    def _show_tuner_panel(self):
+        """Create if needed, then show and return the tuning workspace."""
         if TunerPanel is None:
             QMessageBox.warning(self.window, "Servo Tuner",
                                 "Tuner module not available. Check src/ai/ is present.")
-            return
+            return None
 
         if self._tuner_panel is None:
             self._tuner_panel = TunerPanel(self.window)
+            self.window.motion_controller._attach_motion_panel(
+                self._tuner_panel.motion_panel
+            )
             self._tuner_panel.set_data_provider(self._get_scope_data_for_ai)
+            self._tuner_panel.set_cursor_statistics_provider(
+                self._get_cursor_statistics_for_tuning
+            )
+            self._tuner_panel.set_axis_units_provider(
+                self._get_axis_units_for_tuning
+            )
+            self.axis_parameters_tab.configurationChanged.connect(
+                self._tuner_panel.refresh_motion_acceleration
+            )
             if self.trio_connected and self.trio_connection:
                 self._tuner_panel.set_connection(self.trio_connection, self._conn_lock)
             # Restore saved per-axis drive profiles
             app_settings = SettingsStore().load()
             if app_settings.drive_profiles:
                 self._tuner_panel.set_all_profiles(app_settings.drive_profiles)
-            self._tuner_panel.show()
-            self._tuner_panel.raise_()
-            self._tuner_panel.activateWindow()
-        else:
-            if self._tuner_panel.isVisible():
-                self._tuner_panel.hide()
-            else:
-                self._tuner_panel.show()
-                self._tuner_panel.raise_()
-                self._tuner_panel.activateWindow()
+        self._tuner_panel.show()
+        self._tuner_panel.raise_()
+        self._tuner_panel.activateWindow()
+        return self._tuner_panel
 
     def _toggle_measurement_panel(self):
         """Show/hide the live measurements window."""
@@ -862,6 +878,50 @@ class MainWindowActions(WindowBackedController):
             servo_period_sec = self.scope_engine.servo_period_sec
         segment_breaks = self.accumulated_data.get('segment_breaks', [])
         return time_arr, params, servo_period_sec, segment_breaks
+
+    def _get_cursor_statistics_for_tuning(self, axis: int) -> dict:
+        """Return the selected axis current/torque average inside C1-C2."""
+        if not self._cursors_enabled:
+            raise ValueError(
+                "Enable plot cursors and bracket one motion phase first."
+            )
+        if self.accumulated_data is None:
+            raise ValueError("Run or import a capture before using cursor averages.")
+        time_arr = self.accumulated_data.get("time")
+        params = self.accumulated_data.get("params") or {}
+        if time_arr is None or len(time_arr) == 0:
+            raise ValueError("The current capture has no samples.")
+
+        source = resolve_channels(params, axis=int(axis)).get("current")
+        if source is None:
+            raise ValueError(
+                f"Capture DRIVE_TORQUE, DRIVE_CURRENT or Iq for axis {axis}."
+            )
+        statistics = calculate_cursor_range_statistics(
+            time_arr,
+            {source: params[source]},
+            self._cursor_pos["c1"],
+            self._cursor_pos["c2"],
+        )
+        average = statistics.means.get(source)
+        if statistics.sample_count == 0 or average is None:
+            raise ValueError("No valid samples lie between C1 and C2.")
+        return {
+            "source": source,
+            "average": average,
+            "sample_count": statistics.sample_count,
+        }
+
+    def _get_axis_units_for_tuning(self, axis: int) -> float:
+        """Return controller UNITS without conflating it with encoder resolution."""
+        for config in self.axis_parameters_tab.configurations():
+            if config.axis == int(axis):
+                if config.units <= 0:
+                    raise ValueError("Axis UNITS must be greater than zero.")
+                return float(config.units)
+        raise ValueError(
+            f"Add axis {int(axis)} in Axis setup and enter its UNITS value."
+        )
 
     def open_settings(self):
         if self._settings_window is not None:

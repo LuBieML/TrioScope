@@ -59,24 +59,66 @@ prompt, giving the AI direct visibility into your current tuning state.
 
 ## Preparing an Analyzer-Ready Test Move
 
-Open **View → Axis Motion** and use the **Test stroke calculator** before a
-tuning capture. Enter the desired constant speed and the acceleration already
-configured on the controller axis. TrioScope calculates the minimum symmetric
-trapezoidal-move distance that provides:
+Open **View → Servo Tuning Workspace** (`Ctrl+T`). The window is organized
+into **Tune & Analyze**, **Motion & Inertia**, and **History** tabs. The
+**Tuning Axis Motion** shortcut (`Ctrl+Shift+M`) opens the same workspace and
+selects **Motion & Inertia** directly.
 
-- 0.8 seconds at constant speed for low-frequency and Welch-averaged analysis;
-- distinct acceleration and deceleration phases for feedforward diagnostics;
-- enough distance to reach the requested speed before deceleration starts.
+Use the numbered workflow in **Test motion**:
 
-Select an axis row and press **Apply speed + distance** to copy the result into
-the move. The calculator does not write the controller's `ACCEL` parameter; set
-the axis to the same acceleration value before running the move. Capture at
-least 0.3 seconds of stationary data both before and after the move so the
-noise floor and settling window are available.
+1. Choose the axis and enter **Distance**, **Speed**, and **Acceleration**.
+   The motion axis and Drive Profile axis stay synchronized.
+2. Click **Enable axis**. This enables controller `WDOG`, `SERVO`, and
+   `AXIS_ENABLE` for the selected axis.
+3. Click **Move −** or **Move +**. Immediately before every relative move,
+   TrioScope writes the displayed `SPEED` and writes the displayed
+   acceleration to both `ACCEL` and `DECEL`.
 
-The calculation assumes equal linear acceleration and deceleration:
+Use **STOP** to cancel active and buffered motion. Disabling the axis, leaving
+the **Motion & Inertia** tab, hiding the workspace, disconnecting, or closing
+TrioScope follows the safe shutdown path and disables the motion axis. Capture
+stationary data before and after the move so the analyser can measure the noise
+floor and settling window.
 
-`distance = speed × 0.8 s + speed² ÷ acceleration`
+## Estimating Load Inertia Without Drive Identification
+
+The **Inertia estimate** card is intended for gantries, limited-travel axes,
+and other mechanisms where the drive's repeated-rotation inertia routine is
+not practical. The result is inertia reflected to the motor shafts.
+
+1. Select the captured signal and calculation method. `DRIVE_TORQUE` in
+   0.1% rated torque is preferred. `DRIVE_CURRENT` in 0.1% rated current is
+   also supported directly in its normalized scale. Rated motor current is
+   optional for this mode and is only used to display equivalent amperes.
+2. Place C1 and C2 around a constant-acceleration interval and click
+   **Use AVG** beside Acceleration. Repeat for a steady-speed interval.
+3. For better rejection of friction and gravity, select the recommended
+   acceleration/deceleration method and capture all three phase averages.
+4. Under **Test motion data**, verify the separate **Axis scaling (UNITS)**
+   value loaded from Axis setup and enter the motor encoder resolution in
+   counts/revolution. **Calculated acceleration** then updates automatically
+   in rev/s² from the Test motion `ACCEL` value.
+5. When connected to a DX3 or DX4 drive, click **Read from drive** to load
+   rated torque (Pn810), rated current (Pn812), motor rotor inertia (Pn831),
+   and encoder resolution bits (Pn880) over CoE. Successful values replace
+   their fields; unavailable values remain editable for manual entry. Rotor
+   inertia uses `1e-8 kg·m²` (for example, `230` means `2.30e-6 kg·m²`).
+   Also enter the number of identical equally-loaded gantry motors.
+6. Review acceleration-only current/torque, total inertia, load inertia, and
+   the calculated Pn106 percentage. **Apply estimate to Pn106** copies the
+   rounded value into the selected DX drive profile; use **Write** to send it.
+
+The simple method subtracts steady torque/current from acceleration. The
+recommended method compares acceleration with deceleration and reports a
+phase-symmetry warning when the two sides do not agree. Repeat the measurement
+at comparable speed if the mismatch exceeds 20%.
+
+The motor acceleration conversion is:
+
+`motor rev/s² = ACCEL × axis UNITS ÷ encoder resolution`
+
+Axis `UNITS` is counts per user unit; encoder resolution is counts per motor
+revolution. They are separate values and are not assumed to be equal.
 
 ## Effective Prompts
 

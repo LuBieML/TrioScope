@@ -1,9 +1,9 @@
-"""Asynchronous UAPI orchestration for the Axis Motion popup."""
+"""Asynchronous UAPI orchestration for the integrated tuning motion panel."""
 
 import logging
 import threading
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Signal, Slot
 
 from scope.axis_motion import (
     axes_are_idle,
@@ -11,7 +11,6 @@ from scope.axis_motion import (
     execute_relative_moves,
     set_axes_enabled,
 )
-from ui.motion_window import AxisMotionWindow
 from ui.window_controller import WindowBackedController
 
 
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class MotionController(WindowBackedController):
-    """Own the modeless motion window and serialize its hardware operations."""
+    """Connect the tuning motion UI and serialize its hardware operations."""
 
     motionEnableFinished = Signal(bool, object)
     motionMoveFinished = Signal(object, object)
@@ -37,28 +36,22 @@ class MotionController(WindowBackedController):
         self.motionStopFinished.connect(self._on_motion_stop_finished_ui)
 
     def _open_motion_window(self):
-        """Open the multi-axis move scheme editor as a modeless window."""
-        if self._motion_window is None:
-            self._motion_window = AxisMotionWindow(parent=self.window)
-            self._motion_window.setAttribute(Qt.WA_DeleteOnClose)
-            self._motion_window.destroyed.connect(
-                lambda: setattr(self, "_motion_window", None)
-            )
-            self._motion_window.startRequested.connect(
-                self.window._on_motion_start_requested
-            )
-            self._motion_window.stopRequested.connect(
-                self.window._on_motion_stop_requested
-            )
-            self._motion_window.enableRequested.connect(
-                self.window._on_motion_enable_requested
-            )
-            self._motion_window.set_connection_available(
-                bool(self.trio_connected and self.trio_connection)
-            )
-        self._motion_window.show()
-        self._motion_window.raise_()
-        self._motion_window.activateWindow()
+        """Open the shared tuning workspace at its axis-motion controls."""
+        tuner = self.window.actions_controller._show_tuner_panel()
+        if tuner is not None:
+            tuner.focus_motion()
+
+    def _attach_motion_panel(self, panel) -> None:
+        """Attach the lazily-created embedded panel to the hardware workflow."""
+        if self._motion_window is panel:
+            return
+        self._motion_window = panel
+        panel.startRequested.connect(self.window._on_motion_start_requested)
+        panel.stopRequested.connect(self.window._on_motion_stop_requested)
+        panel.enableRequested.connect(self.window._on_motion_enable_requested)
+        panel.set_connection_available(
+            bool(self.trio_connected and self.trio_connection)
+        )
 
     @Slot(bool, object)
     def _on_motion_enable_requested(self, enabled, commands):

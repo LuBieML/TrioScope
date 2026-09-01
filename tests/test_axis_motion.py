@@ -25,6 +25,12 @@ class _RecordingMotionConnection:
     def SetAxisParameter_SPEED(self, axis, value):
         self.calls.append(("SPEED", axis, value))
 
+    def SetAxisParameter_ACCEL(self, axis, value):
+        self.calls.append(("ACCEL", axis, value))
+
+    def SetAxisParameter_DECEL(self, axis, value):
+        self.calls.append(("DECEL", axis, value))
+
     def MoveRel(self, distance, axis):
         self.calls.append(("MOVE", distance, axis))
 
@@ -89,6 +95,24 @@ def test_move_sets_all_speeds_before_executing_relative_moves():
         ("SPEED", 4, 60.0),
         ("MOVE", 25.0, 1),
         ("MOVE", -8.0, 4),
+    ]
+
+
+def test_tuning_move_sets_speed_accel_and_decel_before_move():
+    connection = _RecordingMotionConnection()
+    command = MotionAxisCommand(
+        axis=3,
+        speed=75.0,
+        distance=-12.0,
+        acceleration=600.0,
+    )
+
+    assert execute_relative_moves(connection, [command]) == 1
+    assert connection.calls == [
+        ("SPEED", 3, 75.0),
+        ("ACCEL", 3, 600.0),
+        ("DECEL", 3, 600.0),
+        ("MOVE", -12.0, 3),
     ]
 
 

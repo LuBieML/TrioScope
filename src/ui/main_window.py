@@ -161,7 +161,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Settings window
         self._settings_window = None
 
-        # Standalone Servo Loop Analyser window
+        # Standalone combined servo tuning workspace
         self._tuner_panel = None
 
         # Measurement panel
@@ -173,7 +173,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         # Help window (lazy)
         self._help_window = None
 
-        # Axis motion popup (UAPI command hooks will be added later)
+        # Embedded axis-motion panel, assigned when the tuner is created
         self._motion_window = None
 
         # Compare/single-trace companion windows.
@@ -472,7 +472,7 @@ class ParameterScopeOscilloscope(QMainWindow):
 
         # -- Cursor readout panel (hidden until cursors toggled on) --
         self.cursor_readout = QFrame()
-        self.cursor_readout.setFixedHeight(78)
+        self.cursor_readout.setFixedHeight(100)
         self.cursor_readout.setStyleSheet(
             "QFrame { background-color: #1a1a2e; border: 1px solid #4b4a4a;"
             " border-radius: 4px; }"

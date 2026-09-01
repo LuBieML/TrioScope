@@ -170,14 +170,23 @@ def execute_relative_moves(
     commands: Iterable[MotionAxisCommand],
     connection_lock=None,
 ) -> int:
-    """Set every axis SPEED, then issue the UAPI MOVE (``MoveRel``) calls."""
+    """Prepare every motion profile, then issue the UAPI ``MoveRel`` calls.
+
+    Tuning-workspace moves carry an explicit acceleration.  For those moves
+    ACCEL and DECEL are both set immediately before MOVE so the displayed
+    profile is the profile the controller actually executes.  Older callers
+    may omit acceleration and retain the historical SPEED-only behaviour.
+    """
 
     command_list = list(commands)
     _validated_axes(command_list)
-    _require_methods(connection, ("SetAxisParameter_SPEED", "MoveRel"))
+    required_methods = ["SetAxisParameter_SPEED", "MoveRel"]
+    if any(command.acceleration is not None for command in command_list):
+        required_methods.extend(("SetAxisParameter_ACCEL", "SetAxisParameter_DECEL"))
+    _require_methods(connection, required_methods)
 
-    # Configure all speeds before starting any axis, minimizing skew between
-    # the subsequent controller-side MOVE commands.
+    # Configure every profile before starting any axis, minimizing skew
+    # between subsequent controller-side MOVE commands.
     for command in command_list:
         _call(
             connection,
@@ -188,6 +197,20 @@ def execute_relative_moves(
             axis=command.axis,
             connection_lock=connection_lock,
         )
+        if command.acceleration is not None:
+            for parameter, method_name in (
+                ("ACCEL", "SetAxisParameter_ACCEL"),
+                ("DECEL", "SetAxisParameter_DECEL"),
+            ):
+                _call(
+                    connection,
+                    method_name,
+                    command.axis,
+                    float(command.acceleration),
+                    operation=f"Set move {parameter}",
+                    axis=command.axis,
+                    connection_lock=connection_lock,
+                )
     for command in command_list:
         _call(
             connection,

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QWidget
 
 from src.ui.motion_controller import MotionController
 from src.ui.motion_window import AxisMotionWindow, MotionAxisCommand
+from src.ai.tuning_motion_panel import TuningMotionPanel
 
 
 @pytest.fixture(scope="module")
@@ -162,6 +163,12 @@ class _AsyncMotionConnection:
     def SetAxisParameter_SPEED(self, axis, speed):
         self.calls.append(("SPEED", axis, speed))
 
+    def SetAxisParameter_ACCEL(self, axis, acceleration):
+        self.calls.append(("ACCEL", axis, acceleration))
+
+    def SetAxisParameter_DECEL(self, axis, deceleration):
+        self.calls.append(("DECEL", axis, deceleration))
+
     def MoveRel(self, distance, axis):
         self.calls.append(("MOVE", distance, axis))
 
@@ -237,6 +244,38 @@ def test_action_controller_runs_enable_move_and_disable_uapi(qt_app):
     host._motion_window.btn_enable.click()
     assert _wait_for(qt_app, lambda: not host._motion_window.btn_enable.isChecked())
     assert host.trio_connection.calls[-1] == ("WDOG", False)
+
+
+def test_integrated_tuning_motion_prepares_profile_before_move(qt_app):
+    host = QWidget()
+    host.trio_connected = True
+    host.trio_connection = _AsyncMotionConnection()
+    host._conn_lock = threading.Lock()
+    host._motion_window = TuningMotionPanel(host)
+    controller = MotionController(host)
+    host._motion_window.enableRequested.connect(controller._on_motion_enable_requested)
+    host._motion_window.startRequested.connect(controller._on_motion_start_requested)
+    host._motion_window.stopRequested.connect(controller._on_motion_stop_requested)
+    host._motion_window.set_connection_available(True)
+    host._motion_window.axis_combo.setCurrentIndex(3)
+    host._motion_window.distance_edit.setValue(12.0)
+    host._motion_window.speed_edit.setValue(75.0)
+    host._motion_window.acceleration_edit.setValue(600.0)
+
+    host._motion_window.btn_enable.click()
+    assert _wait_for(qt_app, lambda: host._motion_window.btn_positive.isEnabled())
+    host._motion_window.btn_positive.click()
+
+    assert _wait_for(
+        qt_app,
+        lambda: ("MOVE", 12.0, 3) in host.trio_connection.calls,
+    )
+    move_index = host.trio_connection.calls.index(("MOVE", 12.0, 3))
+    assert host.trio_connection.calls[move_index - 3 : move_index] == [
+        ("SPEED", 3, 75.0),
+        ("ACCEL", 3, 600.0),
+        ("DECEL", 3, 600.0),
+    ]
 
 
 def test_closing_during_enable_finishes_with_hardware_disabled(qt_app):

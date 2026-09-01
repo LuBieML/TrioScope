@@ -25,6 +25,11 @@ from typing import Optional
 import Trio_UnifiedApi as TUA
 
 from .drive_profile import DriveProfile, ETHERCAT_OBJECT_IDS, PARAM_DEFS, decode_pn100, encode_pn100
+from .motor_parameters import (
+    DetectedMotorParameters,
+    MOTOR_PARAMETER_OBJECT_IDS,
+    decode_motor_parameter_registers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +325,61 @@ def read_single_pn(
     """
     obj_index = ETHERCAT_OBJECT_IDS[pn_attr.lower()]
     return coe_read_axis(connection, axis, obj_index, vr_scratch=vr_scratch)
+
+
+def read_motor_parameters(
+    connection: TUA.TrioConnection,
+    axis: int,
+    vr_scratch: int = 900,
+    conn_lock: Optional[threading.Lock] = None,
+) -> DetectedMotorParameters:
+    """Read connected DX motor nameplate values used by inertia estimation.
+
+    The four objects are Pn810 (rated torque), Pn812 (rated current), Pn831
+    (rotor inertia), and Pn880 (encoder resolution bits).  Individual failures
+    are retained in the result so supported fields can still be used.  A total
+    failure raises ``ConnectionError``.
+    """
+
+    lock = conn_lock or contextlib.nullcontext()
+    raw: dict[str, int] = {}
+    failures: dict[str, str] = {}
+
+    # These motor metadata values are non-negative.  Unsigned32 preserves the
+    # same register bits as the manuals' INT32 declaration and matches the
+    # established DX CoE transport used by this module.
+    for name, obj_index in MOTOR_PARAMETER_OBJECT_IDS.items():
+        # Release the connection lock between SDOs so the watchdog gets an
+        # opportunity to run during a partial/slow metadata read.
+        with lock:
+            try:
+                raw[name] = coe_read_axis(
+                    connection,
+                    axis,
+                    obj_index,
+                    obj_type=_U32,
+                    vr_scratch=vr_scratch,
+                )
+            except Exception as exc:
+                failures[name] = str(exc)
+                logger.warning(
+                    "Axis %d motor parameter %s (0x%04X): read failed - %s",
+                    axis,
+                    name,
+                    obj_index,
+                    exc,
+                )
+
+    result = decode_motor_parameter_registers(raw, failures)
+    if not result.detected_fields:
+        detail = "; ".join(
+            f"{name}: {message}" for name, message in result.failures.items()
+        )
+        raise ConnectionError(
+            f"No motor parameters could be read from axis {axis}"
+            + (f" ({detail})" if detail else "")
+        )
+    return result
 
 
 def write_single_pn(

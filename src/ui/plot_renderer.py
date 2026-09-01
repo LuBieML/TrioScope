@@ -14,6 +14,7 @@ from scope.fft_analysis import (
     hann_window,
     one_sided_amplitude,
 )
+from scope.cursor_statistics import calculate_cursor_range_statistics
 from ui.compare_window import CompareWindow, _CompareTracePicker, TraceWindow
 from ui.path_hover import nearest_xy_point_index
 from ui.theme import CURSOR_COLORS
@@ -809,6 +810,16 @@ class PlotRenderer(WindowBackedController):
         param_cells_c1 = []
         param_cells_c2 = []
         param_cells_delta = []
+        param_cells_average = []
+
+        params = self.accumulated_data['params'] if self.accumulated_data is not None else {}
+        trace_names = [trace.get_display_name() for trace in enabled_traces]
+        range_stats = calculate_cursor_range_statistics(
+            self.accumulated_data['time'] if self.accumulated_data is not None else [],
+            {name: params[name] for name in trace_names if name in params},
+            t1,
+            t2,
+        )
 
         for trace in enabled_traces:
             pname = trace.get_display_name()
@@ -837,6 +848,12 @@ class PlotRenderer(WindowBackedController):
                 f'<td style="padding: 0 12px;">'
                 f'<span style="color:{color};">\u0394{pname}:</span> {dv_str}</td>'
             )
+            average = range_stats.means.get(pname)
+            average_str = f"{average:.4f}" if average is not None else "---"
+            param_cells_average.append(
+                f'<td style="padding: 0 12px;">'
+                f'<span style="color:{color};">AVG {pname}:</span> {average_str}</td>'
+            )
 
         # Frequency from delta-t
         if abs(dt) > 1e-9:
@@ -860,6 +877,9 @@ class PlotRenderer(WindowBackedController):
             f'<td style="padding: 0 12px;">\u0394t = {dt:+.6f} s</td>'
             f'{"".join(param_cells_delta)}'
             f'<td style="padding: 0 12px; color:#FFA500;">f = {freq_str}</td></tr>'
+            f'<tr><td style="color:#03DAC6; font-weight:bold; padding-right:8px;">AVG</td>'
+            f'<td style="padding: 0 12px;">n = {range_stats.sample_count} samples</td>'
+            f'{"".join(param_cells_average)}</tr>'
             '</table>'
         )
         self.cursor_readout_label.setText(html)

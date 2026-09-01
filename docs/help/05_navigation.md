@@ -42,6 +42,8 @@ Each cursor reports:
 - The **time** at which it sits.
 - The **value** of every visible trace at that cursor's position.
 - The **delta** between C1 and C2 (Δt and Δvalue per trace).
+- The number of captured **samples** between C1 and C2 and the arithmetic
+  **average** of each visible trace across those samples.
 
 ### Using Cursors
 
@@ -60,6 +62,8 @@ Each cursor reports:
   is the overshoot.
 - **Frequency**: drop C1 and C2 on two zero crossings of an oscillation —
   `1 / Δt` is the frequency.
+- **Average load or error**: bracket a steady interval with C1 and C2, then
+  read the `AVG` row. Cursor order does not affect the selected range.
 
 ## Lock X-Axis Across Subplots
 

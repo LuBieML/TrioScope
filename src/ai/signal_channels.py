@@ -94,7 +94,10 @@ CHANNEL_SPECS: dict[str, ChannelSpec] = {
         substrings=("measuredvel", "actualvel", "vactual", "velocityactual"),
     ),
     "current": ChannelSpec(
-        exact=("drivecurrent", "drivetorque", "dacout", "torquecommand", "tn"),
+        exact=(
+            "drivecurrent", "drivetorque", "dacout", "torquecommand", "tn",
+            "iq", "iqactual", "iqref", "iqreference",
+        ),
         substrings=("current", "torque"),
         exclude=("max", "limit", "postorque", "negtorque",
                  "controlword", "statusword", "currentpos"),

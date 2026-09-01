@@ -3,6 +3,8 @@ Servo Loop Analyser — standalone window for scope-based loop diagnostics.
 
 Combines:
   - Drive profile editor (axis selector, Pn parameter spinboxes, CoE Read/Write)
+  - Single-axis test motion (distance, speed, acceleration, enable/move/stop)
+  - Cursor-assisted load inertia estimate for constrained and gantry systems
   - Ziegler-Nichols PI calculator (zn_calculator.py)
   - Velocity / position / FE-diagnostics cards (loop_cards.py) fed by the
     shared SignalMetrics engine — the same analysis the AI panel uses.
@@ -22,7 +24,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QSizePolicy,
     QMessageBox, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QFormLayout, QGroupBox,
+    QFormLayout, QGroupBox, QTabWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
@@ -45,7 +47,14 @@ from .drive_profile import (
     VIBRATION_SUPPRESSION_LABELS, VIBRATION_SUPPRESSION_VALUES,
     DAMPING_LABELS, DAMPING_VALUES,
 )
-from .coe_io import read_drive_profile, write_drive_profile
+from .coe_io import (
+    read_drive_profile,
+    read_motor_parameters,
+    write_drive_profile,
+)
+from .motor_parameters import DetectedMotorParameters
+from .inertia_card import InertiaCalculatorCard
+from .tuning_motion_panel import TuningMotionPanel
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +65,14 @@ logger = logging.getLogger(__name__)
 class _CoESignals(QObject):
     coe_read_done = Signal(int, object, str)
     coe_write_done = Signal(int, object, str)
+    motor_read_done = Signal(int, object, str)
 
 
 # ---------------------------------------------------------------------------
 # Main panel
 # ---------------------------------------------------------------------------
 class TunerPanel(QMainWindow):
-    """Standalone servo loop analyser window with drive profile editor.
+    """Standalone servo tuning workspace with profile, motion and analysis.
 
     The historical ``TunerPanel`` name is retained because the analysis and
     profile APIs are used throughout the application.  The widget itself is a
@@ -73,7 +83,7 @@ class TunerPanel(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Servo Loop Analyser")
+        self.setWindowTitle("Servo Tuning Workspace")
         self.setWindowFlag(Qt.Window, True)
         self.resize(1120, 780)
         self.setMinimumSize(780, 520)
@@ -81,10 +91,13 @@ class TunerPanel(QMainWindow):
 
         # --- State ---
         self._data_provider: Callable | None = None
+        self._axis_units_provider: Callable[[int], float] | None = None
         self._connection = None
         self._conn_lock: threading.Lock | None = None
         self._last_metrics: dict | None = None
         self._history = TuningHistory()
+        self.motion_panel: TuningMotionPanel | None = None
+        self.inertia_card: InertiaCalculatorCard | None = None
 
         self._profiles: dict[int, DriveProfile] = {}
         self._param_widgets: dict[str, QWidget] = {}
@@ -103,6 +116,9 @@ class TunerPanel(QMainWindow):
         self._coe_signals = _CoESignals()
         self._coe_signals.coe_read_done.connect(self._on_coe_read_done)
         self._coe_signals.coe_write_done.connect(self._on_coe_write_done)
+        self._coe_signals.motor_read_done.connect(
+            self._on_motor_parameters_read_done
+        )
 
         self._build_ui()
 
@@ -114,10 +130,43 @@ class TunerPanel(QMainWindow):
         """provider() → (time, params[, servo_period_sec[, segment_breaks]])."""
         self._data_provider = provider
 
+    def set_cursor_statistics_provider(self, provider: Callable[[int], dict]):
+        """Provide the current C1-C2 average for the selected tuning axis."""
+        if self.inertia_card is not None:
+            self.inertia_card.set_cursor_provider(provider)
+
+    def set_axis_units_provider(self, provider: Callable[[int], float]) -> None:
+        """Provide controller counts-per-user-unit for the selected axis."""
+        self._axis_units_provider = provider
+        self.refresh_motion_acceleration()
+
+    def refresh_motion_acceleration(self) -> None:
+        """Recalculate motor rev/s² from the current Test motion ACCEL."""
+        if self.motion_panel is None or self.inertia_card is None:
+            return
+        units = None
+        error = ""
+        if self._axis_units_provider is None:
+            error = "Configure this axis in Axis setup to provide UNITS."
+        else:
+            try:
+                units = float(self._axis_units_provider(self.motion_panel.axis))
+            except (TypeError, ValueError) as exc:
+                error = str(exc)
+        self.inertia_card.set_test_motion_acceleration(
+            self.motion_panel.acceleration_edit.value(),
+            units,
+            error,
+        )
+
     def set_connection(self, connection, conn_lock=None):
         self._connection = connection
         self._conn_lock = conn_lock
         self._update_drive_buttons()
+        if self.motion_panel is not None:
+            self.motion_panel.set_connection_available(connection is not None)
+        if self.inertia_card is not None:
+            self.inertia_card.set_motor_read_available(connection is not None)
 
     def get_all_profiles(self) -> dict[int, dict]:
         return {axis: p.to_dict() for axis, p in self._profiles.items()}
@@ -132,6 +181,14 @@ class TunerPanel(QMainWindow):
     def last_metrics(self) -> dict | None:
         """The full SignalMetrics dict from the most recent ANALYZE."""
         return self._last_metrics
+
+    def focus_motion(self) -> None:
+        """Bring the integrated motion workflow into view and focus it."""
+        if self.motion_panel is None:
+            return
+        self._workspace_tabs.setCurrentWidget(self._motion_tab)
+        self._motion_scroll.ensureWidgetVisible(self.motion_panel, 0, 24)
+        self.motion_panel.focus_first_control()
 
     # ================================================================
     # UI construction
@@ -151,7 +208,7 @@ class TunerPanel(QMainWindow):
         header = QHBoxLayout()
         header.setSpacing(6)
 
-        title = QLabel("SERVO LOOP ANALYSER")
+        title = QLabel("SERVO TUNING WORKSPACE")
         title.setStyleSheet(
             f"color: {ACCENT}; font-family: Consolas; font-size: 11pt;"
             f" font-weight: bold; letter-spacing: 3px;"
@@ -230,10 +287,40 @@ class TunerPanel(QMainWindow):
         root.addLayout(status_row)
 
         # ── Two-column scrollable content area ──────────────────────
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet(
+        self._workspace_tabs = QTabWidget()
+        self._workspace_tabs.setObjectName("tunerWorkflowTabs")
+        self._workspace_tabs.setDocumentMode(True)
+        self._workspace_tabs.setStyleSheet(f"""
+            QTabWidget#tunerWorkflowTabs::pane {{
+                border: 1px solid {BORDER};
+                border-radius: 3px;
+                background: {BG_DARK};
+                top: -1px;
+            }}
+            QTabWidget#tunerWorkflowTabs QTabBar::tab {{
+                background: {BG_PANEL};
+                color: {TEXT_DIM};
+                border: 1px solid {BORDER};
+                border-bottom: none;
+                padding: 7px 18px;
+                margin-right: 3px;
+                font-family: Consolas;
+                font-size: 8pt;
+                font-weight: bold;
+            }}
+            QTabWidget#tunerWorkflowTabs QTabBar::tab:selected {{
+                background: {BG_DARK};
+                color: {ACCENT};
+                border-color: {BORDER_LIGHT};
+                border-top: 2px solid {ACCENT};
+            }}
+            QTabWidget#tunerWorkflowTabs QTabBar::tab:hover:!selected {{
+                color: {TEXT};
+                border-color: {BORDER_LIGHT};
+            }}
+        """)
+
+        scroll_style = (
             f"QScrollArea {{ background-color: {BG_DARK}; border: none; }}"
             f"QScrollBar:vertical {{ background: {BG_DARK}; width: 8px; }}"
             f"QScrollBar::handle:vertical {{ background: #555; border-radius: 4px;"
@@ -241,16 +328,21 @@ class TunerPanel(QMainWindow):
             f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{"
             f" height: 0; }}"
         )
-        self._scroll_content = QWidget()
-        self._scroll_content.setStyleSheet(f"background-color: {BG_DARK};")
-        self._scroll_content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        content = QVBoxLayout(self._scroll_content)
-        content.setContentsMargins(0, 0, 0, 0)
-        content.setSpacing(8)
-        columns = QHBoxLayout()
+
+        # Tune & Analyze keeps drive setup close to the analysis results.
+        self._analysis_tab = QWidget()
+        analysis_tab_layout = QVBoxLayout(self._analysis_tab)
+        analysis_tab_layout.setContentsMargins(6, 6, 6, 6)
+        self._analysis_scroll = QScrollArea()
+        self._analysis_scroll.setWidgetResizable(True)
+        self._analysis_scroll.setFrameShape(QFrame.NoFrame)
+        self._analysis_scroll.setStyleSheet(scroll_style)
+        analysis_content = QWidget()
+        analysis_content.setStyleSheet(f"background-color: {BG_DARK};")
+        analysis_content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        columns = QHBoxLayout(analysis_content)
         columns.setContentsMargins(0, 0, 0, 0)
         columns.setSpacing(8)
-        content.addLayout(columns)
 
         # ── Left column: Drive Profile + ZN ─────────────────────────
         left_col = QVBoxLayout()
@@ -284,15 +376,65 @@ class TunerPanel(QMainWindow):
         right_col.addWidget(self._rec_card)
 
         right_col.addStretch()
-        columns.addLayout(right_col, 1)
+        columns.addLayout(right_col, 3)
 
-        # ── Full-width tuning history under both columns ────────────
+        # Finish the primary analysis tab before building the other workflows.
+        self._analysis_scroll.setWidget(analysis_content)
+        analysis_tab_layout.addWidget(self._analysis_scroll)
+        self._workspace_tabs.addTab(self._analysis_tab, "TUNE & ANALYZE")
+
+        # Motion and inertia are one measurement workflow, side by side.
+        self._motion_tab = QWidget()
+        motion_tab_layout = QVBoxLayout(self._motion_tab)
+        motion_tab_layout.setContentsMargins(6, 6, 6, 6)
+        self._motion_scroll = QScrollArea()
+        self._motion_scroll.setWidgetResizable(True)
+        self._motion_scroll.setFrameShape(QFrame.NoFrame)
+        self._motion_scroll.setStyleSheet(scroll_style)
+        motion_content = QWidget()
+        motion_content.setStyleSheet(f"background-color: {BG_DARK};")
+        motion_content.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        motion_columns = QHBoxLayout(motion_content)
+        motion_columns.setContentsMargins(8, 8, 8, 8)
+        motion_columns.setSpacing(12)
+        motion_columns.addStretch(1)
+
+        self.motion_panel = TuningMotionPanel()
+        self.motion_panel.axisChanged.connect(self._on_motion_axis_changed)
+        self.motion_panel.acceleration_edit.valueChanged.connect(
+            self.refresh_motion_acceleration
+        )
+        motion_columns.addWidget(self.motion_panel, 5, Qt.AlignTop)
+
+        self.inertia_card = InertiaCalculatorCard()
+        self.inertia_card.applyPn106Requested.connect(
+            self._on_apply_inertia_pn106
+        )
+        self.inertia_card.readMotorRequested.connect(
+            self._on_read_motor_parameters
+        )
+        self.inertia_card.set_motor_read_available(self._connection is not None)
+        self.refresh_motion_acceleration()
+        motion_columns.addWidget(self.inertia_card, 6, Qt.AlignTop)
+        motion_columns.addStretch(1)
+
+        self._motion_scroll.setWidget(motion_content)
+        motion_tab_layout.addWidget(self._motion_scroll)
+        self._workspace_tabs.addTab(self._motion_tab, "MOTION & INERTIA")
+
+        # History uses the full workspace width.
+        self._history_tab = QWidget()
+        history_layout = QVBoxLayout(self._history_tab)
+        history_layout.setContentsMargins(6, 6, 6, 6)
         self._history_card = HistoryCard()
         self._history_card.run_selected.connect(self._on_history_run_selected)
-        content.addWidget(self._history_card)
+        history_layout.addWidget(self._history_card)
+        self._workspace_tabs.addTab(self._history_tab, "HISTORY")
 
-        scroll.setWidget(self._scroll_content)
-        root.addWidget(scroll, 1)
+        self._workspace_tabs.currentChanged.connect(
+            self._on_workspace_tab_changed
+        )
+        root.addWidget(self._workspace_tabs, 1)
 
         self.setCentralWidget(container)
         self._reset_display()
@@ -301,6 +443,18 @@ class TunerPanel(QMainWindow):
         """Hide instead of destroying so tuning history and edits are retained."""
         self.hide()
         event.ignore()
+
+    def hideEvent(self, event):
+        """Never leave an enabled tuning axis behind a hidden workspace."""
+        if self.motion_panel is not None:
+            self.motion_panel.request_safe_disable()
+        super().hideEvent(event)
+
+    def _on_workspace_tab_changed(self, _index: int) -> None:
+        """Do not leave an armed axis behind hidden motion controls."""
+        if (self.motion_panel is not None
+                and self._workspace_tabs.currentWidget() is not self._motion_tab):
+            self.motion_panel.request_safe_disable()
 
     # ================================================================
     # Drive profile section
@@ -493,8 +647,43 @@ class TunerPanel(QMainWindow):
 
     def _on_axis_changed(self):
         axis = self._current_axis()
+        if self.motion_panel is not None and not self.motion_panel.set_axis(axis):
+            axis = self.motion_panel.axis
+            self._axis_combo.blockSignals(True)
+            self._axis_combo.setCurrentText(str(axis))
+            self._axis_combo.blockSignals(False)
+        if self.inertia_card is not None:
+            self.inertia_card.set_axis(axis)
+        self.refresh_motion_acceleration()
         profile = self._profiles.get(axis, DriveProfile())
         self._load_profile_to_ui(profile)
+
+    def _on_motion_axis_changed(self, axis: int) -> None:
+        """Keep drive parameters, analysis and test motion on one axis."""
+        if self._axis_combo is None:
+            return
+        self._axis_combo.blockSignals(True)
+        self._axis_combo.setCurrentText(str(axis))
+        self._axis_combo.blockSignals(False)
+        self._on_axis_changed()
+
+    def _on_apply_inertia_pn106(self, value: int) -> None:
+        """Copy a validated estimate into the selected drive profile."""
+        if self._drive_combo.currentText() not in ("DX3", "DX4"):
+            self._set_status(
+                "Select a DX3 or DX4 drive profile before applying Pn106.", RED
+            )
+            return
+        widget = self._param_widgets.get("pn106")
+        if not isinstance(widget, QSpinBox):
+            self._set_status("Pn106 is unavailable in this drive profile.", RED)
+            return
+        widget.setValue(int(value))
+        self._set_status(
+            f"Axis {self._current_axis()} Pn106 set to {int(value)}%. "
+            "Use Write to send the profile to the drive.",
+            ACCENT,
+        )
 
     def _on_drive_type_changed(self, drive_type: str):
         is_trio_drive = drive_type in ("DX3", "DX4")
@@ -627,6 +816,57 @@ class TunerPanel(QMainWindow):
         self._profiles[axis] = profile
 
     # ── CoE Read / Write ────────────────────────────────────────────
+
+    def _on_read_motor_parameters(self, axis: int) -> None:
+        """Read motor metadata without blocking the Qt event loop."""
+        if self._connection is None or self.inertia_card is None:
+            return
+        connection = self._connection
+        conn_lock = self._conn_lock
+        self.inertia_card.set_motor_read_busy(True)
+
+        def _do_read() -> None:
+            try:
+                parameters = read_motor_parameters(
+                    connection,
+                    axis=axis,
+                    conn_lock=conn_lock,
+                )
+                self._coe_signals.motor_read_done.emit(axis, parameters, "")
+            except Exception as exc:
+                logger.error(
+                    "Axis %d: read motor parameters failed - %s", axis, exc
+                )
+                self._coe_signals.motor_read_done.emit(axis, None, str(exc))
+
+        threading.Thread(
+            target=_do_read,
+            name="TunerMotorParameterRead",
+            daemon=True,
+        ).start()
+
+    def _on_motor_parameters_read_done(
+        self,
+        axis: int,
+        parameters: DetectedMotorParameters | None,
+        error: str,
+    ) -> None:
+        if self.inertia_card is None:
+            return
+        self.inertia_card.set_motor_read_busy(False)
+        if axis != self._current_axis():
+            self.inertia_card.show_motor_read_error(
+                f"Motor data was read for axis {axis}, but the selected axis "
+                "changed. Select that axis and read again."
+            )
+            return
+        if error or parameters is None:
+            self.inertia_card.show_motor_read_error(
+                f"Axis {axis}: motor parameter read failed. "
+                f"Manual values were retained. {error}"
+            )
+            return
+        self.inertia_card.apply_detected_motor_parameters(parameters)
 
     def _on_read_from_drive(self):
         if self._connection is None:
@@ -772,6 +1012,7 @@ class TunerPanel(QMainWindow):
         return None
 
     def _on_analyze(self):
+        self._workspace_tabs.setCurrentWidget(self._analysis_tab)
         if not self._data_provider:
             self._set_status("No data provider connected", RED)
             return
@@ -854,6 +1095,7 @@ class TunerPanel(QMainWindow):
         """Recall a previous run's full analysis into the metric cards."""
         if not run.full_metrics:
             return
+        self._workspace_tabs.setCurrentWidget(self._analysis_tab)
         self._last_metrics = run.full_metrics
         self._vel_card.populate(run.full_metrics)
         self._pos_card.populate(run.full_metrics)
