@@ -72,8 +72,11 @@ cmd = [
     "--collect-submodules", "ui",
     "--collect-submodules", "models",
     "--collect-submodules", "storage",
+    "--collect-submodules", "reports",
+    "--collect-submodules", "plot",
     # Hidden imports that PyInstaller may miss
     "--hidden-import", "Trio_UnifiedApi",
+    "--hidden-import", "version",
     "--hidden-import", "help_window",
     "--hidden-import", "pyqtgraph.opengl",
     "--hidden-import", "OpenGL",
