@@ -3,6 +3,13 @@
 Notable changes to TrioScope are recorded here. New entries are generated from
 Conventional Commit pull-request titles by Release Please.
 
+## [0.6.1](https://github.com/LuBieML/TrioScope/compare/v0.6.0...v0.6.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* axis numbers ([73aa38b](https://github.com/LuBieML/TrioScope/commit/73aa38ba42029e95b31a7574f86fba5100a7c530))
+
 ## [0.6.0](https://github.com/LuBieML/TrioScope/compare/v0.5.1...v0.6.0) (2026-09-02)
 
 
