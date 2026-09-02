@@ -36,6 +36,7 @@ if str(src_path) not in sys.path:
 try:
     from version import __version__
     from scope.drive_scope_engine import TRIGGER_MODES
+    from scope.parameters import MAX_CONTROLLER_AXIS
 except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure Trio_UnifiedApi is installed and scope modules are available.")
@@ -353,7 +354,7 @@ class ParameterScopeOscilloscope(QMainWindow):
         self.drv_axis_label.setVisible(False)
         config_layout.addWidget(self.drv_axis_label, 4, 0)
         self.drv_axis_spin = QSpinBox()
-        self.drv_axis_spin.setRange(0, 15)
+        self.drv_axis_spin.setRange(0, MAX_CONTROLLER_AXIS)
         self.drv_axis_spin.setFixedWidth(60)
         self.drv_axis_spin.setVisible(False)
         config_layout.addWidget(self.drv_axis_spin, 4, 1)

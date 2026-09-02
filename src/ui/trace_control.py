@@ -6,7 +6,9 @@ from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QColor, QPen
 
 from ui.theme import TRACE_COLORS
-from scope.parameters import SCOPE_PARAMETERS, CHANNEL_PARAMETERS_SET, _VIRTUAL_PARAM_MAP
+from scope.parameters import (
+    SCOPE_PARAMETERS, CHANNEL_PARAMETERS_SET, _VIRTUAL_PARAM_MAP, MAX_CONTROLLER_AXIS
+)
 from scope.drive_scope_engine import COMMON_DRIVE_VARIABLES, DRIVE_VARIABLES
 
 
@@ -66,7 +68,7 @@ class TraceControl(QFrame):
         self.param_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.param_combo.setMinimumWidth(95)
         self.param_combo.setMaximumWidth(145)
-        self.param_combo.currentIndexChanged.connect(self._on_param_changed)
+        self.param_combo.currentTextChanged.connect(self._on_param_changed)
         row0.addWidget(self.param_combo, 1)
 
         # "Show all" button for parameter combo
@@ -168,8 +170,8 @@ class TraceControl(QFrame):
         self.axis_label = QLabel("Axis")
         row1.addWidget(self.axis_label)
         self.axis_spin = QSpinBox()
-        self.axis_spin.setRange(0, 15)
-        self.axis_spin.setFixedWidth(28)
+        self.axis_spin.setRange(0, MAX_CONTROLLER_AXIS)
+        self.axis_spin.setFixedWidth(40)
         self.axis_spin.setStyleSheet(
             "QSpinBox::up-button { width: 0; } QSpinBox::down-button { width: 0; }"
         )
@@ -282,8 +284,8 @@ class TraceControl(QFrame):
             self.axis_spin.setFixedWidth(40)
         else:
             self.axis_label.setText("Axis")
-            self.axis_spin.setRange(0, 15)
-            self.axis_spin.setFixedWidth(28)
+            self.axis_spin.setRange(0, MAX_CONTROLLER_AXIS)
+            self.axis_spin.setFixedWidth(40)
         self.changed.emit()
 
     def is_channel_parameter(self):

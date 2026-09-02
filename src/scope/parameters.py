@@ -89,3 +89,8 @@ CHANNEL_PARAMETERS_SET = set(CHANNEL_PARAMETERS)
 _VIRTUAL_PARAM_MAP = {
     "DEMAND_SPEED_NORMALISED": "DEMAND_SPEED",  # units/servocycle → units/second
 }
+
+# Maximum axis index supported on Trio controllers (MC664 supports 128 axes 0..127;
+# extended / virtual axes can go up to 255).
+MAX_CONTROLLER_AXIS = 255
+

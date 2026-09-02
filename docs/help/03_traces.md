@@ -25,7 +25,7 @@ Each trace has the following controls, laid out in three rows:
 
 | Control | Purpose |
 |---|---|
-| **Axis** spinbox | Trio axis number (0–15) for this parameter. Use the up/down arrows or type a value. |
+| **Axis** spinbox | Trio axis number (0–255) for this parameter. Use the up/down arrows or type a value. |
 | **Value display** | Live numeric readout — most recent sample (or value at cursor C1 if cursors are on). |
 | **FFT** button | Toggle a frequency-domain spectrum plot for this trace. See [FFT Analysis](06_fft.md). |
 
