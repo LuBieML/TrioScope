@@ -121,6 +121,10 @@ COMMON_DRIVE_VARIABLES = [
     (0x0F2D, "Speed Feedforward (rpm)"),
     (0x0F2E, "Torque Feedforward (0.1%rated)"),
     (0x0F2F, "Position Cmd Speed (rpm)"),
+    (0x0F32, "Position Error Low (select 0x0F32-0x0F35)"),
+    (0x0F33, "Position Error Mid-Low"),
+    (0x0F34, "Position Error Mid-High"),
+    (0x0F35, "Position Error High"),
     (0x0000, "(Disabled)"),
 ]
 

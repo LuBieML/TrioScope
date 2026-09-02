@@ -80,7 +80,6 @@ class TunerPanel(QMainWindow):
     """
 
     analysis_complete = Signal()
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Servo Tuning Workspace")
@@ -98,7 +97,6 @@ class TunerPanel(QMainWindow):
         self._history = TuningHistory()
         self.motion_panel: TuningMotionPanel | None = None
         self.inertia_card: InertiaCalculatorCard | None = None
-
         self._profiles: dict[int, DriveProfile] = {}
         self._param_widgets: dict[str, QWidget] = {}
         self._param_frame: QFrame | None = None

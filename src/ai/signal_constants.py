@@ -11,6 +11,9 @@ SPECTRAL_GUARD_S = 0.020  # trim demand-transition edges from cruise FFT runs
 MIN_CYCLES_FOR_PEAK = 3      # peak must fit >=3 cycles in analyzed window
 REVERSAL_HALF_WIDTH_S = 0.080  # ± window around demand-velocity zero crossings
 SETTLE_BAND_SIGMA = 4.0   # auto tolerance band = 4x robust noise sigma
+AUTO_SETTLE_SIGNAL_FRAC = 0.01  # auto band floor = 1% of typical move FE
+FE_OSCILLATION_SIGNAL_FRAC = 0.10  # spectral line must be >=10% of move FE
+VELOCITY_OSCILLATION_DEMAND_FRAC = 0.005  # or >=0.5% of peak demand speed
 RINGING_CROSSINGS_MAX = 3  # more hysteresis crossings than this = ringing
 MAX_PER_MOVE_REPORTED = 8  # cap per-move detail lists in reports
 MIN_FFT_SAMPLES = 64       # shortest cruise run / Welch window worth analyzing

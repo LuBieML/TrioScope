@@ -30,8 +30,30 @@ from .signal_analyzers import (
 )
 from .signal_spectral import cross_phase, fft_peaks
 from .signal_report import format_for_llm
+from .signal_constants import (
+    FE_OSCILLATION_SIGNAL_FRAC, VELOCITY_OSCILLATION_DEMAND_FRAC,
+)
 
 __all__ = ["SignalMetrics"]
+
+
+def _apply_engineering_oscillation_floor(
+        spectral: dict, threshold: float, basis: str) -> None:
+    """Separate a repeatable FFT line from a control-significant oscillation."""
+    spectral_peak = bool(spectral.get("has_significant_oscillation"))
+    spectral["has_spectral_peak"] = spectral_peak
+    spectral["significance_threshold"] = round(max(0.0, threshold), 6)
+    spectral["significance_basis"] = basis
+    peaks = spectral.get("peaks") or []
+    amplitude = float(peaks[0].get("amplitude") or 0.0) if peaks else 0.0
+    significant = spectral_peak and amplitude >= threshold
+    spectral["has_significant_oscillation"] = significant
+    if spectral_peak and not significant:
+        spectral["note"] = (
+            f"{spectral.get('note', '')}; repeatable spectral line retained "
+            f"for diagnostics, but amplitude {amplitude:g} is below the "
+            f"control-significance floor {threshold:g} ({basis})"
+        ).lstrip("; ")
 
 
 class SignalMetrics:
@@ -211,9 +233,26 @@ class SignalMetrics:
         cruise_mask = phases["cruise"]
         if fe is not None:
             result["oscillation"]["fe"] = fft_peaks(fe, cruise_mask, fs, bounds)
+            fe_typical = float(np.percentile(np.abs(fe), 95))
+            fe_band = float(result["capture"].get("settle_band") or 0.0)
+            user_band = (
+                fe_band
+                if result["capture"].get("settle_band_source") == "user"
+                else 0.0
+            )
+            _apply_engineering_oscillation_floor(
+                result["oscillation"]["fe"],
+                max(user_band, FE_OSCILLATION_SIGNAL_FRAC * fe_typical),
+                "max(user settle band, 10% of typical move FE)",
+            )
         if mvel is not None and velocity_units_known:
             result["oscillation"]["velocity_error"] = fft_peaks(
                 mvel - dvel, cruise_mask, fs, bounds)
+            _apply_engineering_oscillation_floor(
+                result["oscillation"]["velocity_error"],
+                VELOCITY_OSCILLATION_DEMAND_FRAC * v_peak,
+                "0.5% of peak demand velocity",
+            )
         if cur is not None:
             result["oscillation"]["current"] = fft_peaks(
                 cur - np.mean(cur), cruise_mask, fs, bounds)

@@ -132,7 +132,12 @@ class VelocityLoopCard(_MetricCard):
 
         osc = (metrics.get("oscillation") or {}).get("velocity_error") or {}
         if osc.get("has_significant_oscillation"):
-            self.add_row("Oscillation", f"{osc.get('dominant_hz')}", "Hz", RED)
+            peaks = osc.get("peaks") or []
+            amplitude = peaks[0].get("amplitude") if peaks else None
+            value = f"{osc.get('dominant_hz')} Hz"
+            if amplitude is not None:
+                value += f" | {amplitude:.4g} u/s"
+            self.add_row("Oscillation", value, "", RED)
         else:
             self.add_row("Oscillation", "none", "", CYAN)
 
@@ -288,10 +293,36 @@ class FePhaseCard(_MetricCard):
 
         osc = (metrics.get("oscillation") or {}).get("fe") or {}
         if osc.get("has_significant_oscillation"):
-            self.add_row("FE oscillation", f"{osc.get('dominant_hz')}", "Hz", RED)
+            peaks = osc.get("peaks") or []
+            amplitude = peaks[0].get("amplitude") if peaks else None
+            value = f"{osc.get('dominant_hz')} Hz"
+            if amplitude is not None:
+                value += f" | {amplitude:.4g} u"
+            self.add_row("FE oscillation", value, "", RED)
+
+            if len(peaks) > 1 and peaks[0].get("amplitude"):
+                ratio = peaks[1].get("amplitude", 0) / peaks[0]["amplitude"]
+                if ratio >= 0.90:
+                    hints.append(
+                        f"Comparable FE modes at {peaks[0]['freq_hz']} and "
+                        f"{peaks[1]['freq_hz']} Hz → do not select a notch or "
+                        "change gain until a 3-move speed sweep separates them")
+
             phase_info = (metrics.get("oscillation") or {}).get(
                 "current_vs_velocity_phase") or {}
-            if phase_info.get("interpretation"):
+            if phase_info.get("classification_reliable"):
+                coherence = phase_info.get("coherence")
+                if coherence is not None:
+                    self.add_row("Phase evidence", f"coherence {coherence}", "",
+                                 CYAN)
+            else:
+                self.add_row("Phase evidence", "not reliable", "", AMBER)
+                hints.append(
+                    "Current/velocity phase is diagnostic only (too few "
+                    "averages) → capture 3 identical moves before tuning")
+
+            if (phase_info.get("classification_reliable")
+                    and phase_info.get("interpretation")):
                 hints.append(phase_info["interpretation"])
         else:
             self.add_row("FE oscillation", "none", "", CYAN)
@@ -358,13 +389,13 @@ class RecommendationsCard(_MetricCard):
                             "needed.", GREEN)
 
         for i, rec in enumerate(report.recommendations, 1):
-            headline = f"{i}. {rec.action}"
+            headline = f"{i}. ACTION — {rec.action}"
             if rec.proposed:
                 headline += f"  [{rec.proposed}]"
             self._add_block(headline, TEXT_BRIGHT)
-            self._add_block(f"why: {rec.diagnosis}", TEXT_DIM, indent=10)
+            self._add_block(f"EVIDENCE — {rec.diagnosis}", TEXT_DIM, indent=10)
             if rec.expected:
-                self._add_block(f"expect: {rec.expected}", TEXT_DIM,
+                self._add_block(f"PASS CRITERIA — {rec.expected}", TEXT_DIM,
                                 indent=10, italic=True)
 
         for obs in report.observations:

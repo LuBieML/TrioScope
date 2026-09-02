@@ -20,6 +20,7 @@ import contextlib
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import Optional
 
 import Trio_UnifiedApi as TUA
@@ -48,6 +49,24 @@ _SDO_TIMEOUT = 2.0
 
 # Polling interval (seconds) between VR checks.
 _SDO_POLL_INTERVAL = 0.05
+
+
+@dataclass(frozen=True)
+class VerifiedPnWrite:
+    """A single drive-register change confirmed by an SDO readback."""
+
+    parameter: str
+    previous: int
+    requested: int
+    readback: int
+
+
+class PnWriteVerificationError(RuntimeError):
+    """A Pn write could not be verified and rollback was attempted."""
+
+    def __init__(self, message: str, *, rollback_succeeded: bool):
+        super().__init__(message)
+        self.rollback_succeeded = rollback_succeeded
 
 
 # ---------------------------------------------------------------------------
@@ -396,3 +415,91 @@ def write_single_pn(
     """
     obj_index = ETHERCAT_OBJECT_IDS[pn_attr.lower()]
     coe_write_axis(connection, axis, obj_index, value)
+
+
+def write_single_pn_verified(
+    connection: TUA.TrioConnection,
+    axis: int,
+    pn_attr: str,
+    value: int,
+    vr_scratch: int = 900,
+    conn_lock: Optional[threading.Lock] = None,
+) -> VerifiedPnWrite:
+    """Write one simple Pn value, verify it, and restore on mismatch.
+
+    The connection lock is acquired separately for each SDO operation so the
+    watchdog can run between a slow read, write and readback.  Pn100 is a
+    packed composite register and must continue to use the profile helpers.
+    """
+    attr = pn_attr.lower()
+    if attr == "pn100":
+        raise ValueError("Pn100 is composite; use write_drive_profile().")
+    if attr not in _PN_OBJECTS:
+        raise KeyError(attr)
+
+    bounds = {
+        entry[0]: (entry[4], entry[5])
+        for entry in PARAM_DEFS
+        if entry[4] is not None and entry[5] is not None
+    }
+    requested = int(value)
+    lo, hi = bounds[attr]
+    if not int(lo) <= requested <= int(hi):
+        raise ValueError(
+            f"{attr.upper()} value {requested} is outside {int(lo)}..{int(hi)}"
+        )
+
+    lock = conn_lock or contextlib.nullcontext()
+    with lock:
+        previous = read_single_pn(
+            connection, axis, attr, vr_scratch=vr_scratch)
+    with lock:
+        write_single_pn(connection, axis, attr, requested)
+
+    try:
+        with lock:
+            readback = read_single_pn(
+                connection, axis, attr, vr_scratch=vr_scratch)
+    except Exception as exc:
+        rollback_ok = _rollback_single_pn(
+            connection, axis, attr, previous, vr_scratch, conn_lock)
+        raise PnWriteVerificationError(
+            f"{attr.upper()}={requested} was written but readback failed: {exc}",
+            rollback_succeeded=rollback_ok,
+        ) from exc
+
+    if readback != requested:
+        rollback_ok = _rollback_single_pn(
+            connection, axis, attr, previous, vr_scratch, conn_lock)
+        raise PnWriteVerificationError(
+            f"{attr.upper()} readback mismatch: requested {requested}, got "
+            f"{readback}; previous value {previous} "
+            f"{'restored' if rollback_ok else 'could not be verified'}",
+            rollback_succeeded=rollback_ok,
+        )
+    return VerifiedPnWrite(attr, previous, requested, readback)
+
+
+def _rollback_single_pn(
+    connection: TUA.TrioConnection,
+    axis: int,
+    attr: str,
+    previous: int,
+    vr_scratch: int,
+    conn_lock: Optional[threading.Lock],
+) -> bool:
+    """Best-effort rollback used only after a failed verified write."""
+    lock = conn_lock or contextlib.nullcontext()
+    try:
+        with lock:
+            write_single_pn(connection, axis, attr, previous)
+        with lock:
+            restored = read_single_pn(
+                connection, axis, attr, vr_scratch=vr_scratch)
+        return restored == previous
+    except Exception:
+        logger.exception(
+            "Axis %d: failed to restore %s=%d after readback failure",
+            axis, attr.upper(), previous,
+        )
+        return False

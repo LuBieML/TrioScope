@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from src.ai.signal_metrics import SignalMetrics
 from src.ai.signal_spectral import cross_phase, fft_peaks
+from src.ai.auto_tune import summarize_trials
 
 FS = 1000.0
 
@@ -71,6 +72,30 @@ class TestWelchAveraging:
     def test_quiet_axis_still_clean_with_averaging(self):
         metrics = _cruise_setup(n_moves=3)
         assert metrics["oscillation"]["fe"]["has_significant_oscillation"] is False
+
+    def test_small_repeatable_ripple_is_not_control_significant(self):
+        dvel = np.concatenate([_move_dvel()] * 3)
+        t = np.arange(len(dvel)) / FS
+        dpos = np.cumsum(dvel) / FS
+        moving = np.abs(dvel) > 1.0
+        fe = 0.0002 * np.sin(2 * np.pi * 30.0 * t)
+        fe += 0.01 * np.sign(dvel) * moving
+        mvel = dvel + 0.1 * np.sin(2 * np.pi * 30.0 * t)
+
+        metrics = SignalMetrics.compute_all(
+            t,
+            {"DPOS(0)": dpos, "DRIVE_FE(0)": fe, "MSPEED(0)": mvel},
+            axis=0,
+        )
+
+        fe_osc = metrics["oscillation"]["fe"]
+        vel_osc = metrics["oscillation"]["velocity_error"]
+        assert fe_osc["has_spectral_peak"] is True
+        assert fe_osc["has_significant_oscillation"] is False
+        assert vel_osc["has_spectral_peak"] is True
+        assert vel_osc["has_significant_oscillation"] is False
+        assert metrics["settle"]["settled_within_window"] is True
+        assert summarize_trials([metrics] * 3).safe is True
 
 
 class TestCoherence:

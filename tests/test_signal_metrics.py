@@ -98,6 +98,17 @@ class TestChannelResolution:
         assert ch["measured_vel"] == "Speed Feedback (rpm)"
         assert ch["current"] == "Torque Command (%Tn)"
 
+    def test_drive_internal_ek_is_position_error(self):
+        params = {
+            "EK (0x0F32)": [],
+            "SPD_CMD_RPM (0x0F11)": [],
+            "SPD_FB_RPM (0x0F10)": [],
+        }
+        ch = resolve_channels(params, axis=5)
+        assert ch["fe"] == "EK (0x0F32)"
+        assert ch["demand_vel_native"] == "SPD_CMD_RPM (0x0F11)"
+        assert ch["measured_vel"] == "SPD_FB_RPM (0x0F10)"
+
 
 # ---------------------------------------------------------------------------
 # Well-tuned axis must not be flagged

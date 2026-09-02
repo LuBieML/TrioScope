@@ -108,8 +108,9 @@ class TestBlockingRules:
         report = evaluate(metrics, _DX4_PROFILE)
         rec = report.recommendations[0]
         assert rec.rule_id == "mechanical_resonance"
-        assert "notch filter cannot be set below 50 Hz" in rec.action
+        assert "below the drive's 50 Hz limit" in rec.action
         assert "notch filter at ~25" not in rec.action
+        assert "coupling or belt" in rec.action
 
     def test_instability_recommends_gain_reduction(self):
         metrics = _ok_metrics(
@@ -127,7 +128,10 @@ class TestBlockingRules:
         assert _rule_ids(report) == ["loop_instability"]
         rec = report.recommendations[0]
         assert rec.parameter == "Pn104"
-        assert rec.proposed == "Pn104 40 → 32"   # −20%
+        assert rec.proposed == "Pn104 40 → 36"   # −10%
+        assert "controller P_GAIN by 10%" in rec.action
+        assert "Leave Pn103 unchanged" in rec.action
+        assert "at least 30%" in rec.expected
 
     def test_oscillation_without_phase_asks_for_current_capture(self):
         metrics = _ok_metrics(
@@ -136,7 +140,8 @@ class TestBlockingRules:
         )
         report = evaluate(metrics, _DX4_PROFILE)
         assert _rule_ids(report) == ["oscillation_unresolved"]
-        assert "DRIVE_TORQUE" in report.recommendations[0].action
+        assert "DRIVE_CURRENT" in report.recommendations[0].action
+        assert "50%, 100%, and 150% speed" in report.recommendations[0].action
 
     def test_ambiguous_phase_with_current_captured_does_not_change_gain(self):
         # A coherent but unclassified phase is diagnostic, not authority for
@@ -157,7 +162,7 @@ class TestBlockingRules:
         rec = report.recommendations[0]
         assert "Capture DRIVE_TORQUE" not in rec.action
         assert "122°" in rec.action
-        assert "Do not change gains" in rec.action
+        assert "Keep gains unchanged" in rec.action
         assert rec.parameter is None
         assert rec.proposed is None
         assert "coherence 0.96" in rec.diagnosis
@@ -214,7 +219,9 @@ class TestBlockingRules:
         rec = evaluate(metrics, _DX4_PROFILE).recommendations[0]
         assert rec.rule_id == "oscillation_no_coherent_phase"
         assert rec.parameter is None
-        assert "No gain change" in rec.action
+        assert "Keep gains unchanged" in rec.action
+        assert "3 identical moves" in rec.action
+        assert "classification_reliable=true" in rec.action
 
     def test_no_coherent_phase_with_signals_asks_for_longer_capture(self):
         metrics = _ok_metrics(
@@ -230,7 +237,34 @@ class TestBlockingRules:
         )
         report = evaluate(metrics, _DX4_PROFILE)
         assert _rule_ids(report) == ["oscillation_no_coherent_phase"]
-        assert "Re-capture" in report.recommendations[0].action
+        assert "at least 0.8 s of steady cruise" in report.recommendations[0].action
+
+    def test_comparable_fe_modes_block_single_mode_tuning(self):
+        metrics = _ok_metrics(
+            channels_detected={"current": "DRIVE_CURRENT(0)",
+                               "measured_vel": "MSPEED(0)"},
+            oscillation={
+                "fe": {
+                    "has_significant_oscillation": True,
+                    "dominant_hz": 62.5,
+                    "peaks": [
+                        {"freq_hz": 62.5, "amplitude": 0.000920},
+                        {"freq_hz": 8.0, "amplitude": 0.000907},
+                        {"freq_hz": 13.1, "amplitude": 0.000794},
+                    ],
+                },
+                "current_vs_velocity_phase": {
+                    "phase_deg": 2.0, "dominant_freq_hz": 62.5,
+                    "coherence": 0.96, "classification_reliable": True,
+                },
+            },
+        )
+        rec = evaluate(metrics, _DX4_PROFILE).recommendations[0]
+        assert rec.rule_id == "oscillation_multiple_modes"
+        assert rec.parameter is None
+        assert "62.5 Hz @ 0.00092 u" in rec.diagnosis
+        assert "8 Hz @ 0.000907 u" in rec.diagnosis
+        assert "belt/screw pitch, cogging, or runout" in rec.action
 
 
 # ---------------------------------------------------------------------------
@@ -315,11 +349,31 @@ class TestFeRules:
         ids = _rule_ids(report)
         assert "underdamped_settle" in ids
         assert "position_offset_investigation" in ids
+        ringing = next(r for r in report.recommendations
+                       if r.rule_id == "underdamped_settle")
+        assert ringing.proposed == "Pn104 40 → 34"  # severe: −15%
+        assert "there is no drive position-loop integral action" in ringing.action
+        assert "zero_crossings ≤ 3" in ringing.expected
+        assert "at least 30% lower" in ringing.expected
         offset = next(r for r in report.recommendations
                       if r.rule_id == "position_offset_investigation")
         assert offset.parameter is None
         assert offset.proposed is None
         assert "Pn103 belongs to the velocity loop" in offset.diagnosis
+
+    def test_moderate_ringing_uses_one_ten_percent_gain_probe(self):
+        metrics = _ok_metrics(settle={
+            "band": 0.01, "settled_within_window": True,
+            "time_to_band_ms": 90.0, "zero_crossings": 5, "ringing": True,
+            "steady_state_offset_nonzero": False, "fe_steady_state": 0.0,
+            "fe_peak_during_settle": 0.06, "damping_ratio": 0.25,
+            "natural_freq_hz": 45.0,
+        })
+        rec = evaluate(metrics, _DX4_PROFILE).recommendations[0]
+        assert rec.rule_id == "underdamped_settle"
+        assert rec.proposed == "Pn104 40 → 36"
+        assert "P_GAIN by 10%" in rec.action
+        assert "peak/band=6.0×" in rec.diagnosis
 
     def test_at_most_three_parameter_changes(self):
         # Fire five actionable rules at once

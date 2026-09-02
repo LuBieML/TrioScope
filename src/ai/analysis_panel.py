@@ -147,17 +147,37 @@ load and explicitly state that it is outside the drive's notch range.
 oscillation.fe.has_significant_oscillation = true
   AND oscillation.current_vs_velocity_phase ≈ +90°
   → MECHANICAL RESONANCE. If dominant_hz >= 50 Hz, apply a notch at
-    dominant_hz. Below 50 Hz, do not recommend a notch. Do NOT increase
-    position gains.
+    dominant_hz. Start shallow, change no gains in the same iteration, and
+    repeat the identical capture. Accept only if FE amplitude at that line
+    falls >=50% without worse current RMS, velocity overshoot, or settling.
+    Below 50 Hz, do not recommend a notch; inspect mounting, coupling/belt
+    compliance, backlash, and load looseness. Do NOT increase position gains.
 
 oscillation.fe.has_significant_oscillation = true
   AND oscillation.current_vs_velocity_phase ≈ 0°
-  → LOOP INSTABILITY. Reduce P_GAIN (CSP) or Pn104 (non-CSP) by ~20%.
+  → LOOP INSTABILITY. Save settings and reduce ONE active position P gain by
+    10%: controller P_GAIN in CSP, or Pn104 only when the drive closes the
+    position loop. Leave Pn103 unchanged. Repeat identical moves; accept only
+    if FE amplitude at that line falls >=30% without worse cruise tracking.
     Only use phase measured coherently at the SAME frequency as the FE mode.
 
+If current_vs_velocity_phase.classification_reliable is false, or if two
+oscillation.fe.peaks amplitudes are within 10% of each other, DO NOT select a
+gain or notch. Request DPOS + DRIVE_FE + MSPEED + DRIVE_CURRENT for 3 identical
+moves with >=0.8 s steady cruise per move, then repeat at 50%, 100%, and 150%
+speed with acceleration, load, and gains unchanged. A frequency proportional
+to speed suggests periodic mechanical forcing; a fixed line is a structural
+or control-loop mode that still requires coherent same-frequency phase.
+
 settle.ringing = true
-  → Underdamped position loop. Increase D_GAIN or reduce P_GAIN (CSP).
-    Target: zero_crossings ≤ 3, ~25% overshoot.
+  → POST-MOVE underdamped position loop, distinct from cruise vibration.
+    Save settings and change ONE parameter: reduce controller P_GAIN by 10%
+    in CSP, or Pn104 by 10% only for a drive-internal position loop. Use 15%
+    when damping_ratio <0.15 or zero_crossings >=8. Never recommend Pn103:
+    there is no drive position-loop integral action. Repeat 3 identical moves.
+    Accept only if zero_crossings <=3, time_to_band_ms is shorter, and
+    fe_peak_during_settle falls >=30% without worse cruise FE; otherwise
+    restore the gain and inspect coupling, backlash, and compliance.
 
 settle.steady_state_offset_nonzero = true AND fe.settle.mean ≠ 0
   → Residual position bias is present in the late settle window. Do not infer

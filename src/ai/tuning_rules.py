@@ -41,6 +41,9 @@ _AFF_PEAK_RATIO = 3.0
 # Reversal FE peak vs cruise peak ratio that reads as mechanical
 _REVERSAL_PEAK_RATIO = 5.0
 _SATURATION_PCT_LIMIT = 5.0
+# When two FE spectral lines are almost equally strong, treating the first
+# list entry as *the* plant mode is not a safe basis for a notch/gain change.
+_COMPARABLE_MODE_RATIO = 0.90
 
 
 @dataclass
@@ -162,6 +165,49 @@ def _reversal_is_mechanical(metrics: dict) -> bool:
             and not osc.get("has_significant_oscillation"))
 
 
+def _significant_modes(oscillation: dict) -> list[dict]:
+    """Strong FE peaks that are comparable with the reported dominant line."""
+    peaks = [
+        peak for peak in (oscillation.get("peaks") or [])
+        if peak.get("freq_hz") is not None and peak.get("amplitude") is not None
+    ]
+    if len(peaks) < 2:
+        return peaks[:1]
+    strongest = max(float(peak["amplitude"]) for peak in peaks)
+    if strongest <= 0:
+        return peaks[:1]
+    return [
+        peak for peak in peaks
+        if float(peak["amplitude"]) >= _COMPARABLE_MODE_RATIO * strongest
+    ]
+
+
+def _mode_evidence(oscillation: dict) -> str:
+    """Compact frequency/amplitude evidence for recommendation text."""
+    modes = _significant_modes(oscillation)
+    if modes:
+        return ", ".join(
+            f"{float(peak['freq_hz']):g} Hz @ {float(peak['amplitude']):.4g} u"
+            for peak in modes
+        )
+    frequency = oscillation.get("dominant_hz")
+    return f"{frequency:g} Hz" if frequency is not None else "unknown frequency"
+
+
+def _repeat_move_protocol(*, include_speed_sweep: bool = False) -> str:
+    """A reproducible capture, replacing vague requests for 'more data'."""
+    text = (
+        "Capture DPOS, DRIVE_FE, MSPEED, and DRIVE_CURRENT for 3 identical "
+        "moves with at least 0.8 s of steady cruise in every move"
+    )
+    if include_speed_sweep:
+        text += (
+            "; repeat the capture at 50%, 100%, and 150% speed while "
+            "keeping accel, load, and gains unchanged"
+        )
+    return text
+
+
 # ---------------------------------------------------------------- score
 def tuning_score(metrics: dict) -> float | None:
     """0-10 tuning score (the AI prompt's rubric: start at 10, subtract)."""
@@ -228,91 +274,153 @@ def _blocking_rules(metrics: dict, profile: dict | None) -> list[Recommendation]
     if osc_fe.get("has_significant_oscillation"):
         phase_deg, phase_freq, confidence, phase_reliable = _phase_band(metrics)
         freq = osc_fe.get("dominant_hz")
+        evidence = _mode_evidence(osc_fe)
+        comparable_modes = _significant_modes(osc_fe)
         channels = metrics.get("channels_detected") or {}
         have_signals = bool(channels.get("current")) and bool(
             channels.get("measured_vel"))
-        if not have_signals:
+
+        if len(comparable_modes) > 1:
+            found.append(Recommendation(
+                rule_id="oscillation_multiple_modes",
+                severity="action", root_cause="position",
+                action=(
+                    "Keep gains and notch settings unchanged: more than one "
+                    "FE line is comparably strong, so there is no unique mode to "
+                    "tune. " + _repeat_move_protocol(include_speed_sweep=True)
+                    + ". A frequency that scales with speed indicates periodic "
+                    "mechanical forcing (belt/screw pitch, cogging, or runout); "
+                    "a fixed frequency is a structural or control-loop mode."
+                ),
+                diagnosis=(
+                    f"oscillation.fe.peaks contains comparable modes: {evidence} "
+                    f"(within {100 * (1 - _COMPARABLE_MODE_RATIO):.0f}% of the "
+                    "strongest amplitude); a single dominant-mode phase verdict "
+                    "would be ambiguous"
+                ),
+                expected=(
+                    "one repeatable dominant line, then a frequency-matched "
+                    "coherent phase result from at least 3 moves"
+                ),
+            ))
+        elif not have_signals:
             found.append(Recommendation(
                 rule_id="oscillation_unresolved",
                 severity="action", root_cause="position",
-                action=("Capture DRIVE_TORQUE (or current) together "
-                        "with MSPEED to discriminate resonance (+90°) "
-                        "from loop instability (0°) before changing gains"),
-                diagnosis=(f"oscillation.fe dominant_hz={freq} is significant "
-                           "but no current/velocity channels were captured "
-                           "for the phase test"),
-                expected="a frequency-matched phase verdict on the next capture",
+                action=(
+                    "Keep gains unchanged. "
+                    + _repeat_move_protocol(include_speed_sweep=True)
+                    + ". Use coherent current-versus-velocity phase at the FE "
+                    "frequency: about +90° indicates mechanical resonance; "
+                    "about 0° indicates loop instability."
+                ),
+                diagnosis=(f"oscillation.fe reports {evidence}, but no "
+                           "DRIVE_CURRENT/MSPEED pair was captured for the "
+                           "phase test"),
+                expected=("classification_reliable=true at the same FE "
+                          "frequency, plus fixed-versus-speed-scaled behaviour"),
             ))
         elif phase_deg is None or not phase_reliable:
             phase_info = ((metrics.get("oscillation") or {}).get(
                 "current_vs_velocity_phase") or {})
             method = phase_info.get("method") or "unavailable"
+            averages = phase_info.get("n_averages")
             found.append(Recommendation(
                 rule_id="oscillation_no_coherent_phase",
                 severity="action", root_cause="position",
-                action=("Re-capture with 2-3 repeated moves and a longer "
-                        "cruise (>0.3 s each). No gain change is justified "
-                        "until current/velocity phase is coherent at the "
-                        f"same {freq} Hz FE mode"),
-                diagnosis=(f"oscillation.fe dominant_hz={freq}, but the "
-                           f"frequency-matched phase is not reliable "
-                           f"({method}{confidence})"),
-                expected="a coherent phase verdict at the FE oscillation frequency",
+                action=(
+                    "Keep gains unchanged. "
+                    + _repeat_move_protocol(include_speed_sweep=True)
+                    + ". Accept a diagnosis only when "
+                    "current_vs_velocity_phase.classification_reliable=true "
+                    "at the same FE line. About +90° means resonance; about "
+                    "0° means loop instability."
+                ),
+                diagnosis=(f"oscillation.fe reports {evidence}, but its "
+                           f"frequency-matched current/velocity phase is not "
+                           f"reliable ({method}, n_averages={averages}"
+                           f"{confidence})"),
+                expected=("at least 3 usable spectral averages, a coherent "
+                          "same-frequency phase verdict, and a fixed or "
+                          "speed-scaled frequency trend"),
             ))
         elif 60 < phase_deg < 120:
             notch_freq = _notch_frequency(phase_freq, freq)
             if notch_freq is not None:
-                action = (f"Apply the drive's notch filter at ~{notch_freq} Hz "
-                          f"(drive commissioning tool); do NOT increase "
-                          f"position gains")
-                expected = "oscillation peak gone at the notch frequency"
-            else:
                 action = (
-                    f"Investigate the mechanical resonance at ~{phase_freq or freq} Hz "
-                    f"(mounting, compliance, backlash, or load); the drive's "
-                    f"notch filter cannot be set below "
-                    f"{MIN_NOTCH_FILTER_HZ:g} Hz. Do NOT increase position gains"
+                    "Save the current settings. In the drive commissioning "
+                    f"tool, start with a shallow notch centred at ~{notch_freq:g} "
+                    "Hz; change no gains, then repeat the identical 3-move "
+                    "capture. Deepen the notch only if that same line remains."
                 )
-                expected = "mechanical resonance reduced without an invalid notch setting"
+                expected = (
+                    f"FE amplitude at ~{notch_freq:g} Hz falls by at least "
+                    "50%, without worse current RMS, velocity overshoot, or "
+                    "settling"
+                )
+            else:
+                mode_freq = phase_freq or freq
+                action = (
+                    f"Do not set a notch: ~{mode_freq:g} Hz is below the "
+                    f"drive's {MIN_NOTCH_FILTER_HZ:g} Hz limit. With power "
+                    "isolated, inspect motor/load mounting, coupling or belt "
+                    "compliance, backlash, and load looseness; then compare an "
+                    "unloaded 3-move capture with the loaded capture. Do not "
+                    "increase position gain."
+                )
+                expected = (
+                    "the fixed-frequency line is materially lower after the "
+                    "mechanical correction, with no invalid notch setting"
+                )
             found.append(Recommendation(
                 rule_id="mechanical_resonance",
                 severity="action", root_cause="mechanical",
                 action=action,
-                diagnosis=(f"oscillation.fe dominant_hz={freq} with "
-                           f"current_vs_velocity_phase ≈ +90° "
-                           f"({phase_deg:.0f}°{confidence}) — current leads "
-                           f"velocity: mechanical resonance"),
+                diagnosis=(f"oscillation.fe reports {evidence} and "
+                           f"current_vs_velocity_phase={phase_deg:.0f}° at "
+                           f"{phase_freq:g} Hz{confidence}; current leads "
+                           "velocity in the mechanical-resonance band"),
                 expected=expected,
             ))
         elif -30 < phase_deg < 30:
-            proposed = _propose(profile, "pn104", "Pn104", factor=0.8)
+            proposed = _propose(profile, "pn104", "Pn104", factor=0.9)
             found.append(Recommendation(
                 rule_id="loop_instability",
                 severity="action", root_cause="position",
-                action=("Reduce P_GAIN (CSP) or Pn104 (drive-closed loop) "
-                        "by ~20%; if a low-frequency oscillation persists, "
-                        "investigate speed-loop dynamics and mechanics rather "
-                        "than inferring Pn103 from FE alone"),
-                diagnosis=(f"oscillation.fe dominant_hz={freq} with "
-                           f"current_vs_velocity_phase ≈ 0° "
-                           f"({phase_deg:.0f}°{confidence}) — in phase: "
-                           f"loop instability"),
-                expected="has_significant_oscillation = false",
+                action=(
+                    "Save the current settings and change exactly one active "
+                    "outer-loop gain: in CSP reduce controller P_GAIN by 10%; "
+                    "only when the drive closes the position loop reduce Pn104 "
+                    "by 10%. Leave Pn103 unchanged because it is velocity-loop "
+                    "integral time. Repeat the identical 3-move capture; restore "
+                    "the setting if the FE line does not fall."
+                ),
+                diagnosis=(f"oscillation.fe reports {evidence} and "
+                           f"current_vs_velocity_phase={phase_deg:.0f}° at "
+                           f"{phase_freq:g} Hz{confidence}; current and velocity "
+                           "are in the loop-instability band"),
+                expected=("FE amplitude at that frequency falls by at least "
+                          "30%, with no loss of cruise tracking; otherwise "
+                          "restore the gain and investigate mechanics"),
                 parameter="Pn104", proposed=proposed,
             ))
         else:
             found.append(Recommendation(
                 rule_id="oscillation_ambiguous_phase",
                 severity="action", root_cause="position",
-                action=(f"Phase {phase_deg:.0f}° at the {freq} Hz FE mode is "
-                        "outside the validated instability (~0°) and resonance "
-                        "(~+90°) bands. Do not change gains from this result; "
-                        "repeat at multiple speeds and compare whether the "
-                        "frequency scales with speed or remains fixed"),
-                diagnosis=(f"oscillation.fe dominant_hz={freq} with matched "
-                           f"current_vs_velocity_phase {phase_deg:.0f}°"
-                           f"{confidence} — root cause remains unresolved"),
-                expected="speed-scaling separates spatial forcing from a fixed mode",
+                action=(
+                    f"Keep gains unchanged: phase {phase_deg:.0f}° is outside "
+                    "the validated ~0° instability and ~+90° resonance bands. "
+                    + _repeat_move_protocol(include_speed_sweep=True)
+                    + ". A speed-scaled frequency points to periodic mechanical "
+                    "forcing; a fixed line must be re-tested for coherent phase."
+                ),
+                diagnosis=(f"oscillation.fe reports {evidence}, with matched "
+                           f"current_vs_velocity_phase={phase_deg:.0f}° at "
+                           f"{phase_freq:g} Hz{confidence}; root cause remains "
+                           "unclassified"),
+                expected=("a repeatable fixed or speed-scaled frequency trend "
+                          "and a phase inside a validated band before any change"),
             ))
 
     return found
@@ -403,17 +511,42 @@ def _fe_rules(metrics: dict, profile: dict | None) -> list[Recommendation]:
         ))
 
     if settle.get("ringing"):
+        crossings = int(settle.get("zero_crossings") or 0)
+        damping = settle.get("damping_ratio")
+        severe = crossings >= 8 or (damping is not None and damping < 0.15)
+        reduction_pct = 15 if severe else 10
+        factor = 1.0 - reduction_pct / 100.0
+        band = float(settle.get("band") or 0.0)
+        settle_peak = float(settle.get("fe_peak_during_settle") or 0.0)
+        peak_ratio = settle_peak / band if band > 0 else None
+        natural_freq = settle.get("natural_freq_hz")
+        frequency_note = (f", natural_freq_hz={natural_freq}"
+                          if natural_freq is not None else "")
+        ratio_note = (f", peak/band={peak_ratio:.1f}×"
+                      if peak_ratio is not None else "")
         found.append(Recommendation(
             rule_id="underdamped_settle",
             severity="action", root_cause="position",
-            action=("Increase D_GAIN or reduce P_GAIN (CSP); for "
-                    "drive-closed loops reduce Pn104 by 15%"),
-            diagnosis=(f"settle.ringing=true "
-                       f"({settle.get('zero_crossings')} band crossings, "
-                       f"damping_ratio={settle.get('damping_ratio')})"),
-            expected="zero_crossings ≤ 3",
+            action=(
+                "Save the current settings and verify which device closes the "
+                f"position loop. Change one parameter only: reduce controller "
+                f"P_GAIN by {reduction_pct}% in CSP, or reduce Pn104 by "
+                f"{reduction_pct}% only for a drive-internal position loop. "
+                "Do not change Pn103; it is velocity-loop integral time and "
+                "there is no drive position-loop integral action. Repeat 3 "
+                "identical moves and restore the original gain if ringing does "
+                "not improve."
+            ),
+            diagnosis=(f"settle.ringing=true: zero_crossings={crossings}, "
+                       f"damping_ratio={damping}, "
+                       f"fe_peak_during_settle={settle_peak:g}, band={band:g}"
+                       f"{ratio_note}{frequency_note}"),
+            expected=("zero_crossings ≤ 3, shorter time_to_band_ms, and at "
+                      "least 30% lower fe_peak_during_settle without worse "
+                      "cruise FE; otherwise restore the gain and inspect "
+                      "coupling/backlash/compliance"),
             parameter="Pn104",
-            proposed=_propose(profile, "pn104", "Pn104", factor=0.85),
+            proposed=_propose(profile, "pn104", "Pn104", factor=factor),
         ))
 
     if settle.get("steady_state_offset_nonzero"):

@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from PySide6.QtWidgets import QApplication, QMainWindow, QSpinBox
+from PySide6.QtWidgets import QApplication, QGroupBox, QMainWindow, QSpinBox
 
 from src.ai.tuner_panel import TunerPanel
 from src.ai.tuner_theme import RED
@@ -440,3 +440,11 @@ def test_history_table_tracks_score_column(qt_app):
     score_cell = table.item(0, 2)
     assert score_cell is not None
     assert float(score_cell.text().split()[0]) >= 8.0
+
+
+def test_manual_auto_tune_is_not_exposed_in_workspace(qt_app):
+    panel = TunerPanel()
+
+    titles = [group.title() for group in panel.findChildren(QGroupBox)]
+    assert "Manual Drive-Position Auto Tune" not in titles
+    assert not hasattr(panel, "_auto_tune")

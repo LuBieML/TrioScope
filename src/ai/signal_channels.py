@@ -73,8 +73,8 @@ CHANNEL_SPECS: dict[str, ChannelSpec] = {
         substrings=("measuredposition", "actualposition", "positionactual"),
     ),
     "fe": ChannelSpec(
-        exact=("drivefe", "fe"),
-        substrings=("followingerror", "positiondeviation"),
+        exact=("drivefe", "fe", "ek", "poserror", "positionerror"),
+        substrings=("followingerror", "positiondeviation", "positionerror"),
         exclude=("limit", "latch", "range", "mode"),
     ),
     # Demand velocity already in the same units as measured velocity:

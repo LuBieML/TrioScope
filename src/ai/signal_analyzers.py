@@ -13,8 +13,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from .signal_constants import (
-    SATURATION_FRAC, SETTLE_BAND_SIGMA, RINGING_CROSSINGS_MAX,
-    MAX_PER_MOVE_REPORTED,
+    AUTO_SETTLE_SIGNAL_FRAC, SATURATION_FRAC, SETTLE_BAND_SIGMA,
+    RINGING_CROSSINGS_MAX, MAX_PER_MOVE_REPORTED,
 )
 
 
@@ -81,8 +81,17 @@ def estimate_settle_band(fe: np.ndarray, phases: dict,
     else:
         # No usable idle stretch — differences only (values include motion).
         sigma = _diff_sigma(fe)
-    band = max(SETTLE_BAND_SIGMA * sigma, 1e-12)
-    return band, "auto (4x noise)"
+    finite = np.abs(fe[np.isfinite(fe)])
+    typical_move_fe = float(np.percentile(finite, 95)) if finite.size else 0.0
+    noise_band = SETTLE_BAND_SIGMA * sigma
+    signal_floor = AUTO_SETTLE_SIGNAL_FRAC * typical_move_fe
+    band = max(noise_band, signal_floor, 1e-12)
+    source = (
+        "auto (1% signal floor)"
+        if signal_floor > noise_band
+        else "auto (4x noise)"
+    )
+    return band, source
 
 
 # ---------------------------------------------------------------- FE
