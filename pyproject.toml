@@ -1,6 +1,6 @@
 [project]
 name = "TrioScope"
-version = "0.5.1"  # x-release-please-version
+version = "0.6.0"  # x-release-please-version
 description = "Oscilloscope-style capture and analysis tool for Trio Motion controllers and Trio DX-series servo drives."
 readme = "README.md"
 requires-python = ">=3.13"

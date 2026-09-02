@@ -3,6 +3,20 @@
 Notable changes to TrioScope are recorded here. New entries are generated from
 Conventional Commit pull-request titles by Release Please.
 
+## [0.6.0](https://github.com/LuBieML/TrioScope/compare/v0.5.1...v0.6.0) (2026-09-02)
+
+
+### Features
+
+* inerta measure ([3aa16f5](https://github.com/LuBieML/TrioScope/commit/3aa16f50d6244ba2a677a84ad12df761a58ad6fb))
+* update to servo tunning ([9be5142](https://github.com/LuBieML/TrioScope/commit/9be5142ed81c7444760f73b3987225bfc162266b))
+
+
+### Bug Fixes
+
+* fixed resolution of the 3d scope ([dd69bc9](https://github.com/LuBieML/TrioScope/commit/dd69bc9a09fd6931bc4217b33e877ba7242ab2ee))
+* updates to the analyser ([eebac3f](https://github.com/LuBieML/TrioScope/commit/eebac3ff50a3da4293c48bc7c5633b990fc28983))
+
 ## [0.5.1](https://github.com/LuBieML/TrioScope/compare/v0.5.0...v0.5.1) (2026-07-14)
 
 
